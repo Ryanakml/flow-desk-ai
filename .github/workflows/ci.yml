@@ -36,9 +36,9 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: printf '%s\n' "$PR_TITLE" | pnpm commitlint
+      - run: pnpm format:check
       - name: Changed workspace evidence
         run: node scripts/changed-workspaces.mjs | tee changed-workspaces.json
-      - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test:coverage
