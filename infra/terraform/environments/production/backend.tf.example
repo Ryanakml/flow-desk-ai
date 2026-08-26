@@ -1,0 +1,5 @@
+terraform {
+  # Copy this file to the root Terraform directory only after the remote-state
+  # bucket and lock table exist, then initialize with backend.hcl.
+  backend "s3" {}
+}

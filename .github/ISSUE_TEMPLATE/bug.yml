@@ -1,0 +1,25 @@
+name: Defect
+description: Reproducible behavior that violates a requirement or contract
+title: "[Bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: textarea
+    id: impact
+    attributes: { label: Impact and affected tenant/environment }
+    validations: { required: true }
+  - type: textarea
+    id: reproduce
+    attributes: { label: Deterministic reproduction }
+    validations: { required: true }
+  - type: textarea
+    id: expected
+    attributes: { label: Expected versus actual behavior }
+    validations: { required: true }
+  - type: textarea
+    id: evidence
+    attributes:
+      {
+        label: Sanitized evidence,
+        description: "Never include credentials, message bodies, or customer PII."
+      }
+    validations: { required: true }

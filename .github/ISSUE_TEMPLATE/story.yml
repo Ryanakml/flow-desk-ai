@@ -1,0 +1,52 @@
+name: Delivery story
+description: Testable product or platform outcome within a FlowDesk milestone
+title: "[M?] "
+labels: ["needs-triage"]
+body:
+  - type: input
+    id: parent
+    attributes:
+      { label: Parent/phase, description: "Epic and milestone with reciprocal dependencies" }
+    validations: { required: true }
+  - type: textarea
+    id: outcome
+    attributes:
+      { label: User/system outcome, description: "Who benefits and what can be observed?" }
+    validations: { required: true }
+  - type: textarea
+    id: scope
+    attributes: { label: Scope and exclusions }
+    validations: { required: true }
+  - type: textarea
+    id: acceptance
+    attributes:
+      {
+        label: Acceptance criteria,
+        description: "Given/When/Then, including denial and failure paths"
+      }
+    validations: { required: true }
+  - type: textarea
+    id: design
+    attributes:
+      { label: Technical design, description: "Data/API/event/runtime changes or ADR link" }
+    validations: { required: true }
+  - type: textarea
+    id: impact
+    attributes:
+      {
+        label: Cross-cutting impact,
+        description: "CI/CD, test, Docker/infra, security, data, observability, docs, support: none/update/new plus reason"
+      }
+    validations: { required: true }
+  - type: textarea
+    id: delivery
+    attributes: { label: Rollout and rollback }
+    validations: { required: true }
+  - type: textarea
+    id: evidence
+    attributes: { label: Required evidence }
+    validations: { required: true }
+  - type: input
+    id: ownership
+    attributes: { label: Owner and independent reviewer }
+    validations: { required: true }

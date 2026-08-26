@@ -1,0 +1,8 @@
+node_modules
+dist
+coverage
+.turbo
+pnpm-lock.yaml
+docs/FLOWDESK_ENTERPRISE_PRODUCT_AND_ENGINEERING_SPEC.md
+docs/FLOWDESK_EXECUTION_BLUEPRINT.md
+docs/FLOWDESK_EXECUTION_BLUEPRINT_ID.md

@@ -1,0 +1,3 @@
+# M0 preview and CI intentionally use Terraform's local backend. This file is
+# retained as an explicit pointer to the production remote-backend templates:
+# ../production/backend.tf.example and ../production/backend.hcl.example.

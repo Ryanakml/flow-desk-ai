@@ -1,0 +1,8 @@
+* @Ryanakml
+/packages/db/ @Ryanakml
+/packages/security/ @Ryanakml
+/packages/providers/ @Ryanakml
+/infra/ @Ryanakml
+/.github/workflows/ @Ryanakml
+/docs/adr/ @Ryanakml
+
