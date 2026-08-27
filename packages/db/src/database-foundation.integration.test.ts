@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { Client } from "pg";
+import { Client, Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { withTenantTransaction } from "./tenant-context.js";
 
 const executeFile = promisify(execFile);
 const connectionString = process.env["DATABASE_MIGRATOR_URL"];
@@ -33,7 +34,8 @@ describe("database foundation", () => {
 
     expect(migrations.rows.map((row) => row.version)).toEqual([
       "0001_database_foundation.sql",
-      "0002_m1_core_schema.sql"
+      "0002_m1_core_schema.sql",
+      "0003_tenant_rls.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -97,5 +99,62 @@ describe("database foundation", () => {
       "outbox_events",
       "roles"
     ]);
+  });
+
+  it("fails closed without context and denies organization B from organization A", async () => {
+    const organizationA = "00000000-0000-7000-8000-0000000000a1";
+    const organizationB = "00000000-0000-7000-8000-0000000000b2";
+    await admin.query(
+      `INSERT INTO flowdesk.organizations (id, slug, display_name) VALUES
+        ($1, 'tenant-a', 'Tenant A'), ($2, 'tenant-b', 'Tenant B') ON CONFLICT (id) DO NOTHING`,
+      [organizationA, organizationB]
+    );
+    await admin.query("BEGIN");
+    try {
+      await admin.query("SET ROLE flowdesk_runtime");
+      expect((await admin.query("SELECT id FROM flowdesk.organizations")).rows).toEqual([]);
+      await admin.query("SELECT set_config('app.organization_id', $1, true)", [organizationA]);
+      expect((await admin.query("SELECT id FROM flowdesk.organizations ORDER BY id")).rows).toEqual(
+        [{ id: organizationA }]
+      );
+      await expect(
+        admin.query(
+          "INSERT INTO flowdesk.organizations (id, slug, display_name) VALUES ($1, 'tenant-b-write', 'Denied')",
+          [organizationB]
+        )
+      ).rejects.toThrow();
+    } finally {
+      await admin.query("ROLLBACK");
+      await admin.query("RESET ROLE");
+    }
+  });
+
+  it("clears TenantContext after a transaction returns a pooled connection", async () => {
+    const pool = new Pool({ connectionString });
+    try {
+      const rows = await withTenantTransaction(
+        pool,
+        { organizationId: "00000000-0000-7000-8000-0000000000a1" },
+        async (client) => {
+          await client.query("SET LOCAL ROLE flowdesk_runtime");
+          return client.query<{ id: string }>("SELECT id FROM flowdesk.organizations ORDER BY id");
+        }
+      );
+      expect(rows.rows).toEqual([{ id: "00000000-0000-7000-8000-0000000000a1" }]);
+      const client = await pool.connect();
+      try {
+        expect(
+          (
+            await client.query(
+              "SELECT NULLIF(current_setting('app.organization_id', true), '') AS organization_id"
+            )
+          ).rows
+        ).toEqual([{ organization_id: null }]);
+      } finally {
+        client.release();
+      }
+    } finally {
+      await pool.end();
+    }
   });
 });
