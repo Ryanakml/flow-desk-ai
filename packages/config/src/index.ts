@@ -56,3 +56,19 @@ export function loadDependencyConfig(
 ): DependencyConfig {
   return dependencyConfigSchema.parse(environment);
 }
+
+export const authConfigSchema = z.object({
+  AUTH_OIDC_ISSUER: z.string().url().default("https://flowdesk.local.auth0.com/"),
+  AUTH_OIDC_CLIENT_ID: z.string().min(1).default("flowdesk-local-client"),
+  AUTH_OIDC_CLIENT_SECRET: z.string().min(1).default("flowdesk-local-secret"),
+  AUTH_OIDC_REDIRECT_URI: z.string().url().default("http://localhost:4000/api/v1/auth/callback"),
+  AUTH_COOKIE_SECURE: booleanString.default(false),
+  AUTH_SESSION_TTL_SECONDS: z.coerce.number().int().positive().default(28_800),
+  AUTH_MOCK_ENABLED: booleanString.default(true)
+});
+
+export type AuthConfig = z.infer<typeof authConfigSchema>;
+
+export function loadAuthConfig(environment: NodeJS.ProcessEnv = process.env): AuthConfig {
+  return authConfigSchema.parse(environment);
+}
