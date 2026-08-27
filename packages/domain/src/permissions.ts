@@ -15,6 +15,8 @@ export type Permission =
   | "membership:invite"
   | "membership:modify"
   | "membership:revoke"
+  | "channel:manage"
+  | "channel:view"
   | "conversation:assign"
   | "conversation:resolve"
   | "conversation:read"
@@ -31,6 +33,8 @@ const ROLE_PERMISSIONS: Record<RoleKey, readonly Permission[]> = {
     "membership:invite",
     "membership:modify",
     "membership:revoke",
+    "channel:manage",
+    "channel:view",
     "conversation:assign",
     "conversation:resolve",
     "conversation:read",
@@ -46,6 +50,8 @@ const ROLE_PERMISSIONS: Record<RoleKey, readonly Permission[]> = {
     "membership:invite",
     "membership:modify",
     "membership:revoke",
+    "channel:manage",
+    "channel:view",
     "conversation:assign",
     "conversation:resolve",
     "conversation:read",
@@ -56,14 +62,15 @@ const ROLE_PERMISSIONS: Record<RoleKey, readonly Permission[]> = {
   ],
   supervisor: [
     "membership:read",
+    "channel:view",
     "conversation:assign",
     "conversation:resolve",
     "conversation:read",
     "message:send",
     "analytics:view"
   ],
-  agent: ["membership:read", "conversation:read", "message:send"],
-  analyst: ["membership:read", "conversation:read", "analytics:view", "audit:view"],
+  agent: ["membership:read", "channel:view", "conversation:read", "message:send"],
+  analyst: ["membership:read", "channel:view", "conversation:read", "analytics:view", "audit:view"],
   billing_admin: ["membership:read", "billing:manage"]
 };
 

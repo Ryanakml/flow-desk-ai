@@ -19,3 +19,10 @@ export {
   hasPermission,
   isStandardRole
 } from "./permissions.js";
+export {
+  type ChannelStatus,
+  type ChannelType,
+  type ChannelCredentials,
+  canTransitionChannelStatus,
+  assertValidChannelStatusTransition
+} from "./channels.js";

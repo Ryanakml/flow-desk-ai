@@ -37,7 +37,8 @@ describe("database foundation", () => {
       "0002_m1_core_schema.sql",
       "0003_tenant_rls.sql",
       "0004_auth_sessions.sql",
-      "0005_invitations.sql"
+      "0005_invitations.sql",
+      "0006_channels.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -73,7 +74,7 @@ describe("database foundation", () => {
     ]);
   });
 
-  it("creates the M1 core tables with tenant keys and required indexes", async () => {
+  it("creates the core tables with tenant keys and required indexes", async () => {
     const tables = await admin.query<{ table_name: string }>(
       `SELECT table_name FROM information_schema.tables
        WHERE table_schema = 'flowdesk' ORDER BY table_name`
@@ -85,6 +86,7 @@ describe("database foundation", () => {
     expect(tables.rows.map((row) => row.table_name)).toEqual([
       "audit_logs",
       "auth_sessions",
+      "channels",
       "idempotency_keys",
       "identities",
       "invitations",
@@ -98,6 +100,7 @@ describe("database foundation", () => {
     ]);
     expect(tenantColumns.rows.map((row) => row.table_name).sort()).toEqual([
       "audit_logs",
+      "channels",
       "idempotency_keys",
       "invitations",
       "memberships",
