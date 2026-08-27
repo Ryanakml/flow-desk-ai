@@ -12,6 +12,7 @@ FlowDesk is an enterprise-ready WhatsApp automation SaaS under active implementa
 ## Local start
 
 ```bash
+nvm use
 make bootstrap
 make dev
 ```
