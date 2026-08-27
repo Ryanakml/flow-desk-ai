@@ -37,7 +37,8 @@ describe("database foundation", () => {
       "0002_m1_core_schema.sql",
       "0003_tenant_rls.sql",
       "0004_auth_sessions.sql",
-      "0005_invitations.sql"
+      "0005_invitations.sql",
+      "0006_channels.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });

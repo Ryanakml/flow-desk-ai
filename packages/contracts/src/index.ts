@@ -273,3 +273,55 @@ export const ListUserOrganizationsResponseSchema = z.object({
 });
 
 export type ListUserOrganizationsResponse = z.infer<typeof ListUserOrganizationsResponseSchema>;
+
+export const ChannelStatusSchema = z.enum([
+  "draft",
+  "connecting",
+  "active",
+  "degraded",
+  "disconnected"
+]);
+export type ChannelStatus = z.infer<typeof ChannelStatusSchema>;
+
+export const ChannelTypeSchema = z.enum(["whatsapp"]);
+export type ChannelType = z.infer<typeof ChannelTypeSchema>;
+
+export const ChannelSchema = z.object({
+  id: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  type: ChannelTypeSchema,
+  name: z.string().min(1).max(100),
+  phoneNumberId: z.string().min(1),
+  wabaId: z.string().min(1),
+  status: ChannelStatusSchema,
+  statusReason: z.string().nullable().optional(),
+  metadata: z.record(z.string(), z.unknown()),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime()
+});
+export type Channel = z.infer<typeof ChannelSchema>;
+
+export const CreateChannelRequestSchema = z.object({
+  type: ChannelTypeSchema.default("whatsapp"),
+  name: z.string().trim().min(1).max(100),
+  phoneNumberId: z.string().trim().min(1),
+  wabaId: z.string().trim().min(1),
+  credentials: z.object({
+    accessToken: z.string().trim().min(1),
+    verifyToken: z.string().trim().min(1),
+    appSecret: z.string().trim().min(1).optional()
+  }),
+  metadata: z.record(z.string(), z.unknown()).optional()
+});
+export type CreateChannelRequest = z.infer<typeof CreateChannelRequestSchema>;
+
+export const UpdateChannelStatusRequestSchema = z.object({
+  status: ChannelStatusSchema,
+  reason: z.string().trim().max(500).optional()
+});
+export type UpdateChannelStatusRequest = z.infer<typeof UpdateChannelStatusRequestSchema>;
+
+export const ListChannelsResponseSchema = z.object({
+  channels: z.array(ChannelSchema)
+});
+export type ListChannelsResponse = z.infer<typeof ListChannelsResponseSchema>;

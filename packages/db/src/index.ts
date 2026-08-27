@@ -51,6 +51,15 @@ export {
   type RecordAuditEventResult,
   type ListAuditLogsParams
 } from "./audit.js";
+export {
+  createChannel,
+  getChannelById,
+  getChannelByPhoneNumberId,
+  listChannels,
+  updateChannelStatus,
+  type ChannelRecord,
+  type CreateChannelInput
+} from "./channels.js";
 
 export const DATABASE_PACKAGE_STATE = "m1-foundation-ready" as const;
 

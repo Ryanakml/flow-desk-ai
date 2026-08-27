@@ -11,3 +11,4 @@
 | API-PRIM-001   | M1    | Idempotency, audit, OpenAPI, cursor     | Replay tests; drift check; audit suite     | Complete |
 | UI-WORK-001    | M1    | Authenticated workspace & team shell    | React suites; route guards; a11y focus     | Complete |
 | SEC-OBS-001    | M1    | Security headers, rate limit, telemetry | Rate limit suites; metrics/redaction tests | Complete |
+| CHAN-MOD-001   | M2    | Channel schema & AES-256-GCM envelope   | RLS isolation tests; encryption suites     | Complete |
