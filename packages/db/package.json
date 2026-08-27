@@ -20,12 +20,12 @@
     "clean": "rm -rf dist coverage"
   },
   "dependencies": {
-    "@prisma/client": "6.15.0",
+    "@prisma/client": "6.19.3",
     "pg": "8.16.3",
     "uuid": "11.1.0"
   },
   "devDependencies": {
     "@types/pg": "8.15.5",
-    "prisma": "6.15.0"
+    "prisma": "6.19.3"
   }
 }
