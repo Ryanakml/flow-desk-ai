@@ -1,4 +1,5 @@
 import { v7 as uuidv7 } from "uuid";
+export { withTenantTransaction, type TenantContext } from "./tenant-context.js";
 
 export const DATABASE_PACKAGE_STATE = "m1-foundation-ready" as const;
 
