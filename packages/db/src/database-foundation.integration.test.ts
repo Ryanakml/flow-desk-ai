@@ -31,7 +31,10 @@ describe("database foundation", () => {
       "SELECT extname FROM pg_extension WHERE extname IN ('pgcrypto', 'vector') ORDER BY extname"
     );
 
-    expect(migrations.rows.map((row) => row.version)).toEqual(["0001_database_foundation.sql"]);
+    expect(migrations.rows.map((row) => row.version)).toEqual([
+      "0001_database_foundation.sql",
+      "0002_m1_core_schema.sql"
+    ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
 
@@ -63,6 +66,36 @@ describe("database foundation", () => {
       { rolname: "flowdesk_migrator", rolbypassrls: false },
       { rolname: "flowdesk_reporting", rolbypassrls: false },
       { rolname: "flowdesk_runtime", rolbypassrls: false }
+    ]);
+  });
+
+  it("creates the M1 core tables with tenant keys and required indexes", async () => {
+    const tables = await admin.query<{ table_name: string }>(
+      `SELECT table_name FROM information_schema.tables
+       WHERE table_schema = 'flowdesk' ORDER BY table_name`
+    );
+    const tenantColumns = await admin.query<{ table_name: string }>(
+      `SELECT table_name FROM information_schema.columns
+       WHERE table_schema = 'flowdesk' AND column_name = 'organization_id' AND is_nullable = 'NO'`
+    );
+    expect(tables.rows.map((row) => row.table_name)).toEqual([
+      "audit_logs",
+      "idempotency_keys",
+      "identities",
+      "memberships",
+      "organization_settings",
+      "organizations",
+      "outbox_events",
+      "roles",
+      "users"
+    ]);
+    expect(tenantColumns.rows.map((row) => row.table_name).sort()).toEqual([
+      "audit_logs",
+      "idempotency_keys",
+      "memberships",
+      "organization_settings",
+      "outbox_events",
+      "roles"
     ]);
   });
 });
