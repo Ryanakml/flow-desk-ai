@@ -9,6 +9,7 @@ import {
   getMemberRole,
   updateMembershipRole,
   revokeMembership,
+  listUserOrganizations,
   LastOwnerProtectionError
 } from "./organizations.js";
 
@@ -251,6 +252,28 @@ function createMockDb(): DbClient {
         return { rows };
       }
 
+      // SELECT o.id, o.slug, o.display_name, r.key AS role_key, m.id AS membership_id FROM flowdesk.organizations o JOIN flowdesk.memberships m
+      if (sql.includes("FROM flowdesk.organizations o JOIN flowdesk.memberships m")) {
+        const [userId] = values as [string];
+        const rows: unknown[] = [];
+        for (const mem of memberships.values()) {
+          if (mem.userId === userId && mem.status === "active") {
+            const org = orgs.get(mem.orgId);
+            const role = roles.get(mem.roleId);
+            if (org && role) {
+              rows.push({
+                id: org.id,
+                slug: org.slug,
+                display_name: org.name,
+                role_key: role.key,
+                membership_id: mem.id
+              });
+            }
+          }
+        }
+        return { rows };
+      }
+
       // UPDATE flowdesk.memberships SET role_id = $1
       if (sql.includes("UPDATE flowdesk.memberships SET role_id = $1")) {
         const [newRoleId, orgId, memId] = values as [string, string, string];
@@ -397,5 +420,12 @@ describe("Organizations and Memberships DB repository (M1-05)", () => {
       membershipId: bob.id
     });
     expect(revoked).toBe(true);
+  });
+
+  it("lists organizations where a user is an active member", async () => {
+    const orgs = await listUserOrganizations(db, "u1");
+    expect(orgs.length).toBe(1);
+    expect(orgs[0]?.name).toBe("Acme Corp");
+    expect(orgs[0]?.roleKey).toBe("owner");
   });
 });

@@ -257,3 +257,19 @@ export const ListAuditLogsQuerySchema = CursorPageQuerySchema.extend({
 export type ListAuditLogsQuery = z.infer<typeof ListAuditLogsQuerySchema>;
 
 export const IdempotencyHeaderSchema = z.string().trim().min(1).max(256);
+
+export const UserOrganizationSchema = z.object({
+  id: z.string().uuid(),
+  slug: z.string(),
+  name: z.string(),
+  role: z.string(),
+  membershipId: z.string().uuid()
+});
+
+export type UserOrganization = z.infer<typeof UserOrganizationSchema>;
+
+export const ListUserOrganizationsResponseSchema = z.object({
+  organizations: z.array(UserOrganizationSchema)
+});
+
+export type ListUserOrganizationsResponse = z.infer<typeof ListUserOrganizationsResponseSchema>;

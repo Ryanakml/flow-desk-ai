@@ -322,6 +322,28 @@ function createMockDb(): DbClient {
         return { rowCount: 0 };
       }
 
+      // SELECT o.id, o.slug, o.display_name, r.key AS role_key, m.id AS membership_id FROM flowdesk.organizations o JOIN flowdesk.memberships m
+      if (sql.includes("FROM flowdesk.organizations o JOIN flowdesk.memberships m")) {
+        const [userId] = values as [string];
+        const rows: unknown[] = [];
+        for (const mem of memberships.values()) {
+          if (mem.userId === userId && mem.status === "active") {
+            const org = orgs.get(mem.orgId);
+            const role = roles.get(mem.roleId);
+            if (org && role) {
+              rows.push({
+                id: org.id,
+                slug: org.slug,
+                display_name: org.name,
+                role_key: role.key,
+                membership_id: mem.id
+              });
+            }
+          }
+        }
+        return { rows };
+      }
+
       // UPDATE flowdesk.memberships SET status = 'revoked'
       if (sql.includes("UPDATE flowdesk.memberships SET status = 'revoked'")) {
         const [orgId, memId] = values as [string, string];
@@ -547,5 +569,18 @@ describe("API Organizations and Memberships (M1-05)", () => {
 
     const notFoundBody = notFoundRes.body as { code: string };
     expect(notFoundBody.code).toBe("INVITATION_NOT_FOUND");
+  });
+
+  it("GET /api/v1/organizations lists organizations for authenticated user", async () => {
+    const res = await request(app)
+      .get("/api/v1/organizations")
+      .set("Cookie", aliceCookie)
+      .expect(200);
+
+    const body = res.body as {
+      organizations: Array<{ id: string; slug: string; name: string; role: string }>;
+    };
+    expect(body.organizations.length).toBeGreaterThanOrEqual(1);
+    expect(body.organizations[0]?.role).toBe("owner");
   });
 });

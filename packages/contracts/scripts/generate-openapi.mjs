@@ -176,6 +176,28 @@ export function buildOpenApiSpec() {
         }
       },
       "/api/v1/organizations": {
+        get: {
+          summary: "List organizations for authenticated user",
+          operationId: "listUserOrganizations",
+          responses: {
+            200: {
+              description: "List of user organizations and active roles",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/ListUserOrganizationsResponse" }
+                }
+              }
+            },
+            401: {
+              description: "Unauthorized",
+              content: {
+                "application/problem+json": {
+                  schema: { $ref: "#/components/schemas/Problem" }
+                }
+              }
+            }
+          }
+        },
         post: {
           summary: "Bootstrap a new organization",
           operationId: "bootstrapOrganization",
@@ -553,6 +575,27 @@ export function buildOpenApiSpec() {
             slug: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{1,62}$" }
           },
           required: ["name", "slug"]
+        },
+        UserOrganization: {
+          type: "object",
+          properties: {
+            id: { type: "string", format: "uuid" },
+            slug: { type: "string" },
+            name: { type: "string" },
+            role: { type: "string" },
+            membershipId: { type: "string", format: "uuid" }
+          },
+          required: ["id", "slug", "name", "role", "membershipId"]
+        },
+        ListUserOrganizationsResponse: {
+          type: "object",
+          properties: {
+            organizations: {
+              type: "array",
+              items: { $ref: "#/components/schemas/UserOrganization" }
+            }
+          },
+          required: ["organizations"]
         },
         BootstrapOrganizationResponse: {
           type: "object",
