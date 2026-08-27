@@ -149,3 +149,111 @@ export const UpdateMembershipRoleRequestSchema = z.object({
 });
 
 export type UpdateMembershipRoleRequest = z.infer<typeof UpdateMembershipRoleRequestSchema>;
+
+export const CursorPageQuerySchema = z.object({
+  cursor: z.string().trim().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50)
+});
+
+export type CursorPageQuery = z.infer<typeof CursorPageQuerySchema>;
+
+export const PageInfoSchema = z.object({
+  hasNextPage: z.boolean(),
+  hasPreviousPage: z.boolean(),
+  startCursor: z.string().nullable(),
+  endCursor: z.string().nullable(),
+  totalCount: z.number().int().optional()
+});
+
+export type PageInfo = z.infer<typeof PageInfoSchema>;
+
+export function createCursorPageResponseSchema<T extends z.ZodTypeAny>(itemSchema: T) {
+  return z.object({
+    items: z.array(itemSchema),
+    pageInfo: PageInfoSchema
+  });
+}
+
+export interface CursorPayload {
+  id: string;
+  sortValue: string;
+  organizationId?: string | undefined;
+}
+
+export function encodeCursor(payload: {
+  id: string;
+  sortValue: string | number | Date;
+  organizationId?: string;
+}): string {
+  const sortVal =
+    payload.sortValue instanceof Date ? payload.sortValue.toISOString() : String(payload.sortValue);
+  const data: CursorPayload = {
+    id: payload.id,
+    sortValue: sortVal,
+    ...(payload.organizationId ? { organizationId: payload.organizationId } : {})
+  };
+  return Buffer.from(JSON.stringify(data), "utf8").toString("base64url");
+}
+
+export function decodeCursor(
+  cursor: string,
+  expectedOrganizationId?: string
+): CursorPayload | null {
+  try {
+    const decoded = Buffer.from(cursor, "base64url").toString("utf8");
+    const parsed = JSON.parse(decoded) as unknown;
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      typeof (parsed as Record<string, unknown>)["id"] !== "string" ||
+      typeof (parsed as Record<string, unknown>)["sortValue"] !== "string"
+    ) {
+      return null;
+    }
+    const record = parsed as Record<string, unknown>;
+    const orgId =
+      typeof record["organizationId"] === "string" ? record["organizationId"] : undefined;
+
+    if (expectedOrganizationId && orgId && orgId !== expectedOrganizationId) {
+      return null;
+    }
+
+    return {
+      id: record["id"] as string,
+      sortValue: record["sortValue"] as string,
+      organizationId: orgId
+    };
+  } catch {
+    return null;
+  }
+}
+
+export const AuditLogResultSchema = z.enum(["allowed", "denied", "failed"]);
+export type AuditLogResult = z.infer<typeof AuditLogResultSchema>;
+
+export const AuditLogEntrySchema = z.object({
+  id: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  actorUserId: z.string().uuid().nullable(),
+  action: z.string().min(1),
+  targetType: z.string().min(1),
+  targetId: z.string().uuid().nullable(),
+  result: AuditLogResultSchema,
+  correlationId: z.string().uuid().nullable(),
+  metadata: z.record(z.string(), z.unknown()),
+  occurredAt: z.string().datetime()
+});
+
+export type AuditLogEntry = z.infer<typeof AuditLogEntrySchema>;
+
+export const ListAuditLogsResponseSchema = createCursorPageResponseSchema(AuditLogEntrySchema);
+export type ListAuditLogsResponse = z.infer<typeof ListAuditLogsResponseSchema>;
+
+export const ListAuditLogsQuerySchema = CursorPageQuerySchema.extend({
+  action: z.string().trim().min(1).optional(),
+  actorUserId: z.string().uuid().optional()
+});
+
+export type ListAuditLogsQuery = z.infer<typeof ListAuditLogsQuerySchema>;
+
+export const IdempotencyHeaderSchema = z.string().trim().min(1).max(256);
