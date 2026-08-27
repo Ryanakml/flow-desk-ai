@@ -86,7 +86,9 @@ North-star outcome
                   └─ Pull request(s), tests, docs, deployment evidence
 ```
 
-Use a distinct ticket for a meaningful cross-cutting change. Example: “Send media message” is an epic; it should explicitly include object-storage policy, upload UX, scan worker, provider adapter, DB migration, delivery state, test fixtures, dashboard/alerts, and retention update. Do not bury those as an unchecked paragraph in a generic frontend ticket.
+For this solo-developer repository, create **one issue per numbered backlog item** (for example, one issue for each item in section 17). Do not create separate issues merely because an item changes CI/CD, Docker/infra, security, data, observability, documentation, or support. Record those cross-cutting aspects as an explicit checklist in the PR description and close them as part of the same backlog item.
+
+Create a separate issue only when one aspect is independently large enough to need its own PR, acceptance criteria, rollout, and evidence. Example: “Send media message” may remain one backlog item while its PR checklist covers object-storage policy, upload UX, scan worker, provider adapter, DB migration, delivery state, test fixtures, dashboards/alerts, and retention. Split it only if, for example, the storage-security foundation is itself a separately reviewable deliverable.
 
 ### 2.2 Mandatory fields on every story
 
@@ -101,15 +103,15 @@ Use a distinct ticket for a meaningful cross-cutting change. Example: “Send me
 | Cross-cutting impact | CI/CD, test, Docker/infra, security, data, observability, docs, support: `none`, `update`, or `new`, with explicit reason. |
 | Rollout / rollback | Flag, migration sequencing, compatibility, and safe reversal. |
 | Evidence | PRs, test run, preview/staging proof, dashboard/runbook/docs links. |
-| Owner / reviewer | Accountable builder and independent approver. |
+| Owner / reviewer | Accountable builder; name an external reviewer when one is available or the risk warrants it, but do not create an approval gate that a solo owner cannot satisfy. |
 
 An absent impact declaration is a blocker. “None” is acceptable only with a stated reason.
 
 ### 2.3 PR contract
 
-Every PR includes: linked issue; concise user/system intent; architecture/data/API/event changes; screenshots or recordings for UI; exact test evidence; migration/rollout/rollback notes; config/secret changes; observability/alert impact; security/privacy impact; documentation updates; and any follow-up issue with owner/date. PR authors do not self-approve protected changes.
+Every PR includes: linked numbered backlog issue; concise user/system intent; architecture/data/API/event changes; screenshots or recordings for UI; exact test evidence; migration/rollout/rollback notes; config/secret changes; observability/alert impact; security/privacy impact; documentation updates; and any follow-up issue with owner/date. The cross-cutting items are a checklist in this PR description, not a source of automatic extra issues.
 
-Use conventional commits, protected `main`, CODEOWNERS for `packages/db`, `infra`, auth/RLS, provider adapters, and workflows. Keep PRs small enough to review the actual behavior; use feature flags for incomplete but merge-safe work.
+Use conventional commits and protected `main`. In this solo-owner repository, branch protection is gated by **required status checks only**: required-approving-review count is **0**. GitHub does not allow a PR author to approve their own PR, so requiring approvals with one human account would permanently lock the repository. CODEOWNERS may identify ownership for `packages/db`, `infra`, auth/RLS, provider adapters, and workflows, but is informational only and must not be configured as a required-review gate. Keep PRs small enough to inspect actual behavior; use feature flags for incomplete but merge-safe work.
 
 ### 2.4 Traceability graph
 
@@ -609,6 +611,8 @@ No phase is allowed to mark a track “N/A” merely because no dedicated engine
 
 ## 15. Generic DoD checklists, applied to every capability
 
+Use the relevant items below as a checklist in the PR description for the numbered backlog item being delivered. They are not a template for creating new issues; create an additional issue only when a concern is independently large enough to require its own PR, acceptance criteria, rollout, and evidence.
+
 ### 15.1 Backend/domain DoD
 
 - [ ] Domain state transitions, invariants, authorization, idempotency, and error taxonomy are explicit and unit-tested.
@@ -689,14 +693,14 @@ Stop and resolve rather than build around it when there is: unclear tenant/data 
 
 This is the first actionable queue after approving this blueprint. Do not open feature implementation before items 1–12 are completed or explicitly re-sequenced by ADR.
 
-1. Create Git repository controls: protected `main`, required reviews/checks, CODEOWNERS, issue/PR templates, SECURITY.md.
+1. Create Git repository controls: protected `main` gated by required status checks only; required-approving-review count = `0`; CODEOWNERS informational only (not a required-review gate); issue/PR templates; SECURITY.md. This is required because a solo owner cannot self-approve a GitHub PR, and a required-review rule would otherwise lock the repository permanently.
 2. Initialize pnpm/Turborepo workspace, Node/pnpm pins, shared TypeScript/ESLint/Prettier configuration, and workspace boundaries.
 3. Create application/package directory skeleton and minimal buildable `api`, `web`, `ingress`, `worker`, `scheduler` processes.
 4. Add `packages/config` with schema-validated configuration, `.env.example`, config documentation, and tests for fail-closed startup.
 5. Add Dockerfiles, `.dockerignore`, non-root execution, Compose dependency profile, Makefile, and clean-machine bootstrap guide.
 6. Add CI C0/C1 workflow with lockfile install, format/lint/typecheck/unit/build/image build, secret scan, artifact retention, and intentionally failing verification.
 7. Add structured logger, correlation/request IDs, OpenTelemetry skeleton, health endpoints, error envelope, and redaction tests.
-8. Write ADR-001/002/003 and initial domain glossary, API/event naming conventions, threat model backlog, severity/runbook template.
+8. Write ADRs only for real decisions with meaningful alternatives and tradeoffs (for example, Turborepo versus Nx); do not create ADRs merely to restate choices already dictated by this blueprint or the enterprise specification. Also add the initial domain glossary, API/event naming conventions, threat model backlog, and severity/runbook template.
 9. Configure local PostgreSQL+pgvector/Redis/MinIO/Mailpit/observability services and synthetic seed data.
 10. Create test harness conventions and one unit test per application/package; enforce deterministic test setup.
 11. Add initial Terraform structure/state backend and validate formatting/plan in CI without applying infrastructure.
@@ -704,5 +708,4 @@ This is the first actionable queue after approving this blueprint. Do not open f
 
 ### The exact next action
 
-Start with **M0 item 1** and create the issue hierarchy for M0 at the same time. Once M0 is green, do not jump to AI or inbox UI: start M1 with database tenant/RLS foundation. This ordering prevents FlowDesk’s most expensive possible rework—retrofitting tenant isolation, auditability, and delivery discipline after real messaging data exists.
-
+Start with **M0 item 1** and create one issue for each numbered M0 backlog item at the same time. Once M0 is green, do not jump to AI or inbox UI: start M1 with database tenant/RLS foundation. This ordering prevents FlowDesk’s most expensive possible rework—retrofitting tenant isolation, auditability, and delivery discipline after real messaging data exists.
