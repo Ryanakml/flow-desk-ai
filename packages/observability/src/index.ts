@@ -98,3 +98,13 @@ export function createProcessHealthServer(input: {
     response.end(JSON.stringify({ title: "Not Found", status: 404 }));
   });
 }
+
+export { redactEmail, redactPii } from "./redact.js";
+export {
+  recordHttpRequest,
+  recordAuthDenial,
+  recordPermissionDenial,
+  recordRateLimitExceeded,
+  getPrometheusMetrics,
+  resetMetrics
+} from "./metrics.js";

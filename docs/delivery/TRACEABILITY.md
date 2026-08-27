@@ -10,3 +10,4 @@
 | SEC-RBAC-001   | M1    | Domain permission policy & invitations  | Supertest org suite; last-owner protection | Complete |
 | API-PRIM-001   | M1    | Idempotency, audit, OpenAPI, cursor     | Replay tests; drift check; audit suite     | Complete |
 | UI-WORK-001    | M1    | Authenticated workspace & team shell    | React suites; route guards; a11y focus     | Complete |
+| SEC-OBS-001    | M1    | Security headers, rate limit, telemetry | Rate limit suites; metrics/redaction tests | Complete |
