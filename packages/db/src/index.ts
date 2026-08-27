@@ -24,12 +24,14 @@ export {
   getMemberRole,
   updateMembershipRole,
   revokeMembership,
+  listUserOrganizations,
   LastOwnerProtectionError,
   type BootstrapOrganizationInput,
   type BootstrapOrganizationResult,
   type CreateInvitationInput,
   type InvitationRecord,
-  type MembershipRecord
+  type MembershipRecord,
+  type UserOrganizationRecord
 } from "./organizations.js";
 export {
   acquireIdempotencyKey,

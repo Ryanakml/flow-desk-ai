@@ -315,3 +315,40 @@ export async function revokeMembership(
 
   return (res.rowCount ?? 0) > 0;
 }
+
+export interface UserOrganizationRecord {
+  id: string;
+  slug: string;
+  name: string;
+  roleKey: string;
+  membershipId: string;
+}
+
+export async function listUserOrganizations(
+  db: DbClient,
+  userId: string
+): Promise<UserOrganizationRecord[]> {
+  const result = await db.query<{
+    id: string;
+    slug: string;
+    display_name: string;
+    role_key: string;
+    membership_id: string;
+  }>(
+    `SELECT o.id, o.slug, o.display_name, r.key AS role_key, m.id AS membership_id
+     FROM flowdesk.organizations o
+     JOIN flowdesk.memberships m ON m.organization_id = o.id
+     JOIN flowdesk.roles r ON r.id = m.role_id
+     WHERE m.user_id = $1 AND m.status = 'active'
+     ORDER BY o.display_name ASC`,
+    [userId]
+  );
+
+  return result.rows.map((row) => ({
+    id: row.id,
+    slug: row.slug,
+    name: row.display_name,
+    roleKey: row.role_key,
+    membershipId: row.membership_id
+  }));
+}

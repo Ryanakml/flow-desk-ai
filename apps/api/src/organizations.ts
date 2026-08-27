@@ -18,7 +18,8 @@ import {
   revokeMembership,
   LastOwnerProtectionError,
   recordAuditEvent,
-  listAuditLogs
+  listAuditLogs,
+  listUserOrganizations
 } from "@flowdesk/db";
 import { type Permission, hasPermission } from "@flowdesk/domain";
 import { createOpaqueToken, hashSessionToken } from "@flowdesk/security";
@@ -133,6 +134,25 @@ export function createOrganizationsRouter(options: OrganizationRouterOptions): R
   const router = Router();
   const requireAuth = createRequireAuthMiddleware(options.db);
   const requireIdempotency = createIdempotencyMiddleware(options.db);
+
+  // GET /api/v1/organizations - List organizations for the authenticated user
+  router.get(["/", ""], requireAuth, async (request: Request, response: Response, next) => {
+    try {
+      const user = request.user!;
+      const orgs = await listUserOrganizations(options.db, user.id);
+      return response.status(200).json({
+        organizations: orgs.map((o) => ({
+          id: o.id,
+          slug: o.slug,
+          name: o.name,
+          role: o.roleKey,
+          membershipId: o.membershipId
+        }))
+      });
+    } catch (error) {
+      return next(error);
+    }
+  });
 
   // POST /api/v1/organizations - Bootstrap new organization
   router.post(["/", ""], requireAuth, async (request: Request, response: Response, next) => {
