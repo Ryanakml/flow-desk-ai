@@ -93,17 +93,17 @@ jobs:
       postgres:
         image: pgvector/pgvector:0.8.0-pg16-bookworm
         env:
-          POSTGRES_DB: flowdesk
-          POSTGRES_USER: flowdesk
-          POSTGRES_PASSWORD: flowdesk_local
-        ports: [5432:5432]
+          POSTGRES_DB: flowdesk_test
+          POSTGRES_USER: flowdesk_test
+          POSTGRES_PASSWORD: flowdesk_test_local
+        ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U flowdesk -d flowdesk"
+          --health-cmd "pg_isready -U flowdesk_test -d flowdesk_test"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 20
     env:
-      DATABASE_MIGRATOR_URL: postgresql://flowdesk:flowdesk_local@localhost:5432/flowdesk
+      DATABASE_MIGRATOR_URL: postgresql://flowdesk_test:flowdesk_test_local@localhost:5432/flowdesk_test
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0

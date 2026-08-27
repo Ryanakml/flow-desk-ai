@@ -16,7 +16,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run --exclude '**/*.integration.test.ts'",
     "test:integration": "vitest run src/database-foundation.integration.test.ts",
-    "test:coverage": "vitest run --coverage",
+    "test:coverage": "vitest run --coverage --exclude '**/*.integration.test.ts'",
     "clean": "rm -rf dist coverage"
   },
   "dependencies": {
