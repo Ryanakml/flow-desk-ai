@@ -22,6 +22,7 @@ import {
   listUserOrganizations
 } from "@flowdesk/db";
 import { type Permission, hasPermission } from "@flowdesk/domain";
+import { recordPermissionDenial } from "@flowdesk/observability";
 import { createOpaqueToken, hashSessionToken } from "@flowdesk/security";
 import { type Request, type Response, type RequestHandler, Router } from "express";
 import { createRequireAuthMiddleware } from "./auth.js";
@@ -100,6 +101,7 @@ export function createRequireOrgPermissionMiddleware(
     try {
       const membership = await getMemberRole(db, { organizationId: orgId, userId: user.id });
       if (!membership) {
+        recordPermissionDenial(permission, "none");
         return sendProblem(
           response,
           403,
@@ -110,6 +112,7 @@ export function createRequireOrgPermissionMiddleware(
       }
 
       if (!hasPermission(membership.roleKey, permission)) {
+        recordPermissionDenial(permission, membership.roleKey);
         return sendProblem(
           response,
           403,
@@ -514,6 +517,15 @@ export function createOrganizationsRouter(options: OrganizationRouterOptions): R
           action: query.action,
           actorUserId: query.actorUserId
         });
+
+        await recordAuditEvent(options.db, {
+          organizationId: orgId,
+          actorUserId: request.user!.id,
+          action: "audit:viewed",
+          targetType: "organization",
+          targetId: orgId,
+          result: "allowed"
+        }).catch(() => {});
 
         return response.status(200).json(result);
       } catch (error) {

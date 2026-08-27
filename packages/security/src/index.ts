@@ -13,6 +13,13 @@ export {
   hashOidcSecret,
   type OidcAuthorizationRequest
 } from "./oidc.js";
+export { getSecurityHeaders, type SecurityHeadersOptions } from "./headers.js";
+export {
+  createSlidingWindowRateLimiter,
+  type RateLimitOptions,
+  type RateLimitResult,
+  type RateLimiter
+} from "./rate-limit.js";
 
 export function redactRecord(input: Readonly<Record<string, unknown>>): Record<string, unknown> {
   return Object.fromEntries(

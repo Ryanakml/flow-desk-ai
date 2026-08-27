@@ -1,5 +1,6 @@
 import type { AuthConfig } from "@flowdesk/config";
 import type { Problem } from "@flowdesk/contracts";
+import { recordAuthDenial } from "@flowdesk/observability";
 import {
   type DbClient,
   createAuthSession,
@@ -76,6 +77,7 @@ export function createRequireAuthMiddleware(db: DbClient): RequestHandler {
   return async (request, response, next) => {
     const cookieToken = parseSessionCookie(request.headers.cookie);
     if (!cookieToken) {
+      recordAuthDenial("MISSING_SESSION");
       return sendProblem(
         response,
         401,
@@ -89,6 +91,7 @@ export function createRequireAuthMiddleware(db: DbClient): RequestHandler {
       const tokenHash = hashSessionToken(cookieToken);
       const session = await getActiveSessionByTokenHash(db, tokenHash);
       if (!session) {
+        recordAuthDenial("SESSION_EXPIRED");
         return sendProblem(
           response,
           401,

@@ -1,6 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { BuildInfoSchema, type Problem } from "@flowdesk/contracts";
-import { runWithRequestContext } from "@flowdesk/observability";
+import {
+  runWithRequestContext,
+  recordHttpRequest,
+  recordRateLimitExceeded,
+  getPrometheusMetrics
+} from "@flowdesk/observability";
+import {
+  getSecurityHeaders,
+  createSlidingWindowRateLimiter,
+  type RateLimiter
+} from "@flowdesk/security";
 import express, { type ErrorRequestHandler, type RequestHandler } from "express";
 
 import type { AuthConfig } from "@flowdesk/config";
@@ -40,29 +50,90 @@ export interface ApiAppOptions {
 export function createApiApp(options: ApiAppOptions) {
   const app = express();
   app.disable("x-powered-by");
+
+  // Security Headers
+  const securityHeaders = getSecurityHeaders({
+    enableHsts: options.environment === "production" || options.environment === "staging"
+  });
+  app.use(((request, response, next) => {
+    for (const [header, value] of Object.entries(securityHeaders)) {
+      response.setHeader(header, value);
+    }
+    next();
+  }) satisfies RequestHandler);
+
   app.use(express.json({ limit: "1mb" }));
+
+  // Request context, logging, and metrics
   app.use(((request, response, next) => {
     const startedAt = performance.now();
     const requestId = request.header("x-request-id") ?? randomUUID();
     const correlationId = request.header("x-correlation-id") ?? requestId;
     response.setHeader("x-request-id", requestId);
     response.once("finish", () => {
+      const durationSeconds = (performance.now() - startedAt) / 1000;
+      recordHttpRequest({
+        method: request.method,
+        route: request.baseUrl + request.path,
+        statusCode: response.statusCode,
+        durationSeconds
+      });
       options.logRequest?.({
         requestId,
         correlationId,
         method: request.method,
         path: request.path,
         statusCode: response.statusCode,
-        durationMs: Math.round((performance.now() - startedAt) * 100) / 100
+        durationMs: Math.round(durationSeconds * 100000) / 100
       });
     });
     runWithRequestContext({ requestId, correlationId }, next);
   }) satisfies RequestHandler);
 
+  // Rate Limiting setup
+  const authRateLimiter = createSlidingWindowRateLimiter({ windowMs: 60_000, max: 20 });
+  const getClientIp = (req: express.Request) =>
+    req.headers["x-forwarded-for"]?.toString().split(",")[0]?.trim() ||
+    req.socket.remoteAddress ||
+    "127.0.0.1";
+
+  function createRateLimitMiddleware(
+    limiter: RateLimiter,
+    keyResolver: (request: express.Request) => string
+  ): RequestHandler {
+    return ((request, response, next) => {
+      const key = keyResolver(request);
+      const result = limiter.consume(key);
+      response.setHeader("RateLimit-Limit", String(result.limit));
+      response.setHeader("RateLimit-Remaining", String(result.remaining));
+      response.setHeader("RateLimit-Reset", String(result.resetSeconds));
+
+      if (!result.allowed) {
+        response.setHeader("Retry-After", String(result.resetSeconds));
+        recordRateLimitExceeded(request.baseUrl + request.path);
+        const problem: Problem = {
+          type: "https://flowdesk.dev/problems/rate-limit-exceeded",
+          title: "Too Many Requests",
+          status: 429,
+          code: "RATE_LIMIT_EXCEEDED",
+          detail: `Rate limit exceeded. Try again in ${result.resetSeconds} seconds.`,
+          requestId: response.getHeader("x-request-id")?.toString() ?? "unknown"
+        };
+        response.status(429).type("application/problem+json").json(problem);
+        return;
+      }
+      next();
+    }) satisfies RequestHandler;
+  }
+
   app.get("/livez", (_request, response) => response.status(200).json({ status: "ok" }));
   app.get("/readyz", (_request, response) =>
     response.status(200).json({ status: "ready", checks: { configuration: "ok" } })
   );
+  app.get("/metrics", (_request, response) => {
+    response.setHeader("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
+    response.send(getPrometheusMetrics());
+  });
   app.get("/api/v1/system/build", (_request, response) => {
     response.json(BuildInfoSchema.parse(options));
   });
@@ -70,6 +141,7 @@ export function createApiApp(options: ApiAppOptions) {
   if (options.auth) {
     app.use(
       "/api/v1/auth",
+      createRateLimitMiddleware(authRateLimiter, (req) => `auth:${getClientIp(req)}`),
       createAuthRouter({
         db: options.auth.db,
         config: options.auth.config,
