@@ -7,7 +7,13 @@ import type { AuthConfig } from "@flowdesk/config";
 import type { DbClient } from "@flowdesk/db";
 import type { IdentityProvider } from "@flowdesk/providers";
 import { createAuthRouter } from "./auth.js";
+import { createOrganizationsRouter, createInvitationsRouter } from "./organizations.js";
 export { createAuthRouter, createRequireAuthMiddleware, type AuthenticatedUser } from "./auth.js";
+export {
+  createOrganizationsRouter,
+  createInvitationsRouter,
+  createRequireOrgPermissionMiddleware
+} from "./organizations.js";
 
 export interface ApiAppAuthOptions {
   db: DbClient;
@@ -68,6 +74,18 @@ export function createApiApp(options: ApiAppOptions) {
         db: options.auth.db,
         config: options.auth.config,
         identityProvider: options.auth.identityProvider
+      })
+    );
+    app.use(
+      "/api/v1/organizations",
+      createOrganizationsRouter({
+        db: options.auth.db
+      })
+    );
+    app.use(
+      "/api/v1/invitations",
+      createInvitationsRouter({
+        db: options.auth.db
       })
     );
   }

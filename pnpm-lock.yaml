@@ -60,6 +60,9 @@ importers:
       '@flowdesk/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@flowdesk/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
       '@flowdesk/observability':
         specifier: workspace:*
         version: link:../../packages/observability
