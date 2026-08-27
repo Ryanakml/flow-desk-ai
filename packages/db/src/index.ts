@@ -1,5 +1,20 @@
 import { v7 as uuidv7 } from "uuid";
 export { withTenantTransaction, type TenantContext } from "./tenant-context.js";
+export {
+  createOidcTransaction,
+  consumeOidcTransaction,
+  findOrCreateUserFromIdentity,
+  createAuthSession,
+  getActiveSessionByTokenHash,
+  revokeAuthSession,
+  type DbClient,
+  type OidcTransactionInput,
+  type OidcTransactionRecord,
+  type UpsertIdentityUserInput,
+  type UserRecord,
+  type CreateAuthSessionInput,
+  type AuthSessionRecord
+} from "./auth.js";
 
 export const DATABASE_PACKAGE_STATE = "m1-foundation-ready" as const;
 

@@ -1,5 +1,6 @@
-import { loadHttpConfig } from "@flowdesk/config";
+import { loadAuthConfig, loadHttpConfig } from "@flowdesk/config";
 import { createLogger, initializeTelemetry } from "@flowdesk/observability";
+import { Pool } from "pg";
 import { createApiApp } from "./app.js";
 
 const config = loadHttpConfig("api", Number(process.env["API_PORT"] ?? 4000));
@@ -13,11 +14,17 @@ const logger = createLogger({
   version: config.SERVICE_VERSION,
   level: config.LOG_LEVEL
 });
+
+const databaseUrl = process.env["DATABASE_URL"];
+const dbPool = databaseUrl ? new Pool({ connectionString: databaseUrl }) : undefined;
+const authConfig = loadAuthConfig();
+
 const app = createApiApp({
   service: config.SERVICE_NAME,
   version: config.SERVICE_VERSION,
   gitSha: config.GIT_SHA,
   environment: config.APP_ENV,
+  ...(dbPool ? { auth: { db: dbPool, config: authConfig } } : {}),
   logRequest: (event) => logger.info(event, "http.request.completed")
 });
 const server = app.listen(config.PORT, () => logger.info({ port: config.PORT }, "api.started"));
@@ -34,6 +41,7 @@ function shutdown(signal: string) {
   timer.unref();
   server.close((error) => {
     clearTimeout(timer);
+    void dbPool?.end();
     void stopTelemetry().then(() => {
       if (error) {
         logger.error({ error }, "api.shutdown_failed");

@@ -1,4 +1,18 @@
 const sensitiveKeys = /authorization|cookie|password|secret|token/i;
+export {
+  createOpaqueToken,
+  hashSessionToken,
+  sameSessionToken,
+  serializeSessionCookie,
+  serializeExpiredSessionCookie,
+  parseSessionCookie,
+  SESSION_COOKIE_NAME
+} from "./session.js";
+export {
+  createOidcAuthorizationRequest,
+  hashOidcSecret,
+  type OidcAuthorizationRequest
+} from "./oidc.js";
 
 export function redactRecord(input: Readonly<Record<string, unknown>>): Record<string, unknown> {
   return Object.fromEntries(

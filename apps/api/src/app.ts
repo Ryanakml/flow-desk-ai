@@ -3,11 +3,24 @@ import { BuildInfoSchema, type Problem } from "@flowdesk/contracts";
 import { runWithRequestContext } from "@flowdesk/observability";
 import express, { type ErrorRequestHandler, type RequestHandler } from "express";
 
+import type { AuthConfig } from "@flowdesk/config";
+import type { DbClient } from "@flowdesk/db";
+import type { IdentityProvider } from "@flowdesk/providers";
+import { createAuthRouter } from "./auth.js";
+export { createAuthRouter, createRequireAuthMiddleware, type AuthenticatedUser } from "./auth.js";
+
+export interface ApiAppAuthOptions {
+  db: DbClient;
+  config: AuthConfig;
+  identityProvider?: IdentityProvider;
+}
+
 export interface ApiAppOptions {
   service: string;
   version: string;
   gitSha: string;
   environment: "local" | "preview" | "staging" | "production";
+  auth?: ApiAppAuthOptions;
   logRequest?: (event: {
     requestId: string;
     correlationId: string;
@@ -47,6 +60,17 @@ export function createApiApp(options: ApiAppOptions) {
   app.get("/api/v1/system/build", (_request, response) => {
     response.json(BuildInfoSchema.parse(options));
   });
+
+  if (options.auth) {
+    app.use(
+      "/api/v1/auth",
+      createAuthRouter({
+        db: options.auth.db,
+        config: options.auth.config,
+        identityProvider: options.auth.identityProvider
+      })
+    );
+  }
 
   app.use(((request, response) => {
     const problem: Problem = {

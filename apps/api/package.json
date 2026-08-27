@@ -18,11 +18,16 @@
   "dependencies": {
     "@flowdesk/config": "workspace:*",
     "@flowdesk/contracts": "workspace:*",
+    "@flowdesk/db": "workspace:*",
     "@flowdesk/observability": "workspace:*",
-    "express": "^5.1.0"
+    "@flowdesk/providers": "workspace:*",
+    "@flowdesk/security": "workspace:*",
+    "express": "^5.1.0",
+    "pg": "8.16.3"
   },
   "devDependencies": {
     "@types/express": "^5.0.3",
+    "@types/pg": "8.15.5",
     "@types/supertest": "^6.0.3",
     "supertest": "^7.1.4",
     "tsx": "^4.20.5"

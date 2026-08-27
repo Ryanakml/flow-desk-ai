@@ -57,16 +57,31 @@ importers:
       '@flowdesk/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@flowdesk/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@flowdesk/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@flowdesk/providers':
+        specifier: workspace:*
+        version: link:../../packages/providers
+      '@flowdesk/security':
+        specifier: workspace:*
+        version: link:../../packages/security
       express:
         specifier: ^5.1.0
         version: 5.2.1
+      pg:
+        specifier: 8.16.3
+        version: 8.16.3
     devDependencies:
       '@types/express':
         specifier: ^5.0.3
         version: 5.0.6
+      '@types/pg':
+        specifier: 8.15.5
+        version: 8.15.5
       '@types/supertest':
         specifier: ^6.0.3
         version: 6.0.3
