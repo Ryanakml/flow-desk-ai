@@ -31,6 +31,24 @@ export {
   type InvitationRecord,
   type MembershipRecord
 } from "./organizations.js";
+export {
+  acquireIdempotencyKey,
+  completeIdempotencyKey,
+  releaseIdempotencyKey,
+  type IdempotencyStatus,
+  type AcquireIdempotencyResult,
+  type AcquireIdempotencyParams,
+  type CompleteIdempotencyParams,
+  type ReleaseIdempotencyParams
+} from "./idempotency.js";
+export {
+  recordAuditEvent,
+  listAuditLogs,
+  redactSensitiveMetadata,
+  type RecordAuditEventParams,
+  type RecordAuditEventResult,
+  type ListAuditLogsParams
+} from "./audit.js";
 
 export const DATABASE_PACKAGE_STATE = "m1-foundation-ready" as const;
 

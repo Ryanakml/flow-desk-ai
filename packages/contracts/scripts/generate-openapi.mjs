@@ -1,0 +1,746 @@
+import { readFileSync, writeFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const targetPath = resolve(__dirname, "../../../docs/api/openapi.json");
+
+export function buildOpenApiSpec() {
+  return {
+    openapi: "3.1.0",
+    info: {
+      title: "FlowDesk API",
+      version: "1.0.0",
+      description: "FlowDesk secure multi-tenant customer engagement API."
+    },
+    servers: [
+      {
+        url: "http://localhost:4000",
+        description: "Local Development API Server"
+      },
+      {
+        url: "https://api.flowdesk.dev",
+        description: "Production API Server"
+      }
+    ],
+    paths: {
+      "/livez": {
+        get: {
+          summary: "Liveness probe",
+          operationId: "getLivez",
+          responses: {
+            200: {
+              description: "Process is alive",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: { status: { type: "string", example: "ok" } },
+                    required: ["status"]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/readyz": {
+        get: {
+          summary: "Readiness probe",
+          operationId: "getReadyz",
+          responses: {
+            200: {
+              description: "Process is ready to serve traffic",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: { status: { type: "string", example: "ok" } },
+                    required: ["status"]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/api/v1/system/build": {
+        get: {
+          summary: "Service build metadata",
+          operationId: "getBuildInfo",
+          responses: {
+            200: {
+              description: "Build information",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/BuildInfo" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/api/v1/auth/authorize": {
+        get: {
+          summary: "Initiate OIDC authorization flow",
+          operationId: "authAuthorize",
+          parameters: [
+            {
+              name: "redirectUri",
+              in: "query",
+              required: false,
+              schema: { type: "string" }
+            }
+          ],
+          responses: {
+            200: {
+              description: "Authorization redirect URL",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: { authorizationUrl: { type: "string" } },
+                    required: ["authorizationUrl"]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/api/v1/auth/callback": {
+        get: {
+          summary: "Handle OIDC identity provider callback",
+          operationId: "authCallback",
+          parameters: [
+            { name: "code", in: "query", required: true, schema: { type: "string" } },
+            { name: "state", in: "query", required: true, schema: { type: "string" } }
+          ],
+          responses: {
+            302: {
+              description: "Sets session cookie and redirects user"
+            },
+            400: {
+              description: "Invalid state or code",
+              content: {
+                "application/problem+json": {
+                  schema: { $ref: "#/components/schemas/Problem" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/api/v1/auth/session": {
+        get: {
+          summary: "Inspect authenticated session",
+          operationId: "getSession",
+          responses: {
+            200: {
+              description: "Current session info",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/SessionState" }
+                }
+              }
+            },
+            401: {
+              description: "Missing or expired session",
+              content: {
+                "application/problem+json": {
+                  schema: { $ref: "#/components/schemas/Problem" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/api/v1/auth/logout": {
+        post: {
+          summary: "Revoke session and clear cookies",
+          operationId: "authLogout",
+          responses: {
+            200: {
+              description: "Successfully logged out",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: { status: { type: "string", example: "ok" } },
+                    required: ["status"]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/api/v1/organizations": {
+        post: {
+          summary: "Bootstrap a new organization",
+          operationId: "bootstrapOrganization",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/BootstrapOrganizationRequest" }
+              }
+            }
+          },
+          responses: {
+            201: {
+              description: "Organization successfully bootstrapped",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/BootstrapOrganizationResponse" }
+                }
+              }
+            },
+            400: {
+              description: "Validation error or invalid slug",
+              content: {
+                "application/problem+json": {
+                  schema: { $ref: "#/components/schemas/Problem" }
+                }
+              }
+            },
+            401: {
+              description: "Unauthorized",
+              content: {
+                "application/problem+json": {
+                  schema: { $ref: "#/components/schemas/Problem" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/api/v1/invitations/accept": {
+        post: {
+          summary: "Accept an organization invitation token",
+          operationId: "acceptInvitation",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/AcceptInvitationRequest" }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: "Invitation accepted",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/AcceptInvitationResponse" }
+                }
+              }
+            },
+            400: {
+              description: "Invalid, expired, or replayed invitation",
+              content: {
+                "application/problem+json": {
+                  schema: { $ref: "#/components/schemas/Problem" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/api/v1/organizations/{orgId}/members": {
+        get: {
+          summary: "List organization members",
+          operationId: "listMembers",
+          parameters: [
+            {
+              name: "orgId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" }
+            }
+          ],
+          responses: {
+            200: {
+              description: "List of members",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/ListMembersResponse" }
+                }
+              }
+            },
+            403: {
+              description: "Forbidden or not a member",
+              content: {
+                "application/problem+json": {
+                  schema: { $ref: "#/components/schemas/Problem" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/api/v1/organizations/{orgId}/members/{memberId}": {
+        patch: {
+          summary: "Update member role",
+          operationId: "updateMemberRole",
+          parameters: [
+            {
+              name: "orgId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" }
+            },
+            {
+              name: "memberId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" }
+            },
+            { name: "Idempotency-Key", in: "header", required: false, schema: { type: "string" } }
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/UpdateMembershipRoleRequest" }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: "Role updated",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      membershipId: { type: "string", format: "uuid" },
+                      role: { type: "string" }
+                    },
+                    required: ["membershipId", "role"]
+                  }
+                }
+              }
+            },
+            400: {
+              description: "Validation error or last-owner protection violation",
+              content: {
+                "application/problem+json": {
+                  schema: { $ref: "#/components/schemas/Problem" }
+                }
+              }
+            }
+          }
+        },
+        delete: {
+          summary: "Revoke organization membership",
+          operationId: "revokeMember",
+          parameters: [
+            {
+              name: "orgId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" }
+            },
+            {
+              name: "memberId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" }
+            },
+            { name: "Idempotency-Key", in: "header", required: false, schema: { type: "string" } }
+          ],
+          responses: {
+            200: {
+              description: "Member revoked",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: { status: { type: "string", example: "ok" } },
+                    required: ["status"]
+                  }
+                }
+              }
+            },
+            400: {
+              description: "Last-owner protection violation",
+              content: {
+                "application/problem+json": {
+                  schema: { $ref: "#/components/schemas/Problem" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/api/v1/organizations/{orgId}/invitations": {
+        post: {
+          summary: "Create and issue an organization invitation",
+          operationId: "createInvitation",
+          parameters: [
+            {
+              name: "orgId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" }
+            },
+            { name: "Idempotency-Key", in: "header", required: false, schema: { type: "string" } }
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/CreateInvitationRequest" }
+              }
+            }
+          },
+          responses: {
+            201: {
+              description: "Invitation created",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/CreateInvitationResponse" }
+                }
+              }
+            },
+            403: {
+              description: "Forbidden",
+              content: {
+                "application/problem+json": {
+                  schema: { $ref: "#/components/schemas/Problem" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/api/v1/organizations/{orgId}/invitations/{inviteId}": {
+        delete: {
+          summary: "Revoke a pending invitation",
+          operationId: "revokeInvitation",
+          parameters: [
+            {
+              name: "orgId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" }
+            },
+            {
+              name: "inviteId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" }
+            },
+            { name: "Idempotency-Key", in: "header", required: false, schema: { type: "string" } }
+          ],
+          responses: {
+            200: {
+              description: "Invitation revoked",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: { status: { type: "string", example: "ok" } },
+                    required: ["status"]
+                  }
+                }
+              }
+            },
+            404: {
+              description: "Invitation not found or not pending",
+              content: {
+                "application/problem+json": {
+                  schema: { $ref: "#/components/schemas/Problem" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/api/v1/organizations/{orgId}/audit-logs": {
+        get: {
+          summary: "List organization audit logs with cursor pagination",
+          operationId: "listAuditLogs",
+          parameters: [
+            {
+              name: "orgId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" }
+            },
+            { name: "cursor", in: "query", required: false, schema: { type: "string" } },
+            {
+              name: "limit",
+              in: "query",
+              required: false,
+              schema: { type: "integer", default: 50, minimum: 1, maximum: 100 }
+            },
+            { name: "action", in: "query", required: false, schema: { type: "string" } },
+            {
+              name: "actorUserId",
+              in: "query",
+              required: false,
+              schema: { type: "string", format: "uuid" }
+            }
+          ],
+          responses: {
+            200: {
+              description: "Audit logs page",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/ListAuditLogsResponse" }
+                }
+              }
+            },
+            403: {
+              description: "Forbidden without audit:view capability",
+              content: {
+                "application/problem+json": {
+                  schema: { $ref: "#/components/schemas/Problem" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    components: {
+      schemas: {
+        Problem: {
+          type: "object",
+          properties: {
+            type: { type: "string", format: "uri" },
+            title: { type: "string" },
+            status: { type: "integer" },
+            code: { type: "string" },
+            detail: { type: "string" },
+            requestId: { type: "string" }
+          },
+          required: ["type", "title", "status", "code", "detail", "requestId"]
+        },
+        BuildInfo: {
+          type: "object",
+          properties: {
+            service: { type: "string" },
+            version: { type: "string" },
+            gitSha: { type: "string" },
+            environment: { type: "string", enum: ["local", "preview", "staging", "production"] }
+          },
+          required: ["service", "version", "gitSha", "environment"]
+        },
+        SessionUser: {
+          type: "object",
+          properties: {
+            id: { type: "string", format: "uuid" },
+            email: { type: "string", format: "email" },
+            displayName: { type: "string" }
+          },
+          required: ["id", "email", "displayName"]
+        },
+        SessionState: {
+          type: "object",
+          properties: {
+            user: { $ref: "#/components/schemas/SessionUser" },
+            expiresAt: { type: "string", format: "date-time" }
+          },
+          required: ["user", "expiresAt"]
+        },
+        BootstrapOrganizationRequest: {
+          type: "object",
+          properties: {
+            name: { type: "string", minLength: 1, maxLength: 160 },
+            slug: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{1,62}$" }
+          },
+          required: ["name", "slug"]
+        },
+        BootstrapOrganizationResponse: {
+          type: "object",
+          properties: {
+            organization: {
+              type: "object",
+              properties: {
+                id: { type: "string", format: "uuid" },
+                slug: { type: "string" },
+                displayName: { type: "string" },
+                ownerRoleId: { type: "string", format: "uuid" },
+                membershipId: { type: "string", format: "uuid" }
+              },
+              required: ["id", "slug", "displayName", "ownerRoleId", "membershipId"]
+            }
+          },
+          required: ["organization"]
+        },
+        CreateInvitationRequest: {
+          type: "object",
+          properties: {
+            email: { type: "string", format: "email" },
+            role: {
+              type: "string",
+              enum: ["owner", "admin", "supervisor", "agent", "analyst", "billing_admin"]
+            }
+          },
+          required: ["email", "role"]
+        },
+        CreateInvitationResponse: {
+          type: "object",
+          properties: {
+            invitation: {
+              type: "object",
+              properties: {
+                id: { type: "string", format: "uuid" },
+                organizationId: { type: "string", format: "uuid" },
+                email: { type: "string", format: "email" },
+                role: { type: "string" },
+                status: { type: "string", enum: ["pending", "accepted", "revoked", "expired"] },
+                expiresAt: { type: "string", format: "date-time" },
+                inviteToken: { type: "string" }
+              },
+              required: [
+                "id",
+                "organizationId",
+                "email",
+                "role",
+                "status",
+                "expiresAt",
+                "inviteToken"
+              ]
+            }
+          },
+          required: ["invitation"]
+        },
+        AcceptInvitationRequest: {
+          type: "object",
+          properties: {
+            token: { type: "string", minLength: 1 }
+          },
+          required: ["token"]
+        },
+        AcceptInvitationResponse: {
+          type: "object",
+          properties: {
+            status: { type: "string", enum: ["ok"] },
+            organizationId: { type: "string", format: "uuid" },
+            membershipId: { type: "string", format: "uuid" }
+          },
+          required: ["status", "organizationId", "membershipId"]
+        },
+        MembershipMember: {
+          type: "object",
+          properties: {
+            id: { type: "string", format: "uuid" },
+            userId: { type: "string", format: "uuid" },
+            email: { type: "string", format: "email" },
+            displayName: { type: "string" },
+            roleKey: { type: "string" },
+            roleLabel: { type: "string" },
+            status: { type: "string", enum: ["invited", "active", "suspended", "revoked"] },
+            createdAt: { type: "string", format: "date-time" }
+          },
+          required: [
+            "id",
+            "userId",
+            "email",
+            "displayName",
+            "roleKey",
+            "roleLabel",
+            "status",
+            "createdAt"
+          ]
+        },
+        ListMembersResponse: {
+          type: "object",
+          properties: {
+            members: {
+              type: "array",
+              items: { $ref: "#/components/schemas/MembershipMember" }
+            }
+          },
+          required: ["members"]
+        },
+        UpdateMembershipRoleRequest: {
+          type: "object",
+          properties: {
+            role: {
+              type: "string",
+              enum: ["owner", "admin", "supervisor", "agent", "analyst", "billing_admin"]
+            }
+          },
+          required: ["role"]
+        },
+        PageInfo: {
+          type: "object",
+          properties: {
+            hasNextPage: { type: "boolean" },
+            hasPreviousPage: { type: "boolean" },
+            startCursor: { type: "string", nullable: true },
+            endCursor: { type: "string", nullable: true },
+            totalCount: { type: "integer" }
+          },
+          required: ["hasNextPage", "hasPreviousPage", "startCursor", "endCursor"]
+        },
+        AuditLogEntry: {
+          type: "object",
+          properties: {
+            id: { type: "string", format: "uuid" },
+            organizationId: { type: "string", format: "uuid" },
+            actorUserId: { type: "string", format: "uuid", nullable: true },
+            action: { type: "string" },
+            targetType: { type: "string" },
+            targetId: { type: "string", format: "uuid", nullable: true },
+            result: { type: "string", enum: ["allowed", "denied", "failed"] },
+            correlationId: { type: "string", format: "uuid", nullable: true },
+            metadata: { type: "object", additionalProperties: true },
+            occurredAt: { type: "string", format: "date-time" }
+          },
+          required: [
+            "id",
+            "organizationId",
+            "actorUserId",
+            "action",
+            "targetType",
+            "targetId",
+            "result",
+            "correlationId",
+            "metadata",
+            "occurredAt"
+          ]
+        },
+        ListAuditLogsResponse: {
+          type: "object",
+          properties: {
+            items: {
+              type: "array",
+              items: { $ref: "#/components/schemas/AuditLogEntry" }
+            },
+            pageInfo: { $ref: "#/components/schemas/PageInfo" }
+          },
+          required: ["items", "pageInfo"]
+        }
+      }
+    }
+  };
+}
+
+const spec = buildOpenApiSpec();
+const formatted = JSON.stringify(spec, null, 2) + "\n";
+
+if (process.argv.includes("--check")) {
+  try {
+    const existing = readFileSync(targetPath, "utf8");
+    const existingObj = JSON.parse(existing);
+    if (JSON.stringify(existingObj) !== JSON.stringify(spec)) {
+      console.error(
+        `Error: OpenAPI specification drift detected in docs/api/openapi.json. Run 'pnpm --filter @flowdesk/contracts generate:openapi' to regenerate.`
+      );
+      process.exit(1);
+    }
+    console.log("OpenAPI specification is up-to-date.");
+  } catch (err) {
+    console.error(`Error reading existing OpenAPI file at ${targetPath}:`, err);
+    process.exit(1);
+  }
+} else {
+  writeFileSync(targetPath, formatted, "utf8");
+  console.log(`Generated OpenAPI specification at ${targetPath}`);
+}

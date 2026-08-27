@@ -1,9 +1,10 @@
-import type { Problem } from "@flowdesk/contracts";
 import {
+  type Problem,
   BootstrapOrganizationRequestSchema,
   CreateInvitationRequestSchema,
   AcceptInvitationRequestSchema,
-  UpdateMembershipRoleRequestSchema
+  UpdateMembershipRoleRequestSchema,
+  ListAuditLogsQuerySchema
 } from "@flowdesk/contracts";
 import {
   type DbClient,
@@ -15,12 +16,15 @@ import {
   getMemberRole,
   updateMembershipRole,
   revokeMembership,
-  LastOwnerProtectionError
+  LastOwnerProtectionError,
+  recordAuditEvent,
+  listAuditLogs
 } from "@flowdesk/db";
 import { type Permission, hasPermission } from "@flowdesk/domain";
 import { createOpaqueToken, hashSessionToken } from "@flowdesk/security";
 import { type Request, type Response, type RequestHandler, Router } from "express";
 import { createRequireAuthMiddleware } from "./auth.js";
+import { createIdempotencyMiddleware } from "./idempotency.js";
 
 export interface OrganizationRouterOptions {
   db: DbClient;
@@ -128,6 +132,7 @@ export function createRequireOrgPermissionMiddleware(
 export function createOrganizationsRouter(options: OrganizationRouterOptions): Router {
   const router = Router();
   const requireAuth = createRequireAuthMiddleware(options.db);
+  const requireIdempotency = createIdempotencyMiddleware(options.db);
 
   // POST /api/v1/organizations - Bootstrap new organization
   router.post(["/", ""], requireAuth, async (request: Request, response: Response, next) => {
@@ -149,6 +154,16 @@ export function createOrganizationsRouter(options: OrganizationRouterOptions): R
         slug: parseResult.data.slug,
         userId: user.id
       });
+
+      await recordAuditEvent(options.db, {
+        organizationId: result.organizationId,
+        actorUserId: user.id,
+        action: "org:bootstrap",
+        targetType: "organization",
+        targetId: result.organizationId,
+        result: "allowed",
+        metadata: { slug: result.slug, name: result.displayName }
+      }).catch(() => {});
 
       return response.status(201).json({
         organization: {
@@ -241,6 +256,7 @@ export function createOrganizationsRouter(options: OrganizationRouterOptions): R
     "/:orgId/invitations",
     requireAuth,
     createRequireOrgPermissionMiddleware(options.db, "membership:invite"),
+    requireIdempotency,
     async (request: Request, response: Response, next) => {
       try {
         const parseResult = CreateInvitationRequestSchema.safeParse(request.body);
@@ -267,6 +283,16 @@ export function createOrganizationsRouter(options: OrganizationRouterOptions): R
           invitedByUserId: user.id
         });
 
+        await recordAuditEvent(options.db, {
+          organizationId: orgId,
+          actorUserId: user.id,
+          action: "membership:invited",
+          targetType: "invitation",
+          targetId: invite.id,
+          result: "allowed",
+          metadata: { email: invite.email, role: invite.roleKey }
+        }).catch(() => {});
+
         return response.status(201).json({
           invitation: {
             id: invite.id,
@@ -289,6 +315,7 @@ export function createOrganizationsRouter(options: OrganizationRouterOptions): R
     "/:orgId/invitations/:inviteId",
     requireAuth,
     createRequireOrgPermissionMiddleware(options.db, "membership:revoke"),
+    requireIdempotency,
     async (request: Request, response: Response, next) => {
       try {
         const orgId = getParam(request.params, "orgId");
@@ -308,6 +335,15 @@ export function createOrganizationsRouter(options: OrganizationRouterOptions): R
           );
         }
 
+        await recordAuditEvent(options.db, {
+          organizationId: orgId,
+          actorUserId: request.user!.id,
+          action: "invitation:revoked",
+          targetType: "invitation",
+          targetId: inviteId,
+          result: "allowed"
+        }).catch(() => {});
+
         return response.status(200).json({ status: "ok" });
       } catch (error) {
         return next(error);
@@ -320,6 +356,7 @@ export function createOrganizationsRouter(options: OrganizationRouterOptions): R
     "/:orgId/members/:memberId",
     requireAuth,
     createRequireOrgPermissionMiddleware(options.db, "membership:modify"),
+    requireIdempotency,
     async (request: Request, response: Response, next) => {
       try {
         const parseResult = UpdateMembershipRoleRequestSchema.safeParse(request.body);
@@ -342,6 +379,16 @@ export function createOrganizationsRouter(options: OrganizationRouterOptions): R
             membershipId: memberId,
             newRoleKey: parseResult.data.role
           });
+
+          await recordAuditEvent(options.db, {
+            organizationId: orgId,
+            actorUserId: request.user!.id,
+            action: "membership:role_updated",
+            targetType: "membership",
+            targetId: memberId,
+            result: "allowed",
+            metadata: { newRole: parseResult.data.role }
+          }).catch(() => {});
 
           return response.status(200).json({
             membershipId: updated.membershipId,
@@ -370,6 +417,7 @@ export function createOrganizationsRouter(options: OrganizationRouterOptions): R
     "/:orgId/members/:memberId",
     requireAuth,
     createRequireOrgPermissionMiddleware(options.db, "membership:revoke"),
+    requireIdempotency,
     async (request: Request, response: Response, next) => {
       try {
         const orgId = getParam(request.params, "orgId");
@@ -391,6 +439,15 @@ export function createOrganizationsRouter(options: OrganizationRouterOptions): R
             );
           }
 
+          await recordAuditEvent(options.db, {
+            organizationId: orgId,
+            actorUserId: request.user!.id,
+            action: "membership:revoked",
+            targetType: "membership",
+            targetId: memberId,
+            result: "allowed"
+          }).catch(() => {});
+
           return response.status(200).json({ status: "ok" });
         } catch (err) {
           if (err instanceof LastOwnerProtectionError) {
@@ -404,6 +461,41 @@ export function createOrganizationsRouter(options: OrganizationRouterOptions): R
           }
           throw err;
         }
+      } catch (error) {
+        return next(error);
+      }
+    }
+  );
+
+  // GET /api/v1/organizations/:orgId/audit-logs - List audit logs
+  router.get(
+    "/:orgId/audit-logs",
+    requireAuth,
+    createRequireOrgPermissionMiddleware(options.db, "audit:view"),
+    async (request: Request, response: Response, next) => {
+      try {
+        const orgId = getParam(request.params, "orgId");
+        const parseResult = ListAuditLogsQuerySchema.safeParse(request.query);
+        if (!parseResult.success) {
+          return sendProblem(
+            response,
+            400,
+            "VALIDATION_ERROR",
+            "Validation Error",
+            parseResult.error.issues.map((i) => i.message).join("; ")
+          );
+        }
+
+        const query = parseResult.data;
+        const result = await listAuditLogs(options.db, {
+          organizationId: orgId,
+          limit: query.limit,
+          cursor: query.cursor,
+          action: query.action,
+          actorUserId: query.actorUserId
+        });
+
+        return response.status(200).json(result);
       } catch (error) {
         return next(error);
       }
@@ -446,6 +538,15 @@ export function createInvitationsRouter(options: OrganizationRouterOptions): Rou
           "The invitation token is invalid, expired, or has already been accepted."
         );
       }
+
+      await recordAuditEvent(options.db, {
+        organizationId: consumed.organizationId,
+        actorUserId: user.id,
+        action: "membership:accepted",
+        targetType: "membership",
+        targetId: consumed.membershipId,
+        result: "allowed"
+      }).catch(() => {});
 
       return response.status(200).json({
         status: "ok",
