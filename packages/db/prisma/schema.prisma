@@ -1,0 +1,11 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Tenant-owned models begin in M1-02. Keeping the datasource here makes Prisma
+// validation and generated-client adoption deterministic before those tables exist.

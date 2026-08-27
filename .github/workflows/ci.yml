@@ -86,6 +86,33 @@ jobs:
           docker logs app
           exit 1
 
+  database-foundation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.0-pg16-bookworm
+        env:
+          POSTGRES_DB: flowdesk
+          POSTGRES_USER: flowdesk
+          POSTGRES_PASSWORD: flowdesk_local
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U flowdesk -d flowdesk"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      DATABASE_MIGRATOR_URL: postgresql://flowdesk:flowdesk_local@localhost:5432/flowdesk
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with: { run_install: false }
+      - uses: actions/setup-node@1e60f620b9541d16bece96c5465dc8ee9832be0b # v4.0.3
+        with: { node-version-file: .node-version, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @flowdesk/db test:integration
+
   terraform:
     runs-on: ubuntu-24.04
     timeout-minutes: 10

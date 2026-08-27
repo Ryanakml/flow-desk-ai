@@ -11,9 +11,21 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "db:migrate": "node scripts/migrate.mjs",
+    "db:break-glass": "node scripts/break-glass.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --exclude '**/*.integration.test.ts'",
+    "test:integration": "vitest run src/database-foundation.integration.test.ts",
     "test:coverage": "vitest run --coverage",
     "clean": "rm -rf dist coverage"
+  },
+  "dependencies": {
+    "@prisma/client": "6.15.0",
+    "pg": "8.16.3",
+    "uuid": "11.1.0"
+  },
+  "devDependencies": {
+    "@types/pg": "8.15.5",
+    "prisma": "6.15.0"
   }
 }

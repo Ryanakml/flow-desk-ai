@@ -9,6 +9,6 @@ fi
 compose_file="infra/compose/compose.yaml"
 project_name="flowdesk-local"
 docker compose -f "$compose_file" stop postgres
+docker compose -f "$compose_file" rm -f -s postgres
 docker volume rm "${project_name}_postgres-data" 2>/dev/null || true
 docker compose -f "$compose_file" up -d postgres
-
