@@ -12,3 +12,4 @@
 | UI-WORK-001    | M1    | Authenticated workspace & team shell    | React suites; route guards; a11y focus     | Complete |
 | SEC-OBS-001    | M1    | Security headers, rate limit, telemetry | Rate limit suites; metrics/redaction tests | Complete |
 | CHAN-MOD-001   | M2    | Channel schema & AES-256-GCM envelope   | RLS isolation tests; encryption suites     | Complete |
+| CHAN-PROV-001  | M2    | WhatsApp Cloud API & Fake provider      | Error classification; adapter test suite   | Complete |
