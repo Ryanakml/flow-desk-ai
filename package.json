@@ -12,6 +12,8 @@
     "build": "turbo run build",
     "commitlint": "commitlint",
     "dev": "turbo run dev --parallel",
+    "db:migrate": "pnpm --filter @flowdesk/db db:migrate",
+    "db:break-glass": "pnpm --filter @flowdesk/db db:break-glass",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint \"{apps,packages}/**/*.{ts,tsx}\"",
@@ -37,6 +39,9 @@
     "vitest": "^3.2.4"
   },
   "pnpm": {
+    "overrides": {
+      "deepmerge-ts": "8.0.0"
+    },
     "onlyBuiltDependencies": [
       "esbuild"
     ]

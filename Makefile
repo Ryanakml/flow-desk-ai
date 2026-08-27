@@ -1,4 +1,4 @@
-.PHONY: bootstrap dev test lint typecheck build verify compose-up compose-down db-reset clean
+.PHONY: bootstrap dev test lint typecheck build verify compose-up compose-down db-migrate db-reset clean
 
 bootstrap:
 	corepack enable
@@ -28,6 +28,9 @@ compose-up:
 
 compose-down:
 	docker compose -f infra/compose/compose.yaml down
+
+db-migrate:
+	pnpm db:migrate
 
 db-reset:
 	./scripts/db-reset-local.sh
