@@ -10,3 +10,12 @@ export function requireTenantContext(context: Partial<TenantContext>): TenantCon
   }
   return context as TenantContext;
 }
+
+export {
+  type Permission,
+  type RoleKey,
+  STANDARD_ROLES,
+  getPermissionsForRole,
+  hasPermission,
+  isStandardRole
+} from "./permissions.js";

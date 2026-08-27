@@ -36,7 +36,8 @@ describe("database foundation", () => {
       "0001_database_foundation.sql",
       "0002_m1_core_schema.sql",
       "0003_tenant_rls.sql",
-      "0004_auth_sessions.sql"
+      "0004_auth_sessions.sql",
+      "0005_invitations.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -86,6 +87,7 @@ describe("database foundation", () => {
       "auth_sessions",
       "idempotency_keys",
       "identities",
+      "invitations",
       "memberships",
       "oidc_authorization_transactions",
       "organization_settings",
@@ -97,6 +99,7 @@ describe("database foundation", () => {
     expect(tenantColumns.rows.map((row) => row.table_name).sort()).toEqual([
       "audit_logs",
       "idempotency_keys",
+      "invitations",
       "memberships",
       "organization_settings",
       "outbox_events",

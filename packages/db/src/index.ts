@@ -15,6 +15,22 @@ export {
   type CreateAuthSessionInput,
   type AuthSessionRecord
 } from "./auth.js";
+export {
+  bootstrapOrganization,
+  createInvitation,
+  consumeInvitation,
+  revokeInvitation,
+  listMemberships,
+  getMemberRole,
+  updateMembershipRole,
+  revokeMembership,
+  LastOwnerProtectionError,
+  type BootstrapOrganizationInput,
+  type BootstrapOrganizationResult,
+  type CreateInvitationInput,
+  type InvitationRecord,
+  type MembershipRecord
+} from "./organizations.js";
 
 export const DATABASE_PACKAGE_STATE = "m1-foundation-ready" as const;
 

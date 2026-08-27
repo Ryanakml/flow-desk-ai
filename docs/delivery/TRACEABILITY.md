@@ -7,3 +7,4 @@
 | OPS-HEALTH-001 | M0    | API and process health servers          | app tests; hosted image smoke matrix       | Complete |
 | SEC-TENANT-001 | M1    | ADR-002; `TenantContext` contract       | PostgreSQL/RLS negative suite              | Complete |
 | SEC-AUTH-001   | M1    | ADR-004; OIDC + HttpOnly session token  | Supertest auth suite; session revocation   | Complete |
+| SEC-RBAC-001   | M1    | Domain permission policy & invitations  | Supertest org suite; last-owner protection | Complete |

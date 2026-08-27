@@ -19,6 +19,7 @@
     "@flowdesk/config": "workspace:*",
     "@flowdesk/contracts": "workspace:*",
     "@flowdesk/db": "workspace:*",
+    "@flowdesk/domain": "workspace:*",
     "@flowdesk/observability": "workspace:*",
     "@flowdesk/providers": "workspace:*",
     "@flowdesk/security": "workspace:*",
