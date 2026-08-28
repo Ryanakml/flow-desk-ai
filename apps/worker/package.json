@@ -21,6 +21,7 @@
     "@flowdesk/domain": "workspace:*",
     "@flowdesk/observability": "workspace:*",
     "@flowdesk/providers": "workspace:*",
+    "@flowdesk/security": "workspace:*",
     "pg": "8.16.3"
   },
   "devDependencies": {

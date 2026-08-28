@@ -176,14 +176,18 @@ function createMockConversationDb(): {
       if (sql.includes("UPDATE flowdesk.messages SET status = $1")) {
         const targetStatus = values[0] as MessageRecord["status"];
         const id = values[1] as string;
-        const deliveredAt = (values[2] as Date | null) ?? null;
-        const readAt = (values[3] as Date | null) ?? null;
-        const errorDetail = (values[4] as string | null) ?? null;
-        const orgId = values[5] as string;
+        const providerMessageId = (values[2] as string | null) ?? null;
+        const sentAt = (values[3] as Date | null) ?? null;
+        const deliveredAt = (values[4] as Date | null) ?? null;
+        const readAt = (values[5] as Date | null) ?? null;
+        const errorDetail = (values[6] as string | null) ?? null;
+        const orgId = values[7] as string;
 
         const m = messages.get(id);
         if (m && m.organizationId === orgId) {
           m.status = targetStatus;
+          if (providerMessageId) m.providerMessageId = providerMessageId;
+          if (sentAt) m.sentAt = sentAt;
           if (deliveredAt) m.deliveredAt = deliveredAt;
           if (readAt) m.readAt = readAt;
           if (errorDetail) m.errorDetail = errorDetail;
