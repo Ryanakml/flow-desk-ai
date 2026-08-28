@@ -278,7 +278,11 @@ export async function updateMessageStatus(
   organizationId: string,
   messageId: string,
   targetStatus: MessageStatus,
-  extra?: { deliveredAt?: Date; readAt?: Date; errorDetail?: string }
+  extra?: {
+    deliveredAt?: Date | undefined;
+    readAt?: Date | undefined;
+    errorDetail?: string | undefined;
+  }
 ): Promise<MessageRecord> {
   const selectRes = await client.query<MessageRecord>(
     `SELECT

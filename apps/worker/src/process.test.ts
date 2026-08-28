@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { workerState } from "./process.js";
 
-describe("worker skeleton", () => {
-  it("does not claim domain jobs during M0", () => expect(workerState().claimsJobs).toBe(false));
+describe("worker process state", () => {
+  it("reflects active and idle job claiming modes", () => {
+    expect(workerState(true).claimsJobs).toBe(true);
+    expect(workerState(false).claimsJobs).toBe(false);
+  });
 });
