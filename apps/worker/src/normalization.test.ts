@@ -214,9 +214,10 @@ describe("Worker Message & Conversation Processing Pipeline (M2-06)", () => {
         }
 
         if (
-          sql.includes(
-            "SELECT id, organization_id, aggregate_id, payload, correlation_id FROM flowdesk.outbox_events"
-          )
+          sql.includes("claim_outbox_events('webhook.received'") ||
+          (sql.includes("FROM flowdesk.outbox_events") &&
+            sql.includes("event_type = 'webhook.received'") &&
+            sql.includes("published_at IS NULL"))
         ) {
           const unpublished = outboxEvents.filter((e) => e.published_at === null);
           return {

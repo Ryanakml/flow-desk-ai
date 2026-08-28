@@ -15,11 +15,13 @@ import {
   listConversations,
   listMessagesByConversation,
   OptimisticConcurrencyError,
+  runInTenantTransaction,
   updateConversation
 } from "@flowdesk/db";
 import { type Permission } from "@flowdesk/domain";
 import { type Request, type Response, Router } from "express";
 import { createRequireAuthMiddleware } from "./auth.js";
+import { createIdempotencyMiddleware } from "./idempotency.js";
 import { createRequireOrgPermissionMiddleware } from "./organizations.js";
 
 export interface ConversationsRouterOptions {
@@ -115,6 +117,7 @@ function serializeMessage(msg: {
 export function createConversationsRouter(options: ConversationsRouterOptions): Router {
   const router = Router({ mergeParams: true });
   const requireAuth = createRequireAuthMiddleware(options.db);
+  const requireIdempotency = createIdempotencyMiddleware(options.db);
   router.use(requireAuth);
 
   // 1. GET /api/v1/organizations/:orgId/conversations
@@ -145,13 +148,15 @@ export function createConversationsRouter(options: ConversationsRouterOptions): 
         assignedToUserId = assignedTo;
       }
 
-      const result = await listConversations(options.db, {
-        organizationId: orgId,
-        status,
-        assignedToUserId,
-        cursor,
-        limit
-      });
+      const result = await runInTenantTransaction(options.db, { organizationId: orgId }, (db) =>
+        listConversations(db, {
+          organizationId: orgId,
+          status,
+          assignedToUserId,
+          cursor,
+          limit
+        })
+      );
 
       const payload = ListConversationsResponseSchema.parse({
         items: result.items.map(serializeConversation),
@@ -159,6 +164,64 @@ export function createConversationsRouter(options: ConversationsRouterOptions): 
       });
 
       return response.status(200).json(payload);
+    }
+  );
+
+  // Tenant-scoped invalidation stream. PostgreSQL remains the source of truth;
+  // the browser receives no message payload here and reloads through the same
+  // RBAC-protected REST endpoints when the tenant projection changes.
+  router.get(
+    "/events",
+    createRequireOrgPermissionMiddleware(options.db, "conversation:read"),
+    (request: Request, response: Response) => {
+      const orgId = request.params["orgId"] as string;
+      response.status(200);
+      response.setHeader("Content-Type", "text/event-stream");
+      response.setHeader("Cache-Control", "no-cache, no-transform");
+      response.setHeader("Connection", "keep-alive");
+      response.flushHeaders();
+
+      let lastVersion: string | null = null;
+      let closed = false;
+      let ticking = false;
+
+      const poll = async () => {
+        if (closed || ticking) return;
+        ticking = true;
+        try {
+          const result = await runInTenantTransaction(options.db, { organizationId: orgId }, (db) =>
+            db.query<{ version: string }>(
+              `SELECT GREATEST(
+                   COALESCE((SELECT max(updated_at) FROM flowdesk.conversations
+                     WHERE organization_id = $1), '-infinity'::timestamptz),
+                   COALESCE((SELECT max(updated_at) FROM flowdesk.messages
+                     WHERE organization_id = $1), '-infinity'::timestamptz)
+                 )::text AS version`,
+              [orgId]
+            )
+          );
+          const version = result.rows[0]?.version ?? "-infinity";
+          if (lastVersion === null) {
+            response.write(`event: ready\ndata: ${JSON.stringify({ version })}\n\n`);
+          } else if (version !== lastVersion) {
+            response.write(`event: conversation.changed\ndata: ${JSON.stringify({ version })}\n\n`);
+          } else {
+            response.write(": heartbeat\n\n");
+          }
+          lastVersion = version;
+        } catch {
+          response.write("event: stream.error\ndata: {}\n\n");
+        } finally {
+          ticking = false;
+        }
+      };
+
+      void poll();
+      const timer = setInterval(() => void poll(), 2_000);
+      request.once("close", () => {
+        closed = true;
+        clearInterval(timer);
+      });
     }
   );
 
@@ -170,7 +233,17 @@ export function createConversationsRouter(options: ConversationsRouterOptions): 
       const orgId = request.params["orgId"] as string;
       const id = request.params["id"] as string;
 
-      const conversation = await getConversationById(options.db, orgId, id);
+      const detail = await runInTenantTransaction(
+        options.db,
+        { organizationId: orgId },
+        async (db) => {
+          const conversation = await getConversationById(db, orgId, id);
+          if (!conversation) return null;
+          const messages = await listMessagesByConversation(db, orgId, id, 100);
+          return { conversation, messages };
+        }
+      );
+      const conversation = detail?.conversation;
       if (!conversation) {
         return sendProblem(
           response,
@@ -181,11 +254,9 @@ export function createConversationsRouter(options: ConversationsRouterOptions): 
         );
       }
 
-      const messages = await listMessagesByConversation(options.db, orgId, id, 100);
-
       const payload = ConversationDetailResponseSchema.parse({
         conversation: serializeConversation(conversation),
-        messages: messages.map(serializeMessage)
+        messages: detail.messages.map(serializeMessage)
       });
 
       return response.status(200).json(payload);
@@ -225,13 +296,15 @@ export function createConversationsRouter(options: ConversationsRouterOptions): 
       const data = UpdateConversationRequestSchema.parse(request.body);
 
       try {
-        const updated = await updateConversation(options.db, {
-          organizationId: orgId,
-          id,
-          expectedVersion: data.version,
-          status: data.status,
-          assignedToUserId: data.assignedToUserId
-        });
+        const updated = await runInTenantTransaction(options.db, { organizationId: orgId }, (db) =>
+          updateConversation(db, {
+            organizationId: orgId,
+            id,
+            expectedVersion: data.version,
+            status: data.status,
+            assignedToUserId: data.assignedToUserId
+          })
+        );
 
         return response.status(200).json(serializeConversation(updated));
       } catch (err: unknown) {
@@ -277,6 +350,7 @@ export function createConversationsRouter(options: ConversationsRouterOptions): 
   router.post(
     "/:id/messages",
     createRequireOrgPermissionMiddleware(options.db, "message:send"),
+    requireIdempotency,
     async (request: Request, response: Response) => {
       const orgId = request.params["orgId"] as string;
       const id = request.params["id"] as string;
@@ -292,8 +366,34 @@ export function createConversationsRouter(options: ConversationsRouterOptions): 
         );
       }
 
-      const conversation = await getConversationById(options.db, orgId, id);
-      if (!conversation) {
+      const idempotencyKey =
+        request.header("idempotency-key")?.trim() ?? request.header("x-idempotency-key")?.trim();
+      if (!idempotencyKey) {
+        return sendProblem(
+          response,
+          400,
+          "IDEMPOTENCY_KEY_REQUIRED",
+          "Idempotency Key Required",
+          "Idempotency-Key header is required when sending an outbound message."
+        );
+      }
+
+      const message = await runInTenantTransaction(
+        options.db,
+        { organizationId: orgId },
+        async (db) => {
+          const conversation = await getConversationById(db, orgId, id);
+          if (!conversation) return null;
+          return createOutboundMessageWithOutbox(db, {
+            organizationId: orgId,
+            conversationId: id,
+            senderUserId: request.user!.id,
+            content: parseResult.data.content,
+            correlationId: response.getHeader("x-request-id")?.toString()
+          });
+        }
+      );
+      if (!message) {
         return sendProblem(
           response,
           404,
@@ -302,14 +402,6 @@ export function createConversationsRouter(options: ConversationsRouterOptions): 
           `Conversation '${id}' was not found in this organization.`
         );
       }
-
-      const message = await createOutboundMessageWithOutbox(options.db, {
-        organizationId: orgId,
-        conversationId: id,
-        senderUserId: request.user!.id,
-        content: parseResult.data.content,
-        correlationId: response.getHeader("x-request-id")?.toString()
-      });
 
       return response.status(201).json(serializeMessage(message));
     }

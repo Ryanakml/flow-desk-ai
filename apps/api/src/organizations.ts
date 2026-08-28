@@ -19,7 +19,8 @@ import {
   LastOwnerProtectionError,
   recordAuditEvent,
   listAuditLogs,
-  listUserOrganizations
+  listUserOrganizations,
+  runInTenantTransaction
 } from "@flowdesk/db";
 import { type Permission, hasPermission } from "@flowdesk/domain";
 import { recordPermissionDenial } from "@flowdesk/observability";
@@ -99,7 +100,9 @@ export function createRequireOrgPermissionMiddleware(
     }
 
     try {
-      const membership = await getMemberRole(db, { organizationId: orgId, userId: user.id });
+      const membership = await runInTenantTransaction(db, { organizationId: orgId }, (client) =>
+        getMemberRole(client, { organizationId: orgId, userId: user.id })
+      );
       if (!membership) {
         recordPermissionDenial(permission, "none");
         return sendProblem(
@@ -255,7 +258,9 @@ export function createOrganizationsRouter(options: OrganizationRouterOptions): R
     async (request: Request, response: Response, next) => {
       try {
         const orgId = getParam(request.params, "orgId");
-        const members = await listMemberships(options.db, orgId);
+        const members = await runInTenantTransaction(options.db, { organizationId: orgId }, (db) =>
+          listMemberships(db, orgId)
+        );
         return response.status(200).json({
           members: members.map((m) => ({
             id: m.id,
@@ -298,23 +303,29 @@ export function createOrganizationsRouter(options: OrganizationRouterOptions): R
         const inviteToken = createOpaqueToken();
         const tokenHash = hashSessionToken(inviteToken);
 
-        const invite = await createInvitation(options.db, {
-          organizationId: orgId,
-          email: parseResult.data.email,
-          roleKey: parseResult.data.role,
-          tokenHash,
-          invitedByUserId: user.id
-        });
-
-        await recordAuditEvent(options.db, {
-          organizationId: orgId,
-          actorUserId: user.id,
-          action: "membership:invited",
-          targetType: "invitation",
-          targetId: invite.id,
-          result: "allowed",
-          metadata: { email: invite.email, role: invite.roleKey }
-        }).catch(() => {});
+        const invite = await runInTenantTransaction(
+          options.db,
+          { organizationId: orgId },
+          async (db) => {
+            const created = await createInvitation(db, {
+              organizationId: orgId,
+              email: parseResult.data.email,
+              roleKey: parseResult.data.role,
+              tokenHash,
+              invitedByUserId: user.id
+            });
+            await recordAuditEvent(db, {
+              organizationId: orgId,
+              actorUserId: user.id,
+              action: "membership:invited",
+              targetType: "invitation",
+              targetId: created.id,
+              result: "allowed",
+              metadata: { email: created.email, role: created.roleKey }
+            });
+            return created;
+          }
+        );
 
         return response.status(201).json({
           invitation: {
@@ -343,10 +354,27 @@ export function createOrganizationsRouter(options: OrganizationRouterOptions): R
       try {
         const orgId = getParam(request.params, "orgId");
         const inviteId = getParam(request.params, "inviteId");
-        const revoked = await revokeInvitation(options.db, {
-          organizationId: orgId,
-          invitationId: inviteId
-        });
+        const revoked = await runInTenantTransaction(
+          options.db,
+          { organizationId: orgId },
+          async (db) => {
+            const wasRevoked = await revokeInvitation(db, {
+              organizationId: orgId,
+              invitationId: inviteId
+            });
+            if (wasRevoked) {
+              await recordAuditEvent(db, {
+                organizationId: orgId,
+                actorUserId: request.user!.id,
+                action: "invitation:revoked",
+                targetType: "invitation",
+                targetId: inviteId,
+                result: "allowed"
+              });
+            }
+            return wasRevoked;
+          }
+        );
 
         if (!revoked) {
           return sendProblem(
@@ -357,15 +385,6 @@ export function createOrganizationsRouter(options: OrganizationRouterOptions): R
             "The invitation was not found or is no longer pending."
           );
         }
-
-        await recordAuditEvent(options.db, {
-          organizationId: orgId,
-          actorUserId: request.user!.id,
-          action: "invitation:revoked",
-          targetType: "invitation",
-          targetId: inviteId,
-          result: "allowed"
-        }).catch(() => {});
 
         return response.status(200).json({ status: "ok" });
       } catch (error) {
@@ -397,21 +416,27 @@ export function createOrganizationsRouter(options: OrganizationRouterOptions): R
         const memberId = getParam(request.params, "memberId");
 
         try {
-          const updated = await updateMembershipRole(options.db, {
-            organizationId: orgId,
-            membershipId: memberId,
-            newRoleKey: parseResult.data.role
-          });
-
-          await recordAuditEvent(options.db, {
-            organizationId: orgId,
-            actorUserId: request.user!.id,
-            action: "membership:role_updated",
-            targetType: "membership",
-            targetId: memberId,
-            result: "allowed",
-            metadata: { newRole: parseResult.data.role }
-          }).catch(() => {});
+          const updated = await runInTenantTransaction(
+            options.db,
+            { organizationId: orgId },
+            async (db) => {
+              const changed = await updateMembershipRole(db, {
+                organizationId: orgId,
+                membershipId: memberId,
+                newRoleKey: parseResult.data.role
+              });
+              await recordAuditEvent(db, {
+                organizationId: orgId,
+                actorUserId: request.user!.id,
+                action: "membership:role_updated",
+                targetType: "membership",
+                targetId: memberId,
+                result: "allowed",
+                metadata: { newRole: parseResult.data.role }
+              });
+              return changed;
+            }
+          );
 
           return response.status(200).json({
             membershipId: updated.membershipId,
@@ -447,10 +472,27 @@ export function createOrganizationsRouter(options: OrganizationRouterOptions): R
         const memberId = getParam(request.params, "memberId");
 
         try {
-          const revoked = await revokeMembership(options.db, {
-            organizationId: orgId,
-            membershipId: memberId
-          });
+          const revoked = await runInTenantTransaction(
+            options.db,
+            { organizationId: orgId },
+            async (db) => {
+              const wasRevoked = await revokeMembership(db, {
+                organizationId: orgId,
+                membershipId: memberId
+              });
+              if (wasRevoked) {
+                await recordAuditEvent(db, {
+                  organizationId: orgId,
+                  actorUserId: request.user!.id,
+                  action: "membership:revoked",
+                  targetType: "membership",
+                  targetId: memberId,
+                  result: "allowed"
+                });
+              }
+              return wasRevoked;
+            }
+          );
 
           if (!revoked) {
             return sendProblem(
@@ -461,15 +503,6 @@ export function createOrganizationsRouter(options: OrganizationRouterOptions): R
               "The membership was not found or has already been revoked."
             );
           }
-
-          await recordAuditEvent(options.db, {
-            organizationId: orgId,
-            actorUserId: request.user!.id,
-            action: "membership:revoked",
-            targetType: "membership",
-            targetId: memberId,
-            result: "allowed"
-          }).catch(() => {});
 
           return response.status(200).json({ status: "ok" });
         } catch (err) {
@@ -510,22 +543,28 @@ export function createOrganizationsRouter(options: OrganizationRouterOptions): R
         }
 
         const query = parseResult.data;
-        const result = await listAuditLogs(options.db, {
-          organizationId: orgId,
-          limit: query.limit,
-          cursor: query.cursor,
-          action: query.action,
-          actorUserId: query.actorUserId
-        });
-
-        await recordAuditEvent(options.db, {
-          organizationId: orgId,
-          actorUserId: request.user!.id,
-          action: "audit:viewed",
-          targetType: "organization",
-          targetId: orgId,
-          result: "allowed"
-        }).catch(() => {});
+        const result = await runInTenantTransaction(
+          options.db,
+          { organizationId: orgId },
+          async (db) => {
+            const logs = await listAuditLogs(db, {
+              organizationId: orgId,
+              limit: query.limit,
+              cursor: query.cursor,
+              action: query.action,
+              actorUserId: query.actorUserId
+            });
+            await recordAuditEvent(db, {
+              organizationId: orgId,
+              actorUserId: request.user!.id,
+              action: "audit:viewed",
+              targetType: "organization",
+              targetId: orgId,
+              result: "allowed"
+            });
+            return logs;
+          }
+        );
 
         return response.status(200).json(result);
       } catch (error) {

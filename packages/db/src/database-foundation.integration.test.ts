@@ -40,7 +40,8 @@ describe("database foundation", () => {
       "0005_invitations.sql",
       "0006_channels.sql",
       "0007_webhook_events.sql",
-      "0008_conversations_and_messages.sql"
+      "0008_conversations_and_messages.sql",
+      "0009_m2_completion_hardening.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -76,6 +77,35 @@ describe("database foundation", () => {
     ]);
   });
 
+  it("limits cross-tenant queue capabilities to non-login security-definer functions", async () => {
+    const systemRole = await admin.query<{
+      rolcanlogin: boolean;
+      rolbypassrls: boolean;
+      rolsuper: boolean;
+    }>(
+      `SELECT rolcanlogin, rolbypassrls, rolsuper
+       FROM pg_roles WHERE rolname = 'flowdesk_system'`
+    );
+    expect(systemRole.rows).toEqual([{ rolcanlogin: false, rolbypassrls: true, rolsuper: false }]);
+
+    const functions = await admin.query<{ proname: string; owner: string }>(
+      `SELECT procedure.proname, owner.rolname AS owner
+       FROM pg_proc AS procedure
+       JOIN pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
+       JOIN pg_roles AS owner ON owner.oid = procedure.proowner
+       WHERE namespace.nspname = 'flowdesk'
+         AND procedure.proname IN (
+           'claim_outbox_events', 'messaging_operational_snapshot', 'record_whatsapp_webhook'
+         )
+       ORDER BY procedure.proname`
+    );
+    expect(functions.rows).toEqual([
+      { proname: "claim_outbox_events", owner: "flowdesk_system" },
+      { proname: "messaging_operational_snapshot", owner: "flowdesk_system" },
+      { proname: "record_whatsapp_webhook", owner: "flowdesk_system" }
+    ]);
+  });
+
   it("creates the core tables with tenant keys and required indexes", async () => {
     const tables = await admin.query<{ table_name: string }>(
       `SELECT table_name FROM information_schema.tables
@@ -89,15 +119,19 @@ describe("database foundation", () => {
       "audit_logs",
       "auth_sessions",
       "channels",
+      "contacts",
+      "conversation_events",
       "conversations",
       "idempotency_keys",
       "identities",
       "invitations",
       "memberships",
+      "message_status_events",
       "messages",
       "oidc_authorization_transactions",
       "organization_settings",
       "organizations",
+      "outbound_intents",
       "outbox_events",
       "roles",
       "users",
@@ -106,12 +140,16 @@ describe("database foundation", () => {
     expect(tenantColumns.rows.map((row) => row.table_name).sort()).toEqual([
       "audit_logs",
       "channels",
+      "contacts",
+      "conversation_events",
       "conversations",
       "idempotency_keys",
       "invitations",
       "memberships",
+      "message_status_events",
       "messages",
       "organization_settings",
+      "outbound_intents",
       "outbox_events",
       "roles"
     ]);

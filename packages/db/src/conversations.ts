@@ -622,15 +622,7 @@ export async function claimUnpublishedOutboxEvents<TPayload = Record<string, unk
     causation_id: string | null;
     occurred_at: Date;
     attempts: number;
-  }>(
-    `SELECT id, organization_id, aggregate_type, aggregate_id, event_type,
-            payload, correlation_id, causation_id, occurred_at, attempts
-     FROM flowdesk.outbox_events
-     WHERE event_type = $1 AND published_at IS NULL
-     ORDER BY occurred_at ASC
-     LIMIT $2`,
-    [eventType, limit]
-  );
+  }>(`SELECT * FROM flowdesk.claim_outbox_events($1, $2)`, [eventType, limit]);
 
   return res.rows.map((row) => ({
     id: row.id,
@@ -653,6 +645,8 @@ export async function markOutboxEventPublished(client: DbClient, eventId: string
   await client.query(
     `UPDATE flowdesk.outbox_events
      SET published_at = clock_timestamp()
+         , claimed_until = NULL
+         , claim_token = NULL
      WHERE id = $1`,
     [eventId]
   );
@@ -672,7 +666,12 @@ export async function recordOutboxEventFailure(
     `UPDATE flowdesk.outbox_events
      SET attempts = attempts + 1,
          last_error = $2,
-         published_at = CASE WHEN $3 = true THEN clock_timestamp() ELSE published_at END
+         published_at = CASE WHEN $3 = true THEN clock_timestamp() ELSE published_at END,
+         dead_lettered_at = CASE WHEN $3 = true THEN clock_timestamp() ELSE dead_lettered_at END,
+         available_at = CASE WHEN $3 = true THEN available_at
+           ELSE clock_timestamp() + make_interval(secs => LEAST(300, (2 ^ LEAST(attempts, 8))::integer)) END,
+         claimed_until = NULL,
+         claim_token = NULL
      WHERE id = $1`,
     [eventId, errorMessage, terminal]
   );

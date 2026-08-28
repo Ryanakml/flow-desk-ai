@@ -1,6 +1,13 @@
 import type { DbClient } from "@flowdesk/db";
-import { createMessage, findOrCreateConversation, updateMessageStatus } from "@flowdesk/db";
+import {
+  createMessage,
+  findOrCreateConversation,
+  recordOutboxEventFailure,
+  runInTenantTransaction,
+  updateMessageStatus
+} from "@flowdesk/db";
 import type { MessageStatus } from "@flowdesk/domain";
+import { recordWhatsAppWebhookProcessed } from "@flowdesk/observability";
 
 export interface NormalizedInboundMessage {
   type: "inbound_message";
@@ -318,12 +325,10 @@ export async function processOutboxWebhookBatch(client: DbClient, batchSize = 10
     aggregate_id: string;
     payload: { webhookEventId?: string };
     correlation_id: string | null;
+    attempts: number;
   }>(
-    `SELECT id, organization_id, aggregate_id, payload, correlation_id
-     FROM flowdesk.outbox_events
-     WHERE event_type = 'webhook.received' AND published_at IS NULL
-     ORDER BY occurred_at ASC
-     LIMIT $1`,
+    `SELECT id, organization_id, aggregate_id, payload, correlation_id, attempts
+     FROM flowdesk.claim_outbox_events('webhook.received', $1)`,
     [batchSize]
   );
 
@@ -333,52 +338,61 @@ export async function processOutboxWebhookBatch(client: DbClient, batchSize = 10
     const orgId = ev.organization_id;
     const webhookEventId = ev.payload?.webhookEventId ?? ev.aggregate_id;
 
-    // Set transaction-scoped tenant context
-    await client.query("SELECT set_config('app.organization_id', $1, true)", [orgId]);
-
-    // Retrieve raw webhook event
-    const webhookRes = await client.query<{ raw_payload: string }>(
-      `SELECT raw_payload FROM flowdesk.webhook_events WHERE id = $1`,
-      [webhookEventId]
-    );
-
-    if (webhookRes.rows[0]) {
-      // Mark as processing
-      await client.query(
-        `UPDATE flowdesk.webhook_events SET status = 'processing', updated_at = clock_timestamp() WHERE id = $1`,
+    await runInTenantTransaction(client, { organizationId: orgId }, async (tenantDb) => {
+      const webhookRes = await tenantDb.query<{ raw_payload: string }>(
+        `SELECT raw_payload FROM flowdesk.webhook_events WHERE id = $1`,
         [webhookEventId]
       );
 
-      try {
-        await processWebhookPayload(client, {
-          organizationId: orgId,
-          rawPayload: webhookRes.rows[0].raw_payload,
-          correlationId: ev.correlation_id ?? undefined
-        });
-
-        // Mark as processed
-        await client.query(
-          `UPDATE flowdesk.webhook_events
-           SET status = 'processed', processed_at = clock_timestamp(), updated_at = clock_timestamp()
-           WHERE id = $1`,
+      if (webhookRes.rows[0]) {
+        await tenantDb.query(
+          `UPDATE flowdesk.webhook_events SET status = 'processing', updated_at = clock_timestamp() WHERE id = $1`,
           [webhookEventId]
         );
-      } catch (err: unknown) {
-        const errorMsg = err instanceof Error ? err.message : "Processing error";
-        await client.query(
-          `UPDATE flowdesk.webhook_events
-           SET status = 'failed', processing_error = $2, updated_at = clock_timestamp()
-           WHERE id = $1`,
-          [webhookEventId, errorMsg]
-        );
-      }
-    }
 
-    // Mark outbox event as published
-    await client.query(
-      `UPDATE flowdesk.outbox_events SET published_at = clock_timestamp() WHERE id = $1`,
-      [ev.id]
-    );
+        try {
+          await processWebhookPayload(tenantDb, {
+            organizationId: orgId,
+            rawPayload: webhookRes.rows[0].raw_payload,
+            correlationId: ev.correlation_id ?? undefined
+          });
+
+          await tenantDb.query(
+            `UPDATE flowdesk.webhook_events
+             SET status = 'processed', processed_at = clock_timestamp(), updated_at = clock_timestamp()
+             WHERE id = $1`,
+            [webhookEventId]
+          );
+          recordWhatsAppWebhookProcessed("processed");
+        } catch (err: unknown) {
+          const errorMsg = err instanceof Error ? err.message : "Processing error";
+          await tenantDb.query(
+            `UPDATE flowdesk.webhook_events
+             SET status = 'failed', processing_error = $2, updated_at = clock_timestamp()
+             WHERE id = $1`,
+            [webhookEventId, errorMsg]
+          );
+          recordWhatsAppWebhookProcessed("failed");
+          await recordOutboxEventFailure(tenantDb, ev.id, errorMsg, (ev.attempts ?? 0) + 1 >= 5);
+          return;
+        }
+      } else {
+        await recordOutboxEventFailure(
+          tenantDb,
+          ev.id,
+          `Webhook event '${webhookEventId}' not found.`,
+          true
+        );
+        return;
+      }
+
+      await tenantDb.query(
+        `UPDATE flowdesk.outbox_events
+         SET published_at = clock_timestamp(), claimed_until = NULL, claim_token = NULL
+         WHERE id = $1`,
+        [ev.id]
+      );
+    });
 
     processedCount += 1;
   }

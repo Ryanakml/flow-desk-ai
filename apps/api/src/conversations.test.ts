@@ -567,6 +567,16 @@ describe("Conversations & Messages API (M2-07)", () => {
   });
 
   describe("POST /api/v1/organizations/:orgId/conversations/:id/messages", () => {
+    it("requires an Idempotency-Key for outbound sends", async () => {
+      const response = await request(app)
+        .post(`/api/v1/organizations/${orgId}/conversations/${convId}/messages`)
+        .set("Cookie", bobCookie)
+        .send({ content: "This must not be queued twice" });
+
+      expect(response.status).toBe(400);
+      expect((response.body as { code: string }).code).toBe("IDEMPOTENCY_KEY_REQUIRED");
+    });
+
     it("returns 400 on empty message content", async () => {
       const response = await request(app)
         .post(`/api/v1/organizations/${orgId}/conversations/${convId}/messages`)
@@ -595,6 +605,7 @@ describe("Conversations & Messages API (M2-07)", () => {
       const response = await request(app)
         .post(`/api/v1/organizations/${orgId}/conversations/${convId}/messages`)
         .set("Cookie", bobCookie)
+        .set("Idempotency-Key", "reply-001")
         .send({ content: "Selamat siang! Ada yang bisa kami bantu?" });
 
       expect(response.status).toBe(201);

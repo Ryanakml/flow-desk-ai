@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { loadAuthConfig } from "@flowdesk/config";
@@ -353,6 +354,10 @@ function createMockDb(): DbClient {
           return { rowCount: 1 };
         }
         return { rowCount: 0 };
+      }
+
+      if (sql.includes("INSERT INTO flowdesk.audit_logs")) {
+        return { rows: [{ id: randomUUID(), occurred_at: new Date() }] };
       }
 
       return { rows: [] };

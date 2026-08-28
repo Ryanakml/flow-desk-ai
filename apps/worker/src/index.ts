@@ -2,7 +2,9 @@ import { loadHttpConfig } from "@flowdesk/config";
 import {
   createLogger,
   createProcessHealthServer,
-  initializeTelemetry
+  initializeTelemetry,
+  recordOutboxSnapshot,
+  recordWorkerBatchFailure
 } from "@flowdesk/observability";
 import { Pool } from "pg";
 import { processOutboxWebhookBatch } from "./normalization.js";
@@ -43,8 +45,27 @@ if (dbPool) {
             "worker.outbox_batch.processed"
           );
         }
+        return dbPool.query<{
+          pending_events: string;
+          oldest_age_seconds: number;
+          dead_letter_events: string;
+        }>(`SELECT pending_events::text,
+                   oldest_event_age_seconds AS oldest_age_seconds,
+                   dead_letter_events::text
+            FROM flowdesk.messaging_operational_snapshot()`);
+      })
+      .then((snapshot) => {
+        const row = snapshot.rows[0];
+        if (row) {
+          recordOutboxSnapshot({
+            pendingEvents: Number(row.pending_events),
+            oldestEventAgeSeconds: row.oldest_age_seconds,
+            deadLetterEvents: Number(row.dead_letter_events)
+          });
+        }
       })
       .catch((error: unknown) => {
+        recordWorkerBatchFailure("outbound");
         logger.error({ error }, "worker.outbox_batch.error");
       })
       .finally(() => {

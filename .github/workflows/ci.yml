@@ -105,6 +105,7 @@ jobs:
           --health-retries 20
     env:
       DATABASE_MIGRATOR_URL: postgresql://flowdesk_test:flowdesk_test_local@localhost:5432/flowdesk_test
+      DATABASE_URL: postgresql://flowdesk_test:flowdesk_test_local@localhost:5432/flowdesk_test
     steps:
       - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
       - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
@@ -112,7 +113,9 @@ jobs:
       - uses: actions/setup-node@1e60f620b9541d16bece96c5465dc8ee9832be0b # v4.0.3
         with: { node-version-file: .node-version, cache: pnpm }
       - run: pnpm install --frozen-lockfile
+      - run: pnpm turbo run build --filter=@flowdesk/worker...
       - run: pnpm --filter @flowdesk/db test:integration
+      - run: pnpm --filter @flowdesk/worker test:integration
 
   terraform:
     runs-on: ubuntu-24.04
