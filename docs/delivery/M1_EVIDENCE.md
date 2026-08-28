@@ -1,5 +1,10 @@
 # M1 Secure Multi-Tenant Core Implementation Evidence
 
+> Completion audit (2026-08-28): tenant-scoped API, idempotency, and worker work now
+> enters a real PostgreSQL transaction, executes as `flowdesk_runtime`, and sets
+> transaction-local `app.organization_id`. This closes the gap where application
+> code could otherwise inherit a more privileged login role despite the RLS schema.
+
 - **Date:** 2026-08-27
 - **Milestone:** M1 Secure multi-tenant core (GitHub Milestone 2)
 - **Scope:** Epics M1-E1 through M1-E4, Stories M1-01 through M1-09

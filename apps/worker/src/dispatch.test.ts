@@ -187,9 +187,10 @@ function createDispatchMockDb() {
 
       // Claim unpublished outbox events
       if (
-        sql.includes("FROM flowdesk.outbox_events") &&
-        sql.includes("event_type = 'message.outbound.created'") &&
-        sql.includes("published_at IS NULL")
+        sql.includes("claim_outbox_events('message.outbound.created'") ||
+        (sql.includes("FROM flowdesk.outbox_events") &&
+          sql.includes("event_type = 'message.outbound.created'") &&
+          sql.includes("published_at IS NULL"))
       ) {
         const limitVal = values[0] as number;
         const unpublished = Array.from(outboxEvents.values())

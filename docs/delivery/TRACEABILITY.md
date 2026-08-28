@@ -15,9 +15,9 @@
 | CHAN-PROV-001   | M2    | WhatsApp Cloud API & Fake provider       | Error classification; adapter test suite    | Complete |
 | ING-HMAC-001    | M2    | Ingress raw-body HMAC-SHA256 signature   | Supertest verification suite; forge denial  | Complete |
 | ING-PERSIST-001 | M2    | Durable webhook event & deduplication    | Deduplication suite; transactional outbox   | Complete |
-| CONV-MOD-001    | M2    | Conversations & messages RLS & states    | RLS isolation tests; state machine suites   | Complete |
+| CONV-MOD-001    | M2    | Full conversation/message domain + RLS   | PostgreSQL lifecycle/RLS integration test   | Complete |
 | NORM-MATCH-001  | M2    | Worker normalization & thread matching   | Pipeline tests; idempotent message creation | Complete |
-| CONV-API-001    | M2    | Conversation API & outbound outbox       | Supertest suite; optimistic conflict tests  | Complete |
-| DISP-WORK-001   | M2    | Outbound dispatch worker & status reconc | Dispatch suite; retry & reconciliation test | Complete |
-| UI-INBOX-001    | M2    | Operator conversation inbox & composer   | InboxView tests; role-gated composer suites | Complete |
-| E2E-SLICE-001   | M2    | E2E vertical slice & DLQ runbook         | Full vertical slice E2E; DLQ runbook        | Complete |
+| CONV-API-001    | M2    | Tenant transaction + idempotent outbox   | Required key; replay/conflict API suites    | Complete |
+| DISP-WORK-001   | M2    | Leased dispatch + retry/status history   | Competing-claim PostgreSQL integration test | Complete |
+| UI-INBOX-001    | M2    | Inbox, composer, tenant SSE invalidation | UI/RBAC suites; authorized refresh path     | Complete |
+| E2E-SLICE-001   | M2    | PostgreSQL vertical slice + ops controls | Hosted DB suite; dashboard; alerts; runbook | Complete |

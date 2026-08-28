@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from "pg";
+import type { DbClient } from "./auth.js";
 
 export interface TenantContext {
   organizationId: string;
@@ -13,6 +14,10 @@ export async function withTenantTransaction<T>(
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    // Never rely on the login role being correctly constrained. Production and
+    // local development commonly connect through a role that can SET ROLE; the
+    // transaction must still execute as the NOBYPASSRLS runtime principal.
+    await client.query("SET LOCAL ROLE flowdesk_runtime");
     await client.query("SELECT set_config('app.organization_id', $1, true)", [
       context.organizationId
     ]);
@@ -25,4 +30,24 @@ export async function withTenantTransaction<T>(
   } finally {
     client.release();
   }
+}
+
+function isPool(db: DbClient): db is Pool {
+  return typeof (db as Pool).connect === "function";
+}
+
+/**
+ * Runs tenant work atomically when backed by a Pool. Lightweight unit-test
+ * clients remain supported without pretending their query mocks are a real
+ * PostgreSQL transaction boundary.
+ */
+export async function runInTenantTransaction<T>(
+  db: DbClient,
+  context: TenantContext,
+  work: (client: DbClient) => Promise<T>
+): Promise<T> {
+  if (isPool(db)) {
+    return withTenantTransaction(db, context, work);
+  }
+  return work(db);
 }

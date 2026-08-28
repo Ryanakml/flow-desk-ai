@@ -1,0 +1,68 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "panels": [
+    {
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+      "id": 1,
+      "title": "Pending Outbox Events",
+      "type": "timeseries",
+      "targets": [{ "expr": "outbox_pending_events", "legendFormat": "pending", "refId": "A" }]
+    },
+    {
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
+      "id": 2,
+      "title": "Oldest Event Age",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "outbox_oldest_event_age_seconds",
+          "legendFormat": "seconds",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "id": 3,
+      "title": "Dead-Lettered Intents",
+      "type": "timeseries",
+      "targets": [{ "expr": "outbox_dead_letter_events", "legendFormat": "failed", "refId": "A" }]
+    },
+    {
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 4,
+      "title": "Webhook Outcomes",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (result) (rate(whatsapp_webhook_processed_total[5m]))",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 5,
+      "title": "Outbound Dispatch Outcomes",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (result) (rate(whatsapp_outbound_dispatch_total[5m]))",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["flowdesk", "m2", "whatsapp", "messaging"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timezone": "browser",
+  "title": "FlowDesk M2 Messaging Operations",
+  "uid": "flowdesk-m2-messaging",
+  "version": 1
+}

@@ -4,6 +4,10 @@ import {
   recordAuthDenial,
   recordPermissionDenial,
   recordRateLimitExceeded,
+  recordWhatsAppWebhookProcessed,
+  recordWhatsAppOutboundDispatch,
+  recordWorkerBatchFailure,
+  recordOutboxSnapshot,
   getPrometheusMetrics,
   resetMetrics
 } from "./metrics.js";
@@ -51,5 +55,26 @@ describe("Prometheus Metrics (M1-08)", () => {
     recordRateLimitExceeded("/api/v1/auth/callback");
     const output = getPrometheusMetrics();
     expect(output).toContain('rate_limit_exceeded_total{route="/api/v1/auth/callback"} 1');
+  });
+
+  it("exports M2 messaging outcome counters and queue gauges", () => {
+    recordWhatsAppWebhookProcessed("processed");
+    recordWhatsAppWebhookProcessed("failed");
+    recordWhatsAppOutboundDispatch("sent");
+    recordWorkerBatchFailure("outbound");
+    recordOutboxSnapshot({
+      pendingEvents: 12,
+      oldestEventAgeSeconds: 4.5,
+      deadLetterEvents: 2
+    });
+
+    const output = getPrometheusMetrics();
+    expect(output).toContain('whatsapp_webhook_processed_total{result="processed"} 1');
+    expect(output).toContain('whatsapp_webhook_processed_total{result="failed"} 1');
+    expect(output).toContain('whatsapp_outbound_dispatch_total{result="sent"} 1');
+    expect(output).toContain('worker_batch_failures_total{pipeline="outbound"} 1');
+    expect(output).toContain("outbox_pending_events 12");
+    expect(output).toContain("outbox_oldest_event_age_seconds 4.5");
+    expect(output).toContain("outbox_dead_letter_events 2");
   });
 });

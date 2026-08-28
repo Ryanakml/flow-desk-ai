@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import type { Request, RequestHandler, Response } from "express";
 import type { DbClient } from "@flowdesk/db";
-import { acquireIdempotencyKey, completeIdempotencyKey, releaseIdempotencyKey } from "@flowdesk/db";
+import {
+  acquireIdempotencyKey,
+  completeIdempotencyKey,
+  releaseIdempotencyKey,
+  runInTenantTransaction
+} from "@flowdesk/db";
 import type { Problem } from "@flowdesk/contracts";
 
 export function computeRequestFingerprint(request: Request): string {
@@ -82,13 +87,15 @@ export function createIdempotencyMiddleware(db: DbClient): RequestHandler {
     const fingerprint = computeRequestFingerprint(request);
 
     try {
-      const result = await acquireIdempotencyKey(db, {
-        organizationId: orgId,
-        actorUserId: user.id,
-        route,
-        key: idempotencyKey,
-        requestFingerprint: fingerprint
-      });
+      const result = await runInTenantTransaction(db, { organizationId: orgId }, (client) =>
+        acquireIdempotencyKey(client, {
+          organizationId: orgId,
+          actorUserId: user.id,
+          route,
+          key: idempotencyKey,
+          requestFingerprint: fingerprint
+        })
+      );
 
       if (result.status === "in_flight") {
         return sendProblem(
@@ -140,22 +147,26 @@ export function createIdempotencyMiddleware(db: DbClient): RequestHandler {
         const statusCode = response.statusCode;
         const bodyToPersist = capturedBody ?? {};
         if (statusCode < 500) {
-          void completeIdempotencyKey(db, {
-            organizationId: orgId,
-            actorUserId: user.id,
-            route,
-            key: idempotencyKey,
-            responseStatus: statusCode,
-            responseBody: bodyToPersist
-          }).catch(() => {});
+          void runInTenantTransaction(db, { organizationId: orgId }, (client) =>
+            completeIdempotencyKey(client, {
+              organizationId: orgId,
+              actorUserId: user.id,
+              route,
+              key: idempotencyKey,
+              responseStatus: statusCode,
+              responseBody: bodyToPersist
+            })
+          ).catch(() => {});
         } else {
           // 5xx error: release key so user can retry safely
-          void releaseIdempotencyKey(db, {
-            organizationId: orgId,
-            actorUserId: user.id,
-            route,
-            key: idempotencyKey
-          }).catch(() => {});
+          void runInTenantTransaction(db, { organizationId: orgId }, (client) =>
+            releaseIdempotencyKey(client, {
+              organizationId: orgId,
+              actorUserId: user.id,
+              route,
+              key: idempotencyKey
+            })
+          ).catch(() => {});
         }
       });
 

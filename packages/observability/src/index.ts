@@ -5,6 +5,7 @@ import { context, trace } from "@opentelemetry/api";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import pino, { type DestinationStream, type Logger } from "pino";
+import { getPrometheusMetrics } from "./metrics.js";
 
 export interface RequestContext {
   requestId: string;
@@ -94,6 +95,11 @@ export function createProcessHealthServer(input: {
       response.end(JSON.stringify({ status: "ok", ...input }));
       return;
     }
+    if (request.url === "/metrics") {
+      response.writeHead(200, { "content-type": "text/plain; version=0.0.4; charset=utf-8" });
+      response.end(getPrometheusMetrics());
+      return;
+    }
     response.writeHead(404, { "content-type": "application/problem+json" });
     response.end(JSON.stringify({ title: "Not Found", status: 404 }));
   });
@@ -105,6 +111,10 @@ export {
   recordAuthDenial,
   recordPermissionDenial,
   recordRateLimitExceeded,
+  recordWhatsAppWebhookProcessed,
+  recordWhatsAppOutboundDispatch,
+  recordWorkerBatchFailure,
+  recordOutboxSnapshot,
   getPrometheusMetrics,
   resetMetrics
 } from "./metrics.js";

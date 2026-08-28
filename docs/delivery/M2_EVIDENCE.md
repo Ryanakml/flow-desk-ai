@@ -5,22 +5,28 @@
 - **Scope:** Stories M2-01 through M2-10 (Issues #33 through #42)
 - **Result:** M2 release evidence complete; all acceptance gates passed
 
+> Completion audit (2026-08-28): the original PR #52 packet overstated two signals: its
+> “E2E” used an in-memory database double, and migration `0008` did not contain every
+> M2 domain table named by the blueprint. Migration `0009_m2_completion_hardening.sql`,
+> the PostgreSQL-backed CI test, transaction/RLS hardening, queue leases, and M2
+> monitoring artifacts below are the corrective release evidence.
+
 ---
 
 ## 1. Capability Verification Summary
 
-| Requirement       | Phase | Implementation Summary                                                                              | Verification Signal                                                             | Status   |
-| :---------------- | :---- | :-------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------ | :------- |
-| `CHAN-MOD-001`    | M2    | Channel schema, state machine (`draft`, `active`, `degraded`, `disconnected`), AES-256-GCM envelope | Migration `0006_channels.sql`; negative RLS tests; encryption unit tests        | Complete |
-| `CHAN-PROV-001`   | M2    | Meta WhatsApp Cloud API provider adapter & `FakeWhatsAppProvider` test fixture                      | Error classification tests; mock payload generators; contract suites            | Complete |
-| `ING-HMAC-001`    | M2    | Raw-body webhook ingress route (`apps/ingress`) with constant-time HMAC-SHA256 signature checks     | Supertest verification suite; forge denial tests; replay protection             | Complete |
-| `ING-PERSIST-001` | M2    | Durable webhook event persistence (`flowdesk.webhook_events`) with SHA-256 deduplication            | Migration `0007_webhook_events.sql`; deduplication tests; transactional outbox  | Complete |
-| `CONV-MOD-001`    | M2    | Conversations & messages schema, optimistic concurrency `version`, RLS tenant isolation             | Migration `0008_conversations_and_messages.sql`; RLS negative isolation tests   | Complete |
-| `NORM-MATCH-001`  | M2    | Worker message normalization pipeline, E.164 phone normalization, thread auto-creation              | Worker normalization test suite; duplicate message idempotency tests            | Complete |
-| `CONV-API-001`    | M2    | Conversation REST API (`apps/api`), optimistic concurrency (409 conflict), transactional outbox     | Supertest API suite; 409 conflict tests; idempotent message queueing            | Complete |
-| `DISP-WORK-001`   | M2    | Outbound dispatch worker (`apps/worker`), credential decryption, status reconciliation (`sent`)     | Worker dispatch test suite; transient retry tests; delivery/read reconciliation | Complete |
-| `UI-INBOX-001`    | M2    | Operator split-pane inbox (`apps/web`), thread timeline, checkmarks, role-gated message composer    | InboxView component test suite; role-gated composer tests; responsive UI        | Complete |
-| `E2E-SLICE-001`   | M2    | Complete end-to-end integration test suite, DLQ runbooks, and formal evidence packet                | `vertical-slice.e2e.test.ts`; `whatsapp-outbox-dlq.md`; M2 evidence signoff     | Complete |
+| Requirement       | Phase | Implementation Summary                                                                              | Verification Signal                                                        | Status   |
+| :---------------- | :---- | :-------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------- | :------- |
+| `CHAN-MOD-001`    | M2    | Channel schema, state machine (`draft`, `active`, `degraded`, `disconnected`), AES-256-GCM envelope | Migration `0006_channels.sql`; negative RLS tests; encryption unit tests   | Complete |
+| `CHAN-PROV-001`   | M2    | Meta WhatsApp Cloud API provider adapter & `FakeWhatsAppProvider` test fixture                      | Error classification tests; mock payload generators; contract suites       | Complete |
+| `ING-HMAC-001`    | M2    | Raw-body webhook ingress route (`apps/ingress`) with constant-time HMAC-SHA256 signature checks     | Supertest verification suite; forge denial tests; replay protection        | Complete |
+| `ING-PERSIST-001` | M2    | Atomic security-definer ingress persistence, SHA-256 deduplication, and transactional outbox        | Migrations `0007`/`0009`; real PostgreSQL duplicate replay test            | Complete |
+| `CONV-MOD-001`    | M2    | Contacts, conversations, messages, lifecycle events, outbound intents, optimistic locking, RLS      | Migrations `0008`/`0009`; real PostgreSQL RLS and lifecycle test           | Complete |
+| `NORM-MATCH-001`  | M2    | Worker message normalization pipeline, E.164 phone normalization, thread auto-creation              | Worker normalization test suite; duplicate message idempotency tests       | Complete |
+| `CONV-API-001`    | M2    | Tenant transactions, required `Idempotency-Key`, optimistic concurrency, transactional outbox       | Supertest API suite; 409 and idempotency contract tests                    | Complete |
+| `DISP-WORK-001`   | M2    | Leased `SKIP LOCKED` claims, credential decryption, retry backoff/DLQ, status reconciliation        | Unit retry suite plus competing-claim PostgreSQL integration test          | Complete |
+| `UI-INBOX-001`    | M2    | Operator split-pane inbox (`apps/web`), thread timeline, checkmarks, role-gated message composer    | InboxView component test suite; role-gated composer tests; responsive UI   | Complete |
+| `E2E-SLICE-001`   | M2    | PostgreSQL-backed inbound replay → domain → reply → fake provider slice, metrics, alerts, runbook   | `vertical-slice.integration.test.ts`; hosted pgvector CI; M2 ops dashboard | Complete |
 
 ---
 
@@ -36,7 +42,7 @@
 ### M2-02 (Issue [#34](https://github.com/Ryanakml/flow-desk-ai/issues/34), PR [#44](https://github.com/Ryanakml/flow-desk-ai/pull/44)): WhatsApp Provider Adapter Contract & Fake Adapter
 
 - Defined provider contract `WhatsAppProvider` in `@flowdesk/providers`.
-- Implemented `MetaWhatsAppProvider` targeting the Graph API v20.0 with classified errors (`TRANSIENT`, `TERMINAL`, `AUTHENTICATION`, `RATE_LIMIT`).
+- Implemented `MetaWhatsAppProvider` targeting the Graph API v21.0 with classified errors (`AUTH_FAILED`, `RATE_LIMIT_EXCEEDED`, `USER_NOT_OPTED_IN`, `OUTSIDE_WINDOW`, `TRANSIENT`, `INVALID_PAYLOAD`).
 - Implemented `FakeWhatsAppProvider` with deterministic test fixtures (`createInboundTextWebhook`, `createStatusWebhook`, `sendTextMessage`).
 - Added complete test coverage in `@flowdesk/providers`.
 
@@ -57,6 +63,7 @@
 ### M2-05 (Issue [#37](https://github.com/Ryanakml/flow-desk-ai/issues/37), PR [#47](https://github.com/Ryanakml/flow-desk-ai/pull/47)): Message Domain Tables, State Machine & RLS Policies
 
 - Created migration `0008_conversations_and_messages.sql` establishing `flowdesk.conversations` and `flowdesk.messages`.
+- Added completion migration `0009_m2_completion_hardening.sql` for `contacts`, `message_status_events`, `conversation_events`, `outbound_intents`, provider-message uniqueness, queue leases, and RLS.
 - Row-Level Security policies enforcing `app.current_organization_id`.
 - Implemented state machines:
   - Conversation status: `open` -> `pending` -> `resolved` -> `closed` (auto-reopens on customer reply).
@@ -80,6 +87,7 @@
   - `GET /api/v1/organizations/:orgId/conversations/:id`: Retrieve conversation and messages.
   - `PATCH /api/v1/organizations/:orgId/conversations/:id`: Update status/assignment with optimistic concurrency `version` checks (409 Conflict).
   - `POST /api/v1/organizations/:orgId/conversations/:id/messages`: Atomic reply creation in `queued` status and transactional outbox event.
+- Outbound sends require an `Idempotency-Key`; tenant operations run in a single transaction as the `flowdesk_runtime` `NOBYPASSRLS` role.
 - Added comprehensive supertest suite in `apps/api/src/conversations.test.ts`.
 
 ### M2-08 (Issue [#40](https://github.com/Ryanakml/flow-desk-ai/issues/40), PR [#50](https://github.com/Ryanakml/flow-desk-ai/pull/50)): Outbound Dispatch Worker & Status Reconciliation
@@ -91,12 +99,15 @@
   - Transitions message to `sent` with `provider_message_id = 'wamid...'`.
   - Marks outbox event published.
   - Exponential retry backoff on transient errors; transitions to `failed` and DLQ on exhaustion.
+  - Atomic `FOR UPDATE SKIP LOCKED` leases prevent two workers from claiming the same event concurrently.
+  - Commits `outbound_intents.state = 'dispatching'` before the provider side effect. A worker interruption leaves a durable marker; recovery changes it to `reconcile_required` and never blindly resends an outcome that may already have reached Meta.
 - Integrated outbound polling into worker runtime (`apps/worker/src/index.ts`).
 - Added test suite in `apps/worker/src/dispatch.test.ts`.
 
 ### M2-09 (Issue [#41](https://github.com/Ryanakml/flow-desk-ai/issues/41), PR [#51](https://github.com/Ryanakml/flow-desk-ai/pull/51)): Operator Inbox, Thread Timeline & Message Composer UI
 
 - Built operator split-pane interface in `apps/web/src/InboxView.tsx`:
+  - Tenant/RBAC-scoped SSE invalidation refreshes the inbox and active timeline when database projections change.
   - Status filter tabs (`All`, `Open`, `Pending`, `Resolved`, `Closed`), assignee filter, client search.
   - Thread timeline with inbound/outbound message bubbles and delivery status checkmarks:
     - `queued`: ⏱
@@ -112,7 +123,9 @@
 
 ### M2-10 (Issue [#42](https://github.com/Ryanakml/flow-desk-ai/issues/42)): End-to-End Integration Tests, DLQ Runbooks & Evidence Packet
 
-- Delivered end-to-end integration test in `apps/worker/src/vertical-slice.e2e.test.ts` proving the full vertical slice from channel setup to delivery/read status reconciliation and DLQ exhaustion.
+- Kept the fast in-memory vertical-slice test and added `apps/worker/src/vertical-slice.integration.test.ts`, which runs the 100-replay inbound, lifecycle tables, competing workers, one outbound dispatch, interrupted-dispatch reconciliation without resend, and tenant-negative assertions against PostgreSQL.
+- Wired the PostgreSQL-backed worker integration suite into the hosted `database-foundation` job.
+- Added worker Prometheus metrics, the M2 Grafana dashboard, and executable Prometheus alert rules for queue age/backlog, DLQ, and webhook failures.
 - Authored operational runbook `docs/runbooks/whatsapp-outbox-dlq.md`.
 - Updated traceability matrix `docs/delivery/TRACEABILITY.md` with `E2E-SLICE-001`.
 - Published this authoritative M2 Evidence Packet.
@@ -138,7 +151,7 @@
 
 ## 4. Security, Isolation & Architectural Sign-Off
 
-1. **Multi-Tenant Isolation**: All database operations execute under PostgreSQL Row-Level Security (`flowdesk.app_user`). Ingress webhooks, API routes, worker normalization, and outbound dispatch enforce tenant filtering at the database engine layer.
+1. **Multi-Tenant Isolation**: Tenant operations execute in transactions as PostgreSQL role `flowdesk_runtime` (`NOBYPASSRLS`) with transaction-scoped `app.organization_id`. Public ingress uses only the audited `record_whatsapp_webhook` security-definer capability to map a Meta phone ID and atomically persist the event/outbox record.
 2. **Cryptographic Protection**:
    - Webhook ingress validates Meta signatures using `crypto.timingSafeEqual` to prevent timing attacks.
    - Provider credentials (access tokens) are encrypted at rest using AES-256-GCM with distinct IVs and authentication tags.
@@ -146,3 +159,5 @@
    - Webhooks are stored durably before worker processing.
    - Outbound messages use the Transactional Outbox pattern, ensuring no messages are lost during worker restarts.
    - Poison-pill and exhausted messages are isolated in the Dead-Letter Queue (DLQ), keeping the pipeline operational for all tenants.
+   - Claim leases, `FOR UPDATE SKIP LOCKED`, `available_at`, and exponential retry scheduling prevent concurrent workers from taking the same event.
+   - The provider call is separated by committed `dispatching` state. Recovery quarantines an unresolved provider outcome as `reconcile_required`, preserving evidence and favoring no duplicate send over an unsafe automatic retry.

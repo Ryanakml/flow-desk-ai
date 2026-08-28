@@ -40,6 +40,28 @@ export async function recordWebhookEvent(
   client: DbClient,
   input: RecordWebhookEventInput
 ): Promise<RecordWebhookEventResult> {
+  if (typeof (client as { connect?: unknown }).connect === "function") {
+    const result = await client.query<WebhookEventRecord & { deduplicated: boolean }>(
+      `SELECT
+         id, provider, payload_hash AS "payloadHash", phone_number_id AS "phoneNumberId",
+         organization_id AS "organizationId", raw_payload AS "rawPayload", status,
+         correlation_id AS "correlationId", processing_error AS "processingError",
+         received_at AS "receivedAt", processed_at AS "processedAt",
+         created_at AS "createdAt", updated_at AS "updatedAt", deduplicated
+       FROM flowdesk.record_whatsapp_webhook($1, $2, $3, $4)`,
+      [
+        input.payloadHash,
+        input.rawPayload,
+        input.phoneNumberId ?? null,
+        input.correlationId ?? null
+      ]
+    );
+    const row = result.rows[0];
+    if (!row) throw new Error("Webhook persistence function returned no row");
+    const { deduplicated, ...webhookEvent } = row;
+    return { webhookEvent, deduplicated };
+  }
+
   // Resolve channel tenant if phoneNumberId is present
   let organizationId: string | null = null;
   if (input.phoneNumberId) {

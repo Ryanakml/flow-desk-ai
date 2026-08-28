@@ -1,5 +1,9 @@
 import { v7 as uuidv7 } from "uuid";
-export { withTenantTransaction, type TenantContext } from "./tenant-context.js";
+export {
+  withTenantTransaction,
+  runInTenantTransaction,
+  type TenantContext
+} from "./tenant-context.js";
 export {
   createOidcTransaction,
   consumeOidcTransaction,

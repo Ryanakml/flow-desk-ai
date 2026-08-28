@@ -14,6 +14,12 @@ const httpRequestDuration = new Map<string, HistogramMetric>();
 const authDenialsTotal = new Map<string, CounterMetric>();
 const permissionDenialsTotal = new Map<string, CounterMetric>();
 const rateLimitExceededTotal = new Map<string, CounterMetric>();
+const whatsappWebhookProcessedTotal = new Map<string, CounterMetric>();
+const whatsappOutboundDispatchTotal = new Map<string, CounterMetric>();
+const workerBatchFailuresTotal = new Map<string, CounterMetric>();
+let outboxPendingEvents = 0;
+let outboxOldestEventAgeSeconds = 0;
+let outboxDeadLetterEvents = 0;
 
 function serializeLabels(labels: Record<string, string>): string {
   return Object.entries(labels)
@@ -92,12 +98,50 @@ export function recordRateLimitExceeded(route: string): void {
   }
 }
 
+function incrementCounter(
+  target: Map<string, CounterMetric>,
+  labels: Record<string, string>
+): void {
+  const key = serializeLabels(labels);
+  const existing = target.get(key);
+  if (existing) existing.value += 1;
+  else target.set(key, { value: 1, labels });
+}
+
+export function recordWhatsAppWebhookProcessed(result: "processed" | "failed"): void {
+  incrementCounter(whatsappWebhookProcessedTotal, { result });
+}
+
+export function recordWhatsAppOutboundDispatch(result: "sent" | "failed" | "skipped"): void {
+  incrementCounter(whatsappOutboundDispatchTotal, { result });
+}
+
+export function recordWorkerBatchFailure(pipeline: "webhook" | "outbound"): void {
+  incrementCounter(workerBatchFailuresTotal, { pipeline });
+}
+
+export function recordOutboxSnapshot(input: {
+  pendingEvents: number;
+  oldestEventAgeSeconds: number;
+  deadLetterEvents: number;
+}): void {
+  outboxPendingEvents = Math.max(0, input.pendingEvents);
+  outboxOldestEventAgeSeconds = Math.max(0, input.oldestEventAgeSeconds);
+  outboxDeadLetterEvents = Math.max(0, input.deadLetterEvents);
+}
+
 export function resetMetrics(): void {
   httpRequestsTotal.clear();
   httpRequestDuration.clear();
   authDenialsTotal.clear();
   permissionDenialsTotal.clear();
   rateLimitExceededTotal.clear();
+  whatsappWebhookProcessedTotal.clear();
+  whatsappOutboundDispatchTotal.clear();
+  workerBatchFailuresTotal.clear();
+  outboxPendingEvents = 0;
+  outboxOldestEventAgeSeconds = 0;
+  outboxDeadLetterEvents = 0;
 }
 
 export function getPrometheusMetrics(): string {
@@ -142,6 +186,34 @@ export function getPrometheusMetrics(): string {
   for (const item of rateLimitExceededTotal.values()) {
     lines.push(`rate_limit_exceeded_total{${serializeLabels(item.labels)}} ${item.value}`);
   }
+
+  lines.push("# HELP whatsapp_webhook_processed_total WhatsApp webhook processing outcomes.");
+  lines.push("# TYPE whatsapp_webhook_processed_total counter");
+  for (const item of whatsappWebhookProcessedTotal.values()) {
+    lines.push(`whatsapp_webhook_processed_total{${serializeLabels(item.labels)}} ${item.value}`);
+  }
+
+  lines.push("# HELP whatsapp_outbound_dispatch_total WhatsApp outbound dispatch outcomes.");
+  lines.push("# TYPE whatsapp_outbound_dispatch_total counter");
+  for (const item of whatsappOutboundDispatchTotal.values()) {
+    lines.push(`whatsapp_outbound_dispatch_total{${serializeLabels(item.labels)}} ${item.value}`);
+  }
+
+  lines.push("# HELP worker_batch_failures_total Worker batch failures by pipeline.");
+  lines.push("# TYPE worker_batch_failures_total counter");
+  for (const item of workerBatchFailuresTotal.values()) {
+    lines.push(`worker_batch_failures_total{${serializeLabels(item.labels)}} ${item.value}`);
+  }
+
+  lines.push("# HELP outbox_pending_events Current unpublished outbox event count.");
+  lines.push("# TYPE outbox_pending_events gauge");
+  lines.push(`outbox_pending_events ${outboxPendingEvents}`);
+  lines.push("# HELP outbox_oldest_event_age_seconds Age of the oldest unpublished outbox event.");
+  lines.push("# TYPE outbox_oldest_event_age_seconds gauge");
+  lines.push(`outbox_oldest_event_age_seconds ${outboxOldestEventAgeSeconds}`);
+  lines.push("# HELP outbox_dead_letter_events Current failed outbound intent count.");
+  lines.push("# TYPE outbox_dead_letter_events gauge");
+  lines.push(`outbox_dead_letter_events ${outboxDeadLetterEvents}`);
 
   return lines.join("\n") + "\n";
 }
