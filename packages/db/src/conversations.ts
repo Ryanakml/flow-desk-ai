@@ -357,3 +357,208 @@ export async function listMessagesByConversation(
   );
   return res.rows;
 }
+
+export interface ListConversationsOptions {
+  organizationId: string;
+  status?: ConversationStatus | undefined;
+  assignedToUserId?: string | null | undefined;
+  cursor?: string | undefined;
+  limit?: number | undefined;
+}
+
+export interface ListConversationsResult {
+  items: ConversationRecord[];
+  nextCursor: string | null;
+}
+
+/**
+ * Lists conversations for a tenant with optional filtering by status and assignee,
+ * using cursor-based pagination.
+ */
+export async function listConversations(
+  client: DbClient,
+  options: ListConversationsOptions
+): Promise<ListConversationsResult> {
+  const limit = Math.min(Math.max(options.limit ?? 20, 1), 100);
+  const values: unknown[] = [options.organizationId];
+  const conditions: string[] = ["organization_id = $1"];
+
+  if (options.status) {
+    values.push(options.status);
+    conditions.push(`status = $${values.length}`);
+  }
+
+  if (options.assignedToUserId === null) {
+    conditions.push(`assigned_to_user_id IS NULL`);
+  } else if (options.assignedToUserId !== undefined) {
+    values.push(options.assignedToUserId);
+    conditions.push(`assigned_to_user_id = $${values.length}`);
+  }
+
+  if (options.cursor) {
+    try {
+      const decoded = JSON.parse(Buffer.from(options.cursor, "base64url").toString("utf8")) as {
+        lastMessageAt: string;
+        id: string;
+      };
+      values.push(new Date(decoded.lastMessageAt), decoded.id);
+      const timeIdx = values.length - 1;
+      const idIdx = values.length;
+      conditions.push(
+        `(last_message_at < $${timeIdx} OR (last_message_at = $${timeIdx} AND id < $${idIdx}))`
+      );
+    } catch {
+      // Ignore malformed cursor, start from beginning
+    }
+  }
+
+  values.push(limit + 1);
+  const limitIdx = values.length;
+
+  const sql = `
+    SELECT
+      id, organization_id AS "organizationId", channel_id AS "channelId",
+      customer_phone AS "customerPhone", customer_name AS "customerName",
+      status, priority, assigned_to_user_id AS "assignedToUserId",
+      version, last_message_at AS "lastMessageAt", metadata,
+      created_at AS "createdAt", updated_at AS "updatedAt"
+    FROM flowdesk.conversations
+    WHERE ${conditions.join(" AND ")}
+    ORDER BY last_message_at DESC, id DESC
+    LIMIT $${limitIdx}`;
+
+  const res = await client.query<ConversationRecord>(sql, values);
+  const rows = res.rows;
+  const hasMore = rows.length > limit;
+  const items = hasMore ? rows.slice(0, limit) : rows;
+
+  let nextCursor: string | null = null;
+  if (hasMore && items.length > 0) {
+    const lastItem = items[items.length - 1]!;
+    nextCursor = Buffer.from(
+      JSON.stringify({
+        lastMessageAt: lastItem.lastMessageAt.toISOString(),
+        id: lastItem.id
+      }),
+      "utf8"
+    ).toString("base64url");
+  }
+
+  return { items, nextCursor };
+}
+
+export interface UpdateConversationOptions {
+  organizationId: string;
+  id: string;
+  expectedVersion: number;
+  status?: ConversationStatus | undefined;
+  assignedToUserId?: string | null | undefined;
+}
+
+/**
+ * Updates conversation status and/or assignee with optimistic concurrency version check.
+ */
+export async function updateConversation(
+  client: DbClient,
+  options: UpdateConversationOptions
+): Promise<ConversationRecord> {
+  const current = await getConversationById(client, options.organizationId, options.id);
+  if (!current) {
+    throw new Error(`Conversation '${options.id}' not found.`);
+  }
+
+  if (options.status && options.status !== current.status) {
+    assertValidConversationStatusTransition(current.status, options.status);
+  }
+
+  const setClauses: string[] = ["version = version + 1", "updated_at = clock_timestamp()"];
+  const values: unknown[] = [];
+
+  if (options.status) {
+    values.push(options.status);
+    setClauses.push(`status = $${values.length}`);
+  }
+
+  if (options.assignedToUserId !== undefined) {
+    values.push(options.assignedToUserId);
+    setClauses.push(`assigned_to_user_id = $${values.length}`);
+  }
+
+  values.push(options.id, options.organizationId, options.expectedVersion);
+  const idIdx = values.length - 2;
+  const orgIdx = values.length - 1;
+  const verIdx = values.length;
+
+  const sql = `
+    UPDATE flowdesk.conversations
+    SET ${setClauses.join(", ")}
+    WHERE id = $${idIdx} AND organization_id = $${orgIdx} AND version = $${verIdx}
+    RETURNING
+      id, organization_id AS "organizationId", channel_id AS "channelId",
+      customer_phone AS "customerPhone", customer_name AS "customerName",
+      status, priority, assigned_to_user_id AS "assignedToUserId",
+      version, last_message_at AS "lastMessageAt", metadata,
+      created_at AS "createdAt", updated_at AS "updatedAt"`;
+
+  const res = await client.query<ConversationRecord>(sql, values);
+
+  if (!res.rows[0]) {
+    throw new OptimisticConcurrencyError();
+  }
+
+  return res.rows[0];
+}
+
+export interface CreateOutboundMessageWithOutboxInput {
+  organizationId: string;
+  conversationId: string;
+  senderUserId: string;
+  content: string;
+  correlationId?: string | undefined;
+}
+
+/**
+ * Creates an outbound message and inserts a transactional outbox event (message.outbound.created).
+ */
+export async function createOutboundMessageWithOutbox(
+  client: DbClient,
+  input: CreateOutboundMessageWithOutboxInput
+): Promise<MessageRecord> {
+  const conversation = await getConversationById(
+    client,
+    input.organizationId,
+    input.conversationId
+  );
+  if (!conversation) {
+    throw new Error(`Conversation '${input.conversationId}' not found.`);
+  }
+
+  const message = await createMessage(client, {
+    organizationId: input.organizationId,
+    conversationId: input.conversationId,
+    channelId: conversation.channelId,
+    direction: "outbound",
+    senderType: "agent",
+    senderUserId: input.senderUserId,
+    content: input.content,
+    status: "queued"
+  });
+
+  const outboxPayload = {
+    messageId: message.id,
+    conversationId: input.conversationId,
+    channelId: conversation.channelId,
+    customerPhone: conversation.customerPhone,
+    content: input.content,
+    senderUserId: input.senderUserId
+  };
+
+  await client.query(
+    `INSERT INTO flowdesk.outbox_events
+       (organization_id, aggregate_type, aggregate_id, event_type, payload, correlation_id)
+     VALUES ($1, 'message', $2, 'message.outbound.created', $3, $4)`,
+    [input.organizationId, message.id, JSON.stringify(outboxPayload), input.correlationId ?? null]
+  );
+
+  return message;
+}

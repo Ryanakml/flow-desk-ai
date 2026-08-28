@@ -76,11 +76,18 @@ export {
   createMessage,
   updateMessageStatus,
   listMessagesByConversation,
+  listConversations,
+  updateConversation,
+  createOutboundMessageWithOutbox,
   OptimisticConcurrencyError,
   type ConversationRecord,
   type MessageRecord,
   type FindOrCreateConversationInput,
-  type CreateMessageInput
+  type CreateMessageInput,
+  type ListConversationsOptions,
+  type ListConversationsResult,
+  type UpdateConversationOptions,
+  type CreateOutboundMessageWithOutboxInput
 } from "./conversations.js";
 
 export const DATABASE_PACKAGE_STATE = "m1-foundation-ready" as const;

@@ -17,3 +17,4 @@
 | ING-PERSIST-001 | M2    | Durable webhook event & deduplication   | Deduplication suite; transactional outbox   | Complete |
 | CONV-MOD-001    | M2    | Conversations & messages RLS & states   | RLS isolation tests; state machine suites   | Complete |
 | NORM-MATCH-001  | M2    | Worker normalization & thread matching  | Pipeline tests; idempotent message creation | Complete |
+| CONV-API-001    | M2    | Conversation API & outbound outbox      | Supertest suite; optimistic conflict tests  | Complete |

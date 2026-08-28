@@ -325,3 +325,91 @@ export const ListChannelsResponseSchema = z.object({
   channels: z.array(ChannelSchema)
 });
 export type ListChannelsResponse = z.infer<typeof ListChannelsResponseSchema>;
+
+// Conversations and Messages (M2-07)
+export const ConversationStatusSchema = z.enum(["new", "open", "pending", "resolved", "closed"]);
+export type ConversationStatusContract = z.infer<typeof ConversationStatusSchema>;
+
+export const ConversationPrioritySchema = z.enum(["low", "medium", "high", "urgent"]);
+export type ConversationPriorityContract = z.infer<typeof ConversationPrioritySchema>;
+
+export const MessageStatusSchema = z.enum(["queued", "sent", "delivered", "read", "failed"]);
+export type MessageStatusContract = z.infer<typeof MessageStatusSchema>;
+
+export const MessageDirectionSchema = z.enum(["inbound", "outbound"]);
+export type MessageDirectionContract = z.infer<typeof MessageDirectionSchema>;
+
+export const MessageSenderTypeSchema = z.enum(["customer", "agent", "system", "bot"]);
+export type MessageSenderTypeContract = z.infer<typeof MessageSenderTypeSchema>;
+
+export const ConversationSchema = z.object({
+  id: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  channelId: z.string().uuid(),
+  customerPhone: z.string(),
+  customerName: z.string().nullable(),
+  status: ConversationStatusSchema,
+  priority: ConversationPrioritySchema,
+  assignedToUserId: z.string().uuid().nullable(),
+  version: z.number().int(),
+  lastMessageAt: z.string().datetime(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime()
+});
+export type Conversation = z.infer<typeof ConversationSchema>;
+
+export const MessageSchema = z.object({
+  id: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  conversationId: z.string().uuid(),
+  channelId: z.string().uuid(),
+  direction: MessageDirectionSchema,
+  senderType: MessageSenderTypeSchema,
+  senderUserId: z.string().uuid().nullable(),
+  providerMessageId: z.string().nullable(),
+  content: z.string(),
+  status: MessageStatusSchema,
+  errorDetail: z.string().nullable(),
+  sentAt: z.string().datetime().nullable(),
+  deliveredAt: z.string().datetime().nullable(),
+  readAt: z.string().datetime().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime()
+});
+export type Message = z.infer<typeof MessageSchema>;
+
+export const ListConversationsQuerySchema = z.object({
+  status: ConversationStatusSchema.optional(),
+  assignedTo: z.string().optional(),
+  cursor: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(20)
+});
+export type ListConversationsQuery = z.infer<typeof ListConversationsQuerySchema>;
+
+export const ListConversationsResponseSchema = z.object({
+  items: z.array(ConversationSchema),
+  nextCursor: z.string().nullable()
+});
+export type ListConversationsResponse = z.infer<typeof ListConversationsResponseSchema>;
+
+export const ConversationDetailResponseSchema = z.object({
+  conversation: ConversationSchema,
+  messages: z.array(MessageSchema)
+});
+export type ConversationDetailResponse = z.infer<typeof ConversationDetailResponseSchema>;
+
+export const UpdateConversationRequestSchema = z
+  .object({
+    version: z.number().int().min(1),
+    status: ConversationStatusSchema.optional(),
+    assignedToUserId: z.string().uuid().nullable().optional()
+  })
+  .refine((data) => data.status !== undefined || data.assignedToUserId !== undefined, {
+    message: "At least one update field (status or assignedToUserId) must be provided"
+  });
+export type UpdateConversationRequest = z.infer<typeof UpdateConversationRequestSchema>;
+
+export const CreateOutboundMessageRequestSchema = z.object({
+  content: z.string().trim().min(1).max(4096)
+});
+export type CreateOutboundMessageRequest = z.infer<typeof CreateOutboundMessageRequestSchema>;
