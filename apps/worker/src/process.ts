@@ -1,3 +1,3 @@
-export function workerState() {
-  return { status: "idle" as const, claimsJobs: false };
+export function workerState(active = true) {
+  return { status: active ? ("running" as const) : ("idle" as const), claimsJobs: active };
 }

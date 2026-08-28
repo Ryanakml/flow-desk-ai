@@ -187,10 +187,25 @@ importers:
       '@flowdesk/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@flowdesk/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@flowdesk/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
       '@flowdesk/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@flowdesk/providers':
+        specifier: workspace:*
+        version: link:../../packages/providers
+      pg:
+        specifier: 8.16.3
+        version: 8.16.3
     devDependencies:
+      '@types/pg':
+        specifier: 8.15.5
+        version: 8.15.5
       tsx:
         specifier: ^4.20.5
         version: 4.23.12
