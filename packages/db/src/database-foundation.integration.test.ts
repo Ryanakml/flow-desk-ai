@@ -39,7 +39,8 @@ describe("database foundation", () => {
       "0004_auth_sessions.sql",
       "0005_invitations.sql",
       "0006_channels.sql",
-      "0007_webhook_events.sql"
+      "0007_webhook_events.sql",
+      "0008_conversations_and_messages.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -88,10 +89,12 @@ describe("database foundation", () => {
       "audit_logs",
       "auth_sessions",
       "channels",
+      "conversations",
       "idempotency_keys",
       "identities",
       "invitations",
       "memberships",
+      "messages",
       "oidc_authorization_transactions",
       "organization_settings",
       "organizations",
@@ -103,9 +106,11 @@ describe("database foundation", () => {
     expect(tenantColumns.rows.map((row) => row.table_name).sort()).toEqual([
       "audit_logs",
       "channels",
+      "conversations",
       "idempotency_keys",
       "invitations",
       "memberships",
+      "messages",
       "organization_settings",
       "outbox_events",
       "roles"
