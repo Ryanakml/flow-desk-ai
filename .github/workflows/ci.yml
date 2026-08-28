@@ -113,6 +113,7 @@ jobs:
       - uses: actions/setup-node@1e60f620b9541d16bece96c5465dc8ee9832be0b # v4.0.3
         with: { node-version-file: .node-version, cache: pnpm }
       - run: pnpm install --frozen-lockfile
+      - run: pnpm turbo run build --filter=@flowdesk/worker...
       - run: pnpm --filter @flowdesk/db test:integration
       - run: pnpm --filter @flowdesk/worker test:integration
 
