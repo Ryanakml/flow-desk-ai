@@ -103,6 +103,9 @@ importers:
       '@flowdesk/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@flowdesk/security':
+        specifier: workspace:*
+        version: link:../../packages/security
       express:
         specifier: ^5.1.0
         version: 5.2.1

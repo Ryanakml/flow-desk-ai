@@ -72,3 +72,14 @@ export type AuthConfig = z.infer<typeof authConfigSchema>;
 export function loadAuthConfig(environment: NodeJS.ProcessEnv = process.env): AuthConfig {
   return authConfigSchema.parse(environment);
 }
+
+export const webhookConfigSchema = z.object({
+  WEBHOOK_VERIFY_TOKEN: z.string().min(1).default("flowdesk_webhook_verify_token_default"),
+  WEBHOOK_APP_SECRET: z.string().min(1).default("flowdesk_webhook_app_secret_default")
+});
+
+export type WebhookConfig = z.infer<typeof webhookConfigSchema>;
+
+export function loadWebhookConfig(environment: NodeJS.ProcessEnv = process.env): WebhookConfig {
+  return webhookConfigSchema.parse(environment);
+}

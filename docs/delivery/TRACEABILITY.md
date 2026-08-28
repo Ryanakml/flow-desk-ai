@@ -13,3 +13,4 @@
 | SEC-OBS-001    | M1    | Security headers, rate limit, telemetry | Rate limit suites; metrics/redaction tests | Complete |
 | CHAN-MOD-001   | M2    | Channel schema & AES-256-GCM envelope   | RLS isolation tests; encryption suites     | Complete |
 | CHAN-PROV-001  | M2    | WhatsApp Cloud API & Fake provider      | Error classification; adapter test suite   | Complete |
+| ING-HMAC-001   | M2    | Ingress raw-body HMAC-SHA256 signature  | Supertest verification suite; forge denial | Complete |
