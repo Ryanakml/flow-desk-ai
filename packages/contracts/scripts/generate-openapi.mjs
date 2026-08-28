@@ -525,6 +525,219 @@ export function buildOpenApiSpec() {
             }
           }
         }
+      },
+      "/api/v1/organizations/{orgId}/conversations": {
+        get: {
+          summary: "List conversations with filters and pagination",
+          operationId: "listConversations",
+          parameters: [
+            {
+              name: "orgId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" }
+            },
+            {
+              name: "status",
+              in: "query",
+              required: false,
+              schema: { type: "string", enum: ["new", "open", "pending", "resolved", "closed"] }
+            },
+            { name: "assignedTo", in: "query", required: false, schema: { type: "string" } },
+            { name: "cursor", in: "query", required: false, schema: { type: "string" } },
+            {
+              name: "limit",
+              in: "query",
+              required: false,
+              schema: { type: "integer", minimum: 1, maximum: 100, default: 20 }
+            }
+          ],
+          responses: {
+            200: {
+              description: "Paginated list of conversations",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/ListConversationsResponse" }
+                }
+              }
+            },
+            401: {
+              description: "Unauthorized",
+              content: {
+                "application/problem+json": { schema: { $ref: "#/components/schemas/Problem" } }
+              }
+            },
+            403: {
+              description: "Forbidden",
+              content: {
+                "application/problem+json": { schema: { $ref: "#/components/schemas/Problem" } }
+              }
+            }
+          }
+        }
+      },
+      "/api/v1/organizations/{orgId}/conversations/{id}": {
+        get: {
+          summary: "Get conversation details and chronological message timeline",
+          operationId: "getConversation",
+          parameters: [
+            {
+              name: "orgId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" }
+            },
+            { name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }
+          ],
+          responses: {
+            200: {
+              description: "Conversation detail with messages",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/ConversationDetailResponse" }
+                }
+              }
+            },
+            401: {
+              description: "Unauthorized",
+              content: {
+                "application/problem+json": { schema: { $ref: "#/components/schemas/Problem" } }
+              }
+            },
+            403: {
+              description: "Forbidden",
+              content: {
+                "application/problem+json": { schema: { $ref: "#/components/schemas/Problem" } }
+              }
+            },
+            404: {
+              description: "Conversation not found",
+              content: {
+                "application/problem+json": { schema: { $ref: "#/components/schemas/Problem" } }
+              }
+            }
+          }
+        },
+        patch: {
+          summary:
+            "Update conversation status or assignee with optimistic concurrency version check",
+          operationId: "updateConversation",
+          parameters: [
+            {
+              name: "orgId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" }
+            },
+            { name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/UpdateConversationRequest" }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: "Updated conversation",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/Conversation" }
+                }
+              }
+            },
+            400: {
+              description: "Invalid status transition or validation failure",
+              content: {
+                "application/problem+json": { schema: { $ref: "#/components/schemas/Problem" } }
+              }
+            },
+            401: {
+              description: "Unauthorized",
+              content: {
+                "application/problem+json": { schema: { $ref: "#/components/schemas/Problem" } }
+              }
+            },
+            403: {
+              description: "Forbidden",
+              content: {
+                "application/problem+json": { schema: { $ref: "#/components/schemas/Problem" } }
+              }
+            },
+            404: {
+              description: "Conversation not found",
+              content: {
+                "application/problem+json": { schema: { $ref: "#/components/schemas/Problem" } }
+              }
+            },
+            409: {
+              description:
+                "Optimistic concurrency conflict - conversation modified by another operator",
+              content: {
+                "application/problem+json": { schema: { $ref: "#/components/schemas/Problem" } }
+              }
+            }
+          }
+        }
+      },
+      "/api/v1/organizations/{orgId}/conversations/{id}/messages": {
+        post: {
+          summary: "Send outbound message reply in conversation",
+          operationId: "createOutboundMessage",
+          parameters: [
+            {
+              name: "orgId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" }
+            },
+            { name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/CreateOutboundMessageRequest" }
+              }
+            }
+          },
+          responses: {
+            201: {
+              description: "Created outbound message queued for delivery",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/Message" }
+                }
+              }
+            },
+            400: {
+              description: "Validation error",
+              content: {
+                "application/problem+json": { schema: { $ref: "#/components/schemas/Problem" } }
+              }
+            },
+            401: {
+              description: "Unauthorized",
+              content: {
+                "application/problem+json": { schema: { $ref: "#/components/schemas/Problem" } }
+              }
+            },
+            403: {
+              description: "Forbidden without message:send permission",
+              content: {
+                "application/problem+json": { schema: { $ref: "#/components/schemas/Problem" } }
+              }
+            },
+            404: {
+              description: "Conversation not found",
+              content: {
+                "application/problem+json": { schema: { $ref: "#/components/schemas/Problem" } }
+              }
+            }
+          }
+        }
       }
     },
     components: {
@@ -759,6 +972,126 @@ export function buildOpenApiSpec() {
             pageInfo: { $ref: "#/components/schemas/PageInfo" }
           },
           required: ["items", "pageInfo"]
+        },
+        Conversation: {
+          type: "object",
+          properties: {
+            id: { type: "string", format: "uuid" },
+            organizationId: { type: "string", format: "uuid" },
+            channelId: { type: "string", format: "uuid" },
+            customerPhone: { type: "string" },
+            customerName: { type: "string", nullable: true },
+            status: {
+              type: "string",
+              enum: ["new", "open", "pending", "resolved", "closed"]
+            },
+            priority: {
+              type: "string",
+              enum: ["low", "medium", "high", "urgent"]
+            },
+            assignedToUserId: { type: "string", format: "uuid", nullable: true },
+            version: { type: "integer" },
+            lastMessageAt: { type: "string", format: "date-time" },
+            createdAt: { type: "string", format: "date-time" },
+            updatedAt: { type: "string", format: "date-time" }
+          },
+          required: [
+            "id",
+            "organizationId",
+            "channelId",
+            "customerPhone",
+            "customerName",
+            "status",
+            "priority",
+            "assignedToUserId",
+            "version",
+            "lastMessageAt",
+            "createdAt",
+            "updatedAt"
+          ]
+        },
+        Message: {
+          type: "object",
+          properties: {
+            id: { type: "string", format: "uuid" },
+            organizationId: { type: "string", format: "uuid" },
+            conversationId: { type: "string", format: "uuid" },
+            channelId: { type: "string", format: "uuid" },
+            direction: { type: "string", enum: ["inbound", "outbound"] },
+            senderType: { type: "string", enum: ["customer", "agent", "system", "bot"] },
+            senderUserId: { type: "string", format: "uuid", nullable: true },
+            providerMessageId: { type: "string", nullable: true },
+            content: { type: "string" },
+            status: {
+              type: "string",
+              enum: ["queued", "sent", "delivered", "read", "failed"]
+            },
+            errorDetail: { type: "string", nullable: true },
+            sentAt: { type: "string", format: "date-time", nullable: true },
+            deliveredAt: { type: "string", format: "date-time", nullable: true },
+            readAt: { type: "string", format: "date-time", nullable: true },
+            createdAt: { type: "string", format: "date-time" },
+            updatedAt: { type: "string", format: "date-time" }
+          },
+          required: [
+            "id",
+            "organizationId",
+            "conversationId",
+            "channelId",
+            "direction",
+            "senderType",
+            "senderUserId",
+            "providerMessageId",
+            "content",
+            "status",
+            "errorDetail",
+            "sentAt",
+            "deliveredAt",
+            "readAt",
+            "createdAt",
+            "updatedAt"
+          ]
+        },
+        ListConversationsResponse: {
+          type: "object",
+          properties: {
+            items: {
+              type: "array",
+              items: { $ref: "#/components/schemas/Conversation" }
+            },
+            nextCursor: { type: "string", nullable: true }
+          },
+          required: ["items", "nextCursor"]
+        },
+        ConversationDetailResponse: {
+          type: "object",
+          properties: {
+            conversation: { $ref: "#/components/schemas/Conversation" },
+            messages: {
+              type: "array",
+              items: { $ref: "#/components/schemas/Message" }
+            }
+          },
+          required: ["conversation", "messages"]
+        },
+        UpdateConversationRequest: {
+          type: "object",
+          properties: {
+            version: { type: "integer", minimum: 1 },
+            status: {
+              type: "string",
+              enum: ["new", "open", "pending", "resolved", "closed"]
+            },
+            assignedToUserId: { type: "string", format: "uuid", nullable: true }
+          },
+          required: ["version"]
+        },
+        CreateOutboundMessageRequest: {
+          type: "object",
+          properties: {
+            content: { type: "string", minLength: 1, maxLength: 4096 }
+          },
+          required: ["content"]
         }
       }
     }

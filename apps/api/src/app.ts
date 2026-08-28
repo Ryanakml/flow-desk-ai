@@ -18,12 +18,14 @@ import type { DbClient } from "@flowdesk/db";
 import type { IdentityProvider } from "@flowdesk/providers";
 import { createAuthRouter } from "./auth.js";
 import { createOrganizationsRouter, createInvitationsRouter } from "./organizations.js";
+import { createConversationsRouter } from "./conversations.js";
 export { createAuthRouter, createRequireAuthMiddleware, type AuthenticatedUser } from "./auth.js";
 export {
   createOrganizationsRouter,
   createInvitationsRouter,
   createRequireOrgPermissionMiddleware
 } from "./organizations.js";
+export { createConversationsRouter } from "./conversations.js";
 
 export interface ApiAppAuthOptions {
   db: DbClient;
@@ -157,6 +159,12 @@ export function createApiApp(options: ApiAppOptions) {
     app.use(
       "/api/v1/invitations",
       createInvitationsRouter({
+        db: options.auth.db
+      })
+    );
+    app.use(
+      "/api/v1/organizations/:orgId/conversations",
+      createConversationsRouter({
         db: options.auth.db
       })
     );
