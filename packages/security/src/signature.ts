@@ -1,4 +1,11 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+
+/**
+ * Computes a standard SHA-256 hex digest for arbitrary payloads.
+ */
+export function computeSha256(data: Buffer | string): string {
+  return createHash("sha256").update(data).digest("hex");
+}
 
 /**
  * Computes the official Meta X-Hub-Signature-256 header value for a given raw payload.

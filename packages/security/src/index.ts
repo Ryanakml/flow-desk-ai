@@ -21,7 +21,7 @@ export {
   type RateLimiter
 } from "./rate-limit.js";
 export { encryptSecret, decryptSecret, type EncryptedEnvelope } from "./encryption.js";
-export { computeMetaSignature, verifyMetaSignature } from "./signature.js";
+export { computeMetaSignature, verifyMetaSignature, computeSha256 } from "./signature.js";
 
 export function redactRecord(input: Readonly<Record<string, unknown>>): Record<string, unknown> {
   return Object.fromEntries(

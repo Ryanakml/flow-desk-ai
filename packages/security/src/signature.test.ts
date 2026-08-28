@@ -1,9 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { computeMetaSignature, verifyMetaSignature } from "./signature.js";
+import { computeMetaSignature, computeSha256, verifyMetaSignature } from "./signature.js";
 
 describe("Meta HMAC-SHA256 Webhook Signature Verification (M2-03)", () => {
   const secret = "test_meta_app_secret_12345";
   const body = Buffer.from(JSON.stringify({ object: "whatsapp_business_account" }), "utf8");
+
+  it("computes standard SHA-256 digests accurately", () => {
+    const hash = computeSha256(body);
+    expect(hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(computeSha256("test")).toBe(
+      "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+    );
+  });
 
   it("computes and verifies a valid signature", () => {
     const signature = computeMetaSignature(body, secret);

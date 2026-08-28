@@ -38,7 +38,8 @@ describe("database foundation", () => {
       "0003_tenant_rls.sql",
       "0004_auth_sessions.sql",
       "0005_invitations.sql",
-      "0006_channels.sql"
+      "0006_channels.sql",
+      "0007_webhook_events.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -96,7 +97,8 @@ describe("database foundation", () => {
       "organizations",
       "outbox_events",
       "roles",
-      "users"
+      "users",
+      "webhook_events"
     ]);
     expect(tenantColumns.rows.map((row) => row.table_name).sort()).toEqual([
       "audit_logs",
