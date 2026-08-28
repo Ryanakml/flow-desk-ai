@@ -18,6 +18,7 @@
   "dependencies": {
     "@flowdesk/config": "workspace:*",
     "@flowdesk/observability": "workspace:*",
+    "@flowdesk/security": "workspace:*",
     "express": "^5.1.0"
   },
   "devDependencies": {
