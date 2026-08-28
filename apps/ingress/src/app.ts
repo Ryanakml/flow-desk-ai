@@ -1,9 +1,33 @@
 import express, { type Request, type Response } from "express";
-import { getSecurityHeaders, verifyMetaSignature } from "@flowdesk/security";
+import type { DbClient } from "@flowdesk/db";
+import { recordWebhookEvent } from "@flowdesk/db";
+import { computeSha256, getSecurityHeaders, verifyMetaSignature } from "@flowdesk/security";
 
 export interface IngressAppOptions {
-  webhookVerifyToken?: string | undefined;
-  webhookAppSecret?: string | undefined;
+  webhookVerifyToken?: string;
+  webhookAppSecret?: string;
+  dbClient?: DbClient;
+}
+
+/**
+ * Safely parses the Meta WhatsApp Cloud API phone_number_id from changes[0].value.metadata.
+ */
+function extractPhoneNumberId(payload: unknown): string | null {
+  if (typeof payload !== "object" || payload === null) return null;
+  const entry = (payload as Record<string, unknown>)["entry"];
+  if (!Array.isArray(entry) || entry.length === 0) return null;
+  const firstEntry: unknown = entry[0];
+  if (typeof firstEntry !== "object" || firstEntry === null) return null;
+  const changes = (firstEntry as Record<string, unknown>)["changes"];
+  if (!Array.isArray(changes) || changes.length === 0) return null;
+  const firstChange: unknown = changes[0];
+  if (typeof firstChange !== "object" || firstChange === null) return null;
+  const value = (firstChange as Record<string, unknown>)["value"];
+  if (typeof value !== "object" || value === null) return null;
+  const metadata = (value as Record<string, unknown>)["metadata"];
+  if (typeof metadata !== "object" || metadata === null) return null;
+  const phoneId = (metadata as Record<string, unknown>)["phone_number_id"];
+  return typeof phoneId === "string" ? phoneId : null;
 }
 
 export function createIngressApp(options?: IngressAppOptions) {
@@ -28,6 +52,8 @@ export function createIngressApp(options?: IngressAppOptions) {
     options?.webhookAppSecret ??
     process.env["WEBHOOK_APP_SECRET"] ??
     "flowdesk_webhook_app_secret_default";
+
+  const dbClient = options?.dbClient;
 
   // Health and readiness endpoints
   app.get("/livez", (_req, res) => res.json({ status: "ok" }));
@@ -57,7 +83,8 @@ export function createIngressApp(options?: IngressAppOptions) {
 
   /**
    * Meta Webhook Callback Ingress
-   * Captures raw byte buffer and verifies X-Hub-Signature-256 in constant time before processing.
+   * Captures raw byte buffer, verifies X-Hub-Signature-256 in constant time,
+   * computes SHA-256 payload hash, and durably persists before HTTP 200 acknowledgment.
    */
   app.post(
     "/webhooks/whatsapp",
@@ -103,7 +130,37 @@ export function createIngressApp(options?: IngressAppOptions) {
         return;
       }
 
-      // Webhook signature verified and payload parsed successfully
+      const payloadHash = computeSha256(rawBody);
+      const phoneNumberId = extractPhoneNumberId(parsedPayload);
+
+      // If database client is provided, persist event durably before acknowledging
+      if (dbClient) {
+        recordWebhookEvent(dbClient, {
+          provider: "whatsapp",
+          payloadHash,
+          rawPayload: rawBody.toString("utf8"),
+          phoneNumberId
+        })
+          .then((result) => {
+            res.status(200).json({
+              status: "received",
+              deduplicated: result.deduplicated,
+              eventId: result.webhookEvent.id
+            });
+          })
+          .catch((error: unknown) => {
+            const errorMessage = error instanceof Error ? error.message : "Database error";
+            res.status(503).json({
+              type: "https://flowdesk.dev/errors/service-unavailable",
+              title: "Service Unavailable",
+              status: 503,
+              detail: `Durable webhook persistence failed; please retry: ${errorMessage}`
+            });
+          });
+        return;
+      }
+
+      // Fallback acknowledgment when operating without database client
       res.status(200).json({
         status: "received",
         payloadReceived: typeof parsedPayload === "object" && parsedPayload !== null

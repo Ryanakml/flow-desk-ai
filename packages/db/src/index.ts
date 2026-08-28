@@ -60,6 +60,14 @@ export {
   type ChannelRecord,
   type CreateChannelInput
 } from "./channels.js";
+export {
+  recordWebhookEvent,
+  getWebhookEventById,
+  type WebhookEventRecord,
+  type WebhookEventStatus,
+  type RecordWebhookEventInput,
+  type RecordWebhookEventResult
+} from "./webhooks.js";
 
 export const DATABASE_PACKAGE_STATE = "m1-foundation-ready" as const;
 
