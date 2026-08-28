@@ -20,9 +20,10 @@ import {
   listAuditLogs,
   ApiError
 } from "./api.js";
+import { InboxView } from "./InboxView.js";
 import "./styles.css";
 
-type Tab = "workspace" | "team" | "audit";
+type Tab = "conversations" | "workspace" | "team" | "audit";
 
 export function App() {
   const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
@@ -619,6 +620,15 @@ export function App() {
       <nav className="sub-nav" aria-label="Workspace Sections">
         <button
           type="button"
+          onClick={() => setActiveTab("conversations")}
+          className={`tab-btn ${activeTab === "conversations" ? "active" : ""}`}
+          id="tab-conversations"
+          data-testid="tab-conversations"
+        >
+          Inbox
+        </button>
+        <button
+          type="button"
           onClick={() => setActiveTab("workspace")}
           className={`tab-btn ${activeTab === "workspace" ? "active" : ""}`}
           id="tab-workspace"
@@ -662,6 +672,15 @@ export function App() {
               ✕
             </button>
           </div>
+        )}
+
+        {/* Tab 0: WhatsApp Operator Conversation Inbox */}
+        {activeTab === "conversations" && selectedOrgId && sessionUser && (
+          <InboxView
+            organizationId={selectedOrgId}
+            userRole={currentRole}
+            sessionUserId={sessionUser.id}
+          />
         )}
 
         {/* Tab 1: Empty Workspace Shell */}

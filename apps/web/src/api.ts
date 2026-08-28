@@ -15,6 +15,16 @@ import {
   AcceptInvitationResponseSchema,
   type ListAuditLogsResponse,
   ListAuditLogsResponseSchema,
+  type ListConversationsResponse,
+  ListConversationsResponseSchema,
+  type ConversationDetailResponse,
+  ConversationDetailResponseSchema,
+  type Conversation,
+  ConversationSchema,
+  type Message,
+  MessageSchema,
+  type UpdateConversationRequest,
+  type CreateOutboundMessageRequest,
   type Problem
 } from "@flowdesk/contracts";
 import type { RoleKey } from "@flowdesk/domain";
@@ -199,4 +209,86 @@ export async function listAuditLogs(
   const res = await fetcher(url);
   const data = await handleResponse<unknown>(res);
   return ListAuditLogsResponseSchema.parse(data);
+}
+
+export async function listConversations(
+  orgId: string,
+  query?: {
+    status?: string | undefined;
+    assignedTo?: string | undefined;
+    cursor?: string | undefined;
+    limit?: number | undefined;
+  },
+  fetcher: typeof fetch = fetch
+): Promise<ListConversationsResponse> {
+  const params = new URLSearchParams();
+  if (query?.status) params.set("status", query.status);
+  if (query?.assignedTo) params.set("assignedTo", query.assignedTo);
+  if (query?.cursor) params.set("cursor", query.cursor);
+  if (query?.limit) params.set("limit", String(query.limit));
+
+  const qs = params.toString();
+  const url = `/api/v1/organizations/${orgId}/conversations${qs ? `?${qs}` : ""}`;
+  const res = await fetcher(url);
+  const data = await handleResponse<unknown>(res);
+  return ListConversationsResponseSchema.parse(data);
+}
+
+export async function getConversation(
+  orgId: string,
+  conversationId: string,
+  fetcher: typeof fetch = fetch
+): Promise<ConversationDetailResponse> {
+  const url = `/api/v1/organizations/${orgId}/conversations/${conversationId}`;
+  const res = await fetcher(url);
+  const data = await handleResponse<unknown>(res);
+  return ConversationDetailResponseSchema.parse(data);
+}
+
+export async function updateConversation(
+  orgId: string,
+  conversationId: string,
+  body: UpdateConversationRequest,
+  idempotencyKey?: string,
+  fetcher: typeof fetch = fetch
+): Promise<Conversation> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json"
+  };
+  if (idempotencyKey) {
+    headers["Idempotency-Key"] = idempotencyKey;
+  }
+
+  const url = `/api/v1/organizations/${orgId}/conversations/${conversationId}`;
+  const res = await fetcher(url, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify(body)
+  });
+  const data = await handleResponse<unknown>(res);
+  return ConversationSchema.parse(data);
+}
+
+export async function sendOutboundMessage(
+  orgId: string,
+  conversationId: string,
+  body: CreateOutboundMessageRequest,
+  idempotencyKey?: string,
+  fetcher: typeof fetch = fetch
+): Promise<Message> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json"
+  };
+  if (idempotencyKey) {
+    headers["Idempotency-Key"] = idempotencyKey;
+  }
+
+  const url = `/api/v1/organizations/${orgId}/conversations/${conversationId}/messages`;
+  const res = await fetcher(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body)
+  });
+  const data = await handleResponse<unknown>(res);
+  return MessageSchema.parse(data);
 }
