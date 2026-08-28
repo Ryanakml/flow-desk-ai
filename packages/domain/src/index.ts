@@ -26,3 +26,14 @@ export {
   canTransitionChannelStatus,
   assertValidChannelStatusTransition
 } from "./channels.js";
+export {
+  type ConversationStatus,
+  type ConversationPriority,
+  type MessageStatus,
+  type MessageDirection,
+  type MessageSenderType,
+  canTransitionConversationStatus,
+  assertValidConversationStatusTransition,
+  canTransitionMessageStatus,
+  assertValidMessageStatusTransition
+} from "./conversations.js";

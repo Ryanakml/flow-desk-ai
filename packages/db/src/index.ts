@@ -68,6 +68,20 @@ export {
   type RecordWebhookEventInput,
   type RecordWebhookEventResult
 } from "./webhooks.js";
+export {
+  findOrCreateConversation,
+  getConversationById,
+  updateConversationStatus,
+  assignConversation,
+  createMessage,
+  updateMessageStatus,
+  listMessagesByConversation,
+  OptimisticConcurrencyError,
+  type ConversationRecord,
+  type MessageRecord,
+  type FindOrCreateConversationInput,
+  type CreateMessageInput
+} from "./conversations.js";
 
 export const DATABASE_PACKAGE_STATE = "m1-foundation-ready" as const;
 

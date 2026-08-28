@@ -15,3 +15,4 @@
 | CHAN-PROV-001   | M2    | WhatsApp Cloud API & Fake provider      | Error classification; adapter test suite   | Complete |
 | ING-HMAC-001    | M2    | Ingress raw-body HMAC-SHA256 signature  | Supertest verification suite; forge denial | Complete |
 | ING-PERSIST-001 | M2    | Durable webhook event & deduplication   | Deduplication suite; transactional outbox  | Complete |
+| CONV-MOD-001    | M2    | Conversations & messages RLS & states   | RLS isolation tests; state machine suites  | Complete |
