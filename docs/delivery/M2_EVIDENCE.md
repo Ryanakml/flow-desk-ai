@@ -9,7 +9,8 @@
 > “E2E” used an in-memory database double, and migration `0008` did not contain every
 > M2 domain table named by the blueprint. Migration `0009_m2_completion_hardening.sql`,
 > the PostgreSQL-backed CI test, transaction/RLS hardening, queue leases, and M2
-> monitoring artifacts below are the corrective release evidence.
+> monitoring artifacts below are the corrective release evidence delivered by
+> PR [#53](https://github.com/Ryanakml/flow-desk-ai/pull/53).
 
 ---
 
@@ -146,6 +147,8 @@
   - PR #49 (`feat(api): deliver conversation api with optimistic concurrency and outbound intent creation`)
   - PR #50 (`feat(worker): implement outbound dispatch worker with provider status reconciliation`)
   - PR #51 (`feat(web): deliver operator conversation inbox, thread timeline, and message composer UI`)
+  - PR #52 (`docs(m2): publish end-to-end evidence and close milestone`)
+  - PR #53 (`fix(m2): close completion audit gaps`)
 
 ---
 
