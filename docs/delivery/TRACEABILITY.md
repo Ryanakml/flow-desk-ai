@@ -19,3 +19,4 @@
 | NORM-MATCH-001  | M2    | Worker normalization & thread matching   | Pipeline tests; idempotent message creation | Complete |
 | CONV-API-001    | M2    | Conversation API & outbound outbox       | Supertest suite; optimistic conflict tests  | Complete |
 | DISP-WORK-001   | M2    | Outbound dispatch worker & status reconc | Dispatch suite; retry & reconciliation test | Complete |
+| UI-INBOX-001    | M2    | Operator conversation inbox & composer   | InboxView tests; role-gated composer suites | Complete |

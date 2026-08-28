@@ -11,6 +11,10 @@ import {
   updateMemberRole,
   revokeMember,
   listAuditLogs,
+  listConversations,
+  getConversation,
+  updateConversation,
+  sendOutboundMessage,
   ApiError
 } from "./api.js";
 
@@ -242,5 +246,205 @@ describe("typed API client (M1-07)", () => {
     const res = await listAuditLogs("a0000000-0000-4000-8000-000000000001", { limit: 20 }, fetcher);
     expect(res.items.length).toBe(1);
     expect(res.pageInfo.hasNextPage).toBe(false);
+  });
+
+  it("lists conversations with status and assignee filter", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: "b0000000-0000-7000-8000-000000000001",
+              organizationId: "a0000000-0000-4000-8000-000000000001",
+              channelId: "c0000000-0000-7000-8000-000000000001",
+              customerPhone: "6281234567890",
+              customerName: "Budi Santoso",
+              status: "open",
+              priority: "medium",
+              assignedToUserId: null,
+              version: 1,
+              lastMessageAt: new Date().toISOString(),
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            }
+          ],
+          nextCursor: null
+        }),
+        { status: 200 }
+      )
+    );
+
+    const res = await listConversations(
+      "a0000000-0000-4000-8000-000000000001",
+      { status: "open", assignedTo: "unassigned" },
+      fetcher
+    );
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/v1/organizations/a0000000-0000-4000-8000-000000000001/conversations?status=open&assignedTo=unassigned"
+    );
+    expect(res.items.length).toBe(1);
+    expect(res.items[0]!.customerName).toBe("Budi Santoso");
+  });
+
+  it("retrieves conversation detail with messages", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          conversation: {
+            id: "b0000000-0000-7000-8000-000000000001",
+            organizationId: "a0000000-0000-4000-8000-000000000001",
+            channelId: "c0000000-0000-7000-8000-000000000001",
+            customerPhone: "6281234567890",
+            customerName: "Budi Santoso",
+            status: "open",
+            priority: "medium",
+            assignedToUserId: null,
+            version: 1,
+            lastMessageAt: new Date().toISOString(),
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          },
+          messages: [
+            {
+              id: "d0000000-0000-7000-8000-000000000001",
+              organizationId: "a0000000-0000-4000-8000-000000000001",
+              conversationId: "b0000000-0000-7000-8000-000000000001",
+              channelId: "c0000000-0000-7000-8000-000000000001",
+              direction: "inbound",
+              senderType: "customer",
+              senderUserId: null,
+              providerMessageId: "wamid.inbound.1",
+              content: "Hello I need help",
+              status: "delivered",
+              errorDetail: null,
+              sentAt: new Date().toISOString(),
+              deliveredAt: new Date().toISOString(),
+              readAt: null,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            }
+          ]
+        }),
+        { status: 200 }
+      )
+    );
+
+    const res = await getConversation(
+      "a0000000-0000-4000-8000-000000000001",
+      "b0000000-0000-7000-8000-000000000001",
+      fetcher
+    );
+
+    expect(res.conversation.id).toBe("b0000000-0000-7000-8000-000000000001");
+    expect(res.messages.length).toBe(1);
+    expect(res.messages[0]!.content).toBe("Hello I need help");
+  });
+
+  it("updates conversation with optimistic concurrency version", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: "b0000000-0000-7000-8000-000000000001",
+          organizationId: "a0000000-0000-4000-8000-000000000001",
+          channelId: "c0000000-0000-7000-8000-000000000001",
+          customerPhone: "6281234567890",
+          customerName: "Budi Santoso",
+          status: "resolved",
+          priority: "medium",
+          assignedToUserId: null,
+          version: 2,
+          lastMessageAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }),
+        { status: 200 }
+      )
+    );
+
+    const res = await updateConversation(
+      "a0000000-0000-4000-8000-000000000001",
+      "b0000000-0000-7000-8000-000000000001",
+      { status: "resolved", version: 1 },
+      "idemp-update-conv",
+      fetcher
+    );
+
+    expect(res.status).toBe("resolved");
+    expect(res.version).toBe(2);
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/v1/organizations/a0000000-0000-4000-8000-000000000001/conversations/b0000000-0000-7000-8000-000000000001",
+      expect.objectContaining({
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "idemp-update-conv"
+        }
+      })
+    );
+  });
+
+  it("sends outbound message and returns queued message", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: "d0000000-0000-7000-8000-000000000002",
+          organizationId: "a0000000-0000-4000-8000-000000000001",
+          conversationId: "b0000000-0000-7000-8000-000000000001",
+          channelId: "c0000000-0000-7000-8000-000000000001",
+          direction: "outbound",
+          senderType: "agent",
+          senderUserId: "a0000000-0000-4000-8000-000000000012",
+          providerMessageId: null,
+          content: "We are processing your order right away!",
+          status: "queued",
+          errorDetail: null,
+          sentAt: null,
+          deliveredAt: null,
+          readAt: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }),
+        { status: 201 }
+      )
+    );
+
+    const res = await sendOutboundMessage(
+      "a0000000-0000-4000-8000-000000000001",
+      "b0000000-0000-7000-8000-000000000001",
+      { content: "We are processing your order right away!" },
+      "idemp-msg-123",
+      fetcher
+    );
+
+    expect(res.status).toBe("queued");
+    expect(res.direction).toBe("outbound");
+    expect(res.content).toBe("We are processing your order right away!");
+  });
+
+  it("handles 409 conflict error when updating conversation", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          type: "https://flowdesk.dev/problems/concurrency-conflict",
+          title: "Concurrency Conflict",
+          status: 409,
+          code: "CONCURRENCY_CONFLICT",
+          detail:
+            "Conversation has been modified by another user. Expected version 1, current is 2."
+        }),
+        { status: 409 }
+      )
+    );
+
+    await expect(
+      updateConversation(
+        "a0000000-0000-4000-8000-000000000001",
+        "b0000000-0000-7000-8000-000000000001",
+        { status: "resolved", version: 1 },
+        undefined,
+        fetcher
+      )
+    ).rejects.toThrow("Conversation has been modified by another user");
   });
 });
