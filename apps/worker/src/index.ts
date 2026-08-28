@@ -6,6 +6,9 @@ import {
 } from "@flowdesk/observability";
 import { Pool } from "pg";
 import { processOutboxWebhookBatch } from "./normalization.js";
+import { processOutboxOutboundBatch, dispatchOutboundMessage } from "./dispatch.js";
+
+export { processOutboxOutboundBatch, dispatchOutboundMessage };
 
 const config = loadHttpConfig("worker", Number(process.env["WORKER_HEALTH_PORT"] ?? 4002));
 const logger = createLogger({
@@ -29,10 +32,16 @@ if (dbPool) {
   pollingTimer = setInterval(() => {
     if (isPolling) return;
     isPolling = true;
-    void processOutboxWebhookBatch(dbPool, 10)
-      .then((count) => {
-        if (count > 0) {
-          logger.info({ processedCount: count }, "worker.outbox_batch.processed");
+    void Promise.all([
+      processOutboxWebhookBatch(dbPool, 10),
+      processOutboxOutboundBatch(dbPool, {}, 10)
+    ])
+      .then(([webhookCount, outboundCount]) => {
+        if (webhookCount > 0 || outboundCount > 0) {
+          logger.info(
+            { webhookProcessed: webhookCount, outboundProcessed: outboundCount },
+            "worker.outbox_batch.processed"
+          );
         }
       })
       .catch((error: unknown) => {

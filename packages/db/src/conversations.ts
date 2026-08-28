@@ -279,6 +279,8 @@ export async function updateMessageStatus(
   messageId: string,
   targetStatus: MessageStatus,
   extra?: {
+    providerMessageId?: string | undefined;
+    sentAt?: Date | undefined;
     deliveredAt?: Date | undefined;
     readAt?: Date | undefined;
     errorDetail?: string | undefined;
@@ -307,11 +309,13 @@ export async function updateMessageStatus(
   const updateRes = await client.query<MessageRecord>(
     `UPDATE flowdesk.messages
      SET status = $1,
-         delivered_at = COALESCE($3, delivered_at),
-         read_at = COALESCE($4, read_at),
-         error_detail = COALESCE($5, error_detail),
+         provider_message_id = COALESCE($3, provider_message_id),
+         sent_at = COALESCE($4, sent_at),
+         delivered_at = COALESCE($5, delivered_at),
+         read_at = COALESCE($6, read_at),
+         error_detail = COALESCE($7, error_detail),
          updated_at = clock_timestamp()
-     WHERE id = $2 AND organization_id = $6
+     WHERE id = $2 AND organization_id = $8
      RETURNING
        id, organization_id AS "organizationId", conversation_id AS "conversationId",
        channel_id AS "channelId", direction, sender_type AS "senderType",
@@ -322,6 +326,8 @@ export async function updateMessageStatus(
     [
       targetStatus,
       messageId,
+      extra?.providerMessageId ?? null,
+      extra?.sentAt ?? null,
       extra?.deliveredAt ?? null,
       extra?.readAt ?? null,
       extra?.errorDetail ?? null,
@@ -330,6 +336,27 @@ export async function updateMessageStatus(
   );
 
   return updateRes.rows[0]!;
+}
+
+export async function getMessageById(
+  client: DbClient,
+  organizationId: string,
+  messageId: string
+): Promise<MessageRecord | null> {
+  const res = await client.query<MessageRecord>(
+    `SELECT
+       id, organization_id AS "organizationId", conversation_id AS "conversationId",
+       channel_id AS "channelId", direction, sender_type AS "senderType",
+       sender_user_id AS "senderUserId", provider_message_id AS "providerMessageId",
+       content, status, error_detail AS "errorDetail", metadata,
+       sent_at AS "sentAt", delivered_at AS "deliveredAt", read_at AS "readAt",
+       created_at AS "createdAt", updated_at AS "updatedAt"
+     FROM flowdesk.messages
+     WHERE organization_id = $1 AND id = $2
+     LIMIT 1`,
+    [organizationId, messageId]
+  );
+  return res.rows[0] ?? null;
 }
 
 /**
@@ -561,4 +588,92 @@ export async function createOutboundMessageWithOutbox(
   );
 
   return message;
+}
+
+export interface ClaimedOutboxEvent<TPayload = Record<string, unknown>> {
+  id: string;
+  organizationId: string;
+  aggregateType: string;
+  aggregateId: string;
+  eventType: string;
+  payload: TPayload;
+  correlationId: string | null;
+  causationId: string | null;
+  occurredAt: Date;
+  attempts: number;
+}
+
+/**
+ * Claims unpublished outbox events for a given event type.
+ */
+export async function claimUnpublishedOutboxEvents<TPayload = Record<string, unknown>>(
+  client: DbClient,
+  eventType: string,
+  limit = 10
+): Promise<ClaimedOutboxEvent<TPayload>[]> {
+  const res = await client.query<{
+    id: string;
+    organization_id: string;
+    aggregate_type: string;
+    aggregate_id: string;
+    event_type: string;
+    payload: TPayload;
+    correlation_id: string | null;
+    causation_id: string | null;
+    occurred_at: Date;
+    attempts: number;
+  }>(
+    `SELECT id, organization_id, aggregate_type, aggregate_id, event_type,
+            payload, correlation_id, causation_id, occurred_at, attempts
+     FROM flowdesk.outbox_events
+     WHERE event_type = $1 AND published_at IS NULL
+     ORDER BY occurred_at ASC
+     LIMIT $2`,
+    [eventType, limit]
+  );
+
+  return res.rows.map((row) => ({
+    id: row.id,
+    organizationId: row.organization_id,
+    aggregateType: row.aggregate_type,
+    aggregateId: row.aggregate_id,
+    eventType: row.event_type,
+    payload: row.payload,
+    correlationId: row.correlation_id,
+    causationId: row.causation_id,
+    occurredAt: row.occurred_at,
+    attempts: row.attempts
+  }));
+}
+
+/**
+ * Marks an outbox event as successfully published.
+ */
+export async function markOutboxEventPublished(client: DbClient, eventId: string): Promise<void> {
+  await client.query(
+    `UPDATE flowdesk.outbox_events
+     SET published_at = clock_timestamp()
+     WHERE id = $1`,
+    [eventId]
+  );
+}
+
+/**
+ * Records an execution attempt and error message on an outbox event.
+ * If terminal is true, marks published_at to dead-letter the event.
+ */
+export async function recordOutboxEventFailure(
+  client: DbClient,
+  eventId: string,
+  errorMessage: string,
+  terminal = false
+): Promise<void> {
+  await client.query(
+    `UPDATE flowdesk.outbox_events
+     SET attempts = attempts + 1,
+         last_error = $2,
+         published_at = CASE WHEN $3 = true THEN clock_timestamp() ELSE published_at END
+     WHERE id = $1`,
+    [eventId, errorMessage, terminal]
+  );
 }

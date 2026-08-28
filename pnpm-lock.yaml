@@ -199,6 +199,9 @@ importers:
       '@flowdesk/providers':
         specifier: workspace:*
         version: link:../../packages/providers
+      '@flowdesk/security':
+        specifier: workspace:*
+        version: link:../../packages/security
       pg:
         specifier: 8.16.3
         version: 8.16.3
