@@ -60,7 +60,8 @@ describe("database foundation", () => {
       "0013_m3_whatsapp_templates.sql",
       "0014_m3_service_window.sql",
       "0015_m3_media_quarantine.sql",
-      "0016_m3_media_lifecycle.sql"
+      "0016_m3_media_lifecycle.sql",
+      "0017_m4_knowledge_and_vector.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
