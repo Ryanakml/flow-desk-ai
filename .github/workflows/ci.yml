@@ -60,6 +60,7 @@ jobs:
           retention-days: 14
 
   images:
+    name: images (${{ matrix.app }}, ${{ matrix.port }})
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
