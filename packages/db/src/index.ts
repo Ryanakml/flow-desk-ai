@@ -98,6 +98,20 @@ export {
   type CreateOutboundMessageWithOutboxInput,
   type ClaimedOutboxEvent
 } from "./conversations.js";
+export {
+  createTeam,
+  addTeamMember,
+  createQueue,
+  addQueueMember,
+  removeQueueMember,
+  listVisibleQueues,
+  type TeamRecord,
+  type QueueRecord,
+  type QueueRoutingStrategy,
+  type QueueStatus,
+  type CreateTeamInput,
+  type CreateQueueInput
+} from "./operational-inbox.js";
 
 export const DATABASE_PACKAGE_STATE = "m1-foundation-ready" as const;
 
