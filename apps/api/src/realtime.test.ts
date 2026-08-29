@@ -443,10 +443,12 @@ describe("Socket.IO Realtime Server (M3-03)", () => {
   });
 
   it("connects to Redis adapter when redisUrl is provided", async () => {
+    const redisUrl = process.env["REDIS_URL"];
+    if (!redisUrl) return;
     const db = createMockDb();
     const server = createRealtimeServer(httpServer, {
       db,
-      redisUrl: "redis://localhost:6379"
+      redisUrl
     });
     await expect(server.ready).resolves.toBeUndefined();
     await server.close();
