@@ -23,7 +23,7 @@
 | E2E-SLICE-001   | M2    | PostgreSQL vertical slice + ops controls   | Hosted DB suite; dashboard; alerts; runbook  | Complete |
 | OPS-INBOX-001   | M3    | Queue/team model and atomic operations API | PostgreSQL race/RLS; domain/API suites       | Complete |
 | RT-AUTH-001     | M3    | Authenticated, versioned realtime rooms    | Room denial; reconnect/gap reconciliation    | Complete |
-| TPL-SYNC-001    | M3    | Versioned provider template sync           | Provider status/idempotency fixtures         | Planned  |
+| TPL-SYNC-001    | M3    | Versioned provider template sync           | Provider status/idempotency fixtures         | Complete |
 | TPL-ELIG-001    | M3    | Central eligibility and rendering policy   | Boundary-clock/render/dispatch fixtures      | Planned  |
 | MEDIA-PIPE-001  | M3    | Private upload, scan, send, and deletion   | Storage/scanner/provider/security suites     | Planned  |
 | UX-OPS-001      | M3    | Accessible bilingual operational inbox     | Axe/visual/offline/conflict browser evidence | Planned  |

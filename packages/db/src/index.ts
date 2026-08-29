@@ -121,6 +121,17 @@ export {
   type PerformConversationOperationInput
 } from "./conversation-operations.js";
 export { getRealtimeVersion, canAccessRealtimeRoom, type RealtimeRoom } from "./realtime.js";
+export {
+  idempotentSyncTemplate,
+  getTemplateByNameAndLanguage,
+  getTemplateSyncCursor,
+  setTemplateSyncCursor,
+  getTemplateStatusHistory,
+  type SyncTemplateVersionParams,
+  type SyncTemplateResult,
+  type WhatsAppTemplateRecord,
+  type WhatsAppTemplateVersionRecord
+} from "./whatsapp-templates.js";
 
 export const DATABASE_PACKAGE_STATE = "m1-foundation-ready" as const;
 

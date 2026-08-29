@@ -488,3 +488,92 @@ export const CreateOutboundMessageRequestSchema = z.object({
   content: z.string().trim().min(1).max(4096)
 });
 export type CreateOutboundMessageRequest = z.infer<typeof CreateOutboundMessageRequestSchema>;
+
+// WhatsApp Template Schemas (M3-04)
+export const WhatsAppTemplateCategorySchema = z.enum(["MARKETING", "UTILITY", "AUTHENTICATION"]);
+export type WhatsAppTemplateCategory = z.infer<typeof WhatsAppTemplateCategorySchema>;
+
+export const WhatsAppTemplateStatusSchema = z.enum([
+  "APPROVED",
+  "PENDING",
+  "REJECTED",
+  "PAUSED",
+  "DISABLED",
+  "IN_APPEAL"
+]);
+export type WhatsAppTemplateStatus = z.infer<typeof WhatsAppTemplateStatusSchema>;
+
+export const WhatsAppTemplateComponentTypeSchema = z.enum(["HEADER", "BODY", "FOOTER", "BUTTONS"]);
+export type WhatsAppTemplateComponentType = z.infer<typeof WhatsAppTemplateComponentTypeSchema>;
+
+export const WhatsAppTemplateHeaderFormatSchema = z.enum([
+  "TEXT",
+  "IMAGE",
+  "DOCUMENT",
+  "VIDEO",
+  "LOCATION"
+]);
+export type WhatsAppTemplateHeaderFormat = z.infer<typeof WhatsAppTemplateHeaderFormatSchema>;
+
+export const WhatsAppTemplateButtonTypeSchema = z.enum([
+  "QUICK_REPLY",
+  "URL",
+  "PHONE_NUMBER",
+  "COPY_CODE",
+  "FLOW"
+]);
+export type WhatsAppTemplateButtonType = z.infer<typeof WhatsAppTemplateButtonTypeSchema>;
+
+export const WhatsAppTemplateButtonSchema = z.object({
+  type: WhatsAppTemplateButtonTypeSchema,
+  text: z.string(),
+  url: z.string().optional(),
+  phoneNumber: z.string().optional(),
+  example: z.array(z.string()).optional()
+});
+export type WhatsAppTemplateButton = z.infer<typeof WhatsAppTemplateButtonSchema>;
+
+export const WhatsAppTemplateComponentSchema = z.object({
+  type: WhatsAppTemplateComponentTypeSchema,
+  format: WhatsAppTemplateHeaderFormatSchema.optional(),
+  text: z.string().optional(),
+  buttons: z.array(WhatsAppTemplateButtonSchema).optional(),
+  example: z.record(z.string(), z.unknown()).optional()
+});
+export type WhatsAppTemplateComponent = z.infer<typeof WhatsAppTemplateComponentSchema>;
+
+export const WhatsAppTemplateVersionSchema = z.object({
+  id: z.string().uuid(),
+  templateId: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  providerTemplateId: z.string(),
+  language: z.string(),
+  status: WhatsAppTemplateStatusSchema,
+  rejectedReason: z.string().nullable().optional(),
+  components: z.array(WhatsAppTemplateComponentSchema),
+  variableCount: z.number().int().min(0),
+  payloadHash: z.string(),
+  version: z.number().int().positive(),
+  createdAt: z.string().datetime({ offset: true }),
+  updatedAt: z.string().datetime({ offset: true })
+});
+export type WhatsAppTemplateVersion = z.infer<typeof WhatsAppTemplateVersionSchema>;
+
+export const WhatsAppTemplateSchema = z.object({
+  id: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  channelId: z.string().uuid(),
+  name: z.string(),
+  category: WhatsAppTemplateCategorySchema,
+  versions: z.array(WhatsAppTemplateVersionSchema).optional(),
+  createdAt: z.string().datetime({ offset: true }),
+  updatedAt: z.string().datetime({ offset: true })
+});
+export type WhatsAppTemplate = z.infer<typeof WhatsAppTemplateSchema>;
+
+export const WhatsAppTemplateSyncResultSchema = z.object({
+  channelId: z.string().uuid(),
+  syncedCount: z.number().int().min(0),
+  cursor: z.string().nullable()
+});
+export type WhatsAppTemplateSyncResult = z.infer<typeof WhatsAppTemplateSyncResultSchema>;

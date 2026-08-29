@@ -202,6 +202,9 @@ importers:
       '@flowdesk/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@flowdesk/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@flowdesk/db':
         specifier: workspace:*
         version: link:../../packages/db

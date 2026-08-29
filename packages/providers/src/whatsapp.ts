@@ -44,9 +44,75 @@ export interface SendTextMessageResult {
   recipientId: string;
 }
 
+export interface ProviderTemplateComponent {
+  type: "HEADER" | "BODY" | "FOOTER" | "BUTTONS";
+  format?: "TEXT" | "IMAGE" | "DOCUMENT" | "VIDEO" | "LOCATION";
+  text?: string;
+  buttons?: Array<{
+    type: "QUICK_REPLY" | "URL" | "PHONE_NUMBER" | "COPY_CODE" | "FLOW";
+    text: string;
+    url?: string;
+    phoneNumber?: string;
+    example?: string[];
+  }>;
+  example?: Record<string, unknown>;
+}
+
+export interface ProviderMessageTemplate {
+  id: string;
+  name: string;
+  language: string;
+  category: "MARKETING" | "UTILITY" | "AUTHENTICATION";
+  status: "APPROVED" | "PENDING" | "REJECTED" | "PAUSED" | "DISABLED" | "IN_APPEAL";
+  components: ProviderTemplateComponent[];
+  rejected_reason?: string;
+}
+
+export interface FetchTemplatesInput {
+  wabaId: string;
+  accessToken: string;
+  limit?: number | undefined;
+  after?: string | undefined;
+}
+
+export interface FetchTemplatesResult {
+  data: ProviderMessageTemplate[];
+  paging?:
+    | {
+        cursors?:
+          | {
+              before?: string | undefined;
+              after?: string | undefined;
+            }
+          | undefined;
+        next?: string | undefined;
+      }
+    | undefined;
+}
+
 export interface WhatsAppProvider {
   readonly name: string;
   sendTextMessage(input: SendTextMessageInput): Promise<SendTextMessageResult>;
+  fetchMessageTemplates(input: FetchTemplatesInput): Promise<FetchTemplatesResult>;
+}
+
+export function classifyMetaError(status: number, code?: number): WhatsAppErrorClassification {
+  if (status === 401 || code === 190) {
+    return "AUTH_FAILED";
+  }
+  if (status === 429 || code === 80007 || code === 130429) {
+    return "RATE_LIMIT_EXCEEDED";
+  }
+  if (code === 131030) {
+    return "USER_NOT_OPTED_IN";
+  }
+  if (code === 131047) {
+    return "OUTSIDE_WINDOW";
+  }
+  if (status >= 500) {
+    return "TRANSIENT";
+  }
+  return "INVALID_PAYLOAD";
 }
 
 export interface MetaWhatsAppProviderOptions {
@@ -172,6 +238,68 @@ export class MetaWhatsAppProvider implements WhatsAppProvider {
 
     return { messageId, recipientId };
   }
+
+  async fetchMessageTemplates(input: FetchTemplatesInput): Promise<FetchTemplatesResult> {
+    const params = new URLSearchParams({
+      fields: "id,name,language,category,status,rejected_reason,components"
+    });
+    if (input.limit) {
+      params.set("limit", String(input.limit));
+    }
+    if (input.after) {
+      params.set("after", input.after);
+    }
+
+    const url = `${this.baseUrl}/${encodeURIComponent(input.wabaId)}/message_templates?${params.toString()}`;
+    const res = await this.fetcher(url, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${input.accessToken}`,
+        Accept: "application/json"
+      }
+    });
+
+    if (!res.ok) {
+      let errorBody: {
+        error?: {
+          message: string;
+          type?: string;
+          code?: number;
+          error_subcode?: number;
+        };
+      } = {};
+
+      try {
+        errorBody = (await res.json()) as typeof errorBody;
+      } catch {
+        // Fall back to empty error body
+      }
+
+      const code = errorBody.error?.code;
+      const subcode = errorBody.error?.error_subcode;
+      const message =
+        errorBody.error?.message ?? `WhatsApp API responded with status ${res.status}`;
+      const classification = classifyMetaError(res.status, code);
+
+      throw new WhatsAppProviderError({
+        message,
+        classification,
+        statusCode: res.status,
+        providerCode: code,
+        providerSubcode: subcode
+      });
+    }
+
+    const body = (await res.json()) as {
+      data?: ProviderMessageTemplate[];
+      paging?: FetchTemplatesResult["paging"];
+    };
+
+    return {
+      data: body.data ?? [],
+      paging: body.paging
+    };
+  }
 }
 
 export interface SentMessageLog extends SendTextMessageInput {
@@ -224,9 +352,69 @@ export interface MetaWebhookPayload {
 export class FakeWhatsAppProvider implements WhatsAppProvider {
   readonly name = "fake-whatsapp-provider";
   private readonly sent: SentMessageLog[] = [];
+  private templates: ProviderMessageTemplate[] = [];
   private idCounter = 1;
   public simulateFailure?:
     ((input: SendTextMessageInput) => WhatsAppProviderError | null) | undefined;
+
+  setTemplates(templates: ProviderMessageTemplate[]): void {
+    this.templates = [...templates];
+  }
+
+  addTemplate(template: ProviderMessageTemplate): void {
+    this.templates.push(template);
+  }
+
+  simulateTemplateStatusUpdate(
+    providerTemplateId: string,
+    status: ProviderMessageTemplate["status"],
+    rejectedReason?: string
+  ): void {
+    const tpl = this.templates.find((t) => t.id === providerTemplateId);
+    if (tpl) {
+      tpl.status = status;
+      if (rejectedReason !== undefined) {
+        tpl.rejected_reason = rejectedReason;
+      }
+    }
+  }
+
+  async fetchMessageTemplates(input: FetchTemplatesInput): Promise<FetchTemplatesResult> {
+    await Promise.resolve();
+    if (this.simulateFailure) {
+      const err = this.simulateFailure({
+        phoneNumberId: "",
+        to: "0",
+        text: "",
+        accessToken: input.accessToken
+      });
+      if (err) throw err;
+    }
+
+    let items = [...this.templates];
+    if (input.after) {
+      const startIndex = items.findIndex((t) => t.id === input.after);
+      if (startIndex !== -1) {
+        items = items.slice(startIndex + 1);
+      }
+    }
+
+    const limit = input.limit ?? items.length;
+    const paginated = items.slice(0, limit);
+    const hasMore = items.length > limit;
+    const nextCursor =
+      hasMore && paginated.length > 0 ? paginated[paginated.length - 1]!.id : undefined;
+
+    return {
+      data: paginated,
+      paging: nextCursor
+        ? {
+            cursors: { after: nextCursor },
+            next: `https://fake.graph.facebook.com/v21.0/${input.wabaId}/message_templates?after=${nextCursor}`
+          }
+        : undefined
+    };
+  }
 
   async sendTextMessage(input: SendTextMessageInput): Promise<SendTextMessageResult> {
     await Promise.resolve();

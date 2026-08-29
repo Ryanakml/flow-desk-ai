@@ -50,7 +50,8 @@ describe("database foundation", () => {
       "0009_m2_completion_hardening.sql",
       "0010_m3_operational_inbox.sql",
       "0011_m3_conversation_operations.sql",
-      "0012_m3_realtime_versions.sql"
+      "0012_m3_realtime_versions.sql",
+      "0013_m3_whatsapp_templates.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -156,7 +157,11 @@ describe("database foundation", () => {
       "team_memberships",
       "teams",
       "users",
-      "webhook_events"
+      "webhook_events",
+      "whatsapp_template_status_history",
+      "whatsapp_template_sync_cursors",
+      "whatsapp_template_versions",
+      "whatsapp_templates"
     ]);
     expect(tenantColumns.rows.map((row) => row.table_name).sort()).toEqual([
       "audit_logs",
@@ -184,7 +189,11 @@ describe("database foundation", () => {
       "sla_policies",
       "tags",
       "team_memberships",
-      "teams"
+      "teams",
+      "whatsapp_template_status_history",
+      "whatsapp_template_sync_cursors",
+      "whatsapp_template_versions",
+      "whatsapp_templates"
     ]);
   });
 
@@ -201,7 +210,11 @@ describe("database foundation", () => {
       "sla_policies",
       "tags",
       "team_memberships",
-      "teams"
+      "teams",
+      "whatsapp_template_status_history",
+      "whatsapp_template_sync_cursors",
+      "whatsapp_template_versions",
+      "whatsapp_templates"
     ];
     const rls = await admin.query<{
       relname: string;
@@ -292,6 +305,17 @@ describe("database foundation", () => {
   it("removes queue visibility immediately when routing membership is removed", async () => {
     const organizationId = "00000000-0000-7000-8000-0000000000a1";
     const userId = "00000000-0000-7000-8000-0000000000c1";
+    await admin.query(`DELETE FROM flowdesk.conversation_events WHERE organization_id = $1`, [
+      organizationId
+    ]);
+    await admin.query(`DELETE FROM flowdesk.messages WHERE organization_id = $1`, [organizationId]);
+    await admin.query(`DELETE FROM flowdesk.conversations WHERE organization_id = $1`, [
+      organizationId
+    ]);
+    await admin.query(`DELETE FROM flowdesk.queue_memberships WHERE organization_id = $1`, [
+      organizationId
+    ]);
+    await admin.query(`DELETE FROM flowdesk.queues WHERE organization_id = $1`, [organizationId]);
     await admin.query(
       `INSERT INTO flowdesk.organizations (id, slug, display_name)
        VALUES ($1, 'tenant-a', 'Tenant A') ON CONFLICT (id) DO NOTHING`,
@@ -354,6 +378,16 @@ describe("database foundation", () => {
   it("keeps private notes out of the outbound message pipeline while recording history", async () => {
     const organizationId = "00000000-0000-7000-8000-0000000000a1";
     const userId = "00000000-0000-7000-8000-0000000000c1";
+    await admin.query(`DELETE FROM flowdesk.audit_logs WHERE organization_id = $1`, [
+      organizationId
+    ]);
+    await admin.query(`DELETE FROM flowdesk.conversation_events WHERE organization_id = $1`, [
+      organizationId
+    ]);
+    await admin.query(`DELETE FROM flowdesk.messages WHERE organization_id = $1`, [organizationId]);
+    await admin.query(`DELETE FROM flowdesk.conversations WHERE organization_id = $1`, [
+      organizationId
+    ]);
     await admin.query(
       `INSERT INTO flowdesk.organizations (id, slug, display_name)
        VALUES ($1, 'tenant-a', 'Tenant A') ON CONFLICT (id) DO NOTHING`,
@@ -445,6 +479,16 @@ describe("database foundation", () => {
     const organizationId = "00000000-0000-7000-8000-0000000000a1";
     const agentA = "00000000-0000-7000-8000-0000000000c1";
     const agentB = "00000000-0000-7000-8000-0000000000c2";
+    await admin.query(`DELETE FROM flowdesk.audit_logs WHERE organization_id = $1`, [
+      organizationId
+    ]);
+    await admin.query(`DELETE FROM flowdesk.conversation_events WHERE organization_id = $1`, [
+      organizationId
+    ]);
+    await admin.query(`DELETE FROM flowdesk.messages WHERE organization_id = $1`, [organizationId]);
+    await admin.query(`DELETE FROM flowdesk.conversations WHERE organization_id = $1`, [
+      organizationId
+    ]);
     await admin.query(
       `INSERT INTO flowdesk.users (id, email, display_name) VALUES
        ($1, 'm3-agent@example.com', 'M3 Agent A'),

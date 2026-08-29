@@ -9,7 +9,9 @@ import {
   decodeCursor,
   encodeCursor,
   IdempotencyHeaderSchema,
-  ListAuditLogsResponseSchema
+  ListAuditLogsResponseSchema,
+  WhatsAppTemplateSchema,
+  WhatsAppTemplateVersionSchema
 } from "./index.js";
 
 describe("Contracts & Primitives (M1-06)", () => {
@@ -176,6 +178,46 @@ describe("Contracts & Primitives (M1-06)", () => {
       expect(() => IdempotencyHeaderSchema.parse("")).toThrow();
       expect(() => IdempotencyHeaderSchema.parse("   ")).toThrow();
       expect(() => IdempotencyHeaderSchema.parse("a".repeat(257))).toThrow();
+    });
+
+    it("validates WhatsAppTemplateVersionSchema and WhatsAppTemplateSchema", () => {
+      const template = {
+        id: "a0000000-0000-4000-8000-000000000001",
+        organizationId: "a0000000-0000-4000-8000-000000000002",
+        channelId: "a0000000-0000-4000-8000-000000000003",
+        name: "order_confirmation",
+        category: "UTILITY" as const,
+        versions: [
+          {
+            id: "a0000000-0000-4000-8000-000000000004",
+            templateId: "a0000000-0000-4000-8000-000000000001",
+            organizationId: "a0000000-0000-4000-8000-000000000002",
+            providerTemplateId: "meta-tpl-123",
+            language: "id",
+            status: "APPROVED" as const,
+            components: [
+              {
+                type: "BODY" as const,
+                text: "Pesanan {{1}} Anda telah dikonfirmasi."
+              }
+            ],
+            variableCount: 1,
+            payloadHash: "hash-xyz-123",
+            version: 1,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          }
+        ],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      const parsed = WhatsAppTemplateSchema.parse(template);
+      expect(parsed.name).toBe("order_confirmation");
+      expect(parsed.category).toBe("UTILITY");
+      expect(parsed.versions?.[0]?.status).toBe("APPROVED");
+      expect(parsed.versions?.[0]?.components[0]?.type).toBe("BODY");
+      expect(WhatsAppTemplateVersionSchema.parse(template.versions[0])).toBeDefined();
     });
   });
 });

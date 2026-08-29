@@ -24,5 +24,10 @@ export {
   type SentMessageLog,
   WhatsAppProviderError,
   MetaWhatsAppProvider,
-  FakeWhatsAppProvider
+  FakeWhatsAppProvider,
+  classifyMetaError,
+  type ProviderTemplateComponent,
+  type ProviderMessageTemplate,
+  type FetchTemplatesInput,
+  type FetchTemplatesResult
 } from "./whatsapp.js";
