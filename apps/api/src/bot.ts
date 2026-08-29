@@ -22,11 +22,22 @@ import {
   type ConversationMessageContext
 } from "@flowdesk/domain";
 import { FakeEmbeddingProvider, FakeAiChatProvider } from "@flowdesk/providers";
+import {
+  checkPromptInjection,
+  redactPiiFromPrompt,
+  checkTokenBudget,
+  LlmCircuitBreaker
+} from "@flowdesk/security";
 import { createRequireAuthMiddleware } from "./auth.js";
 import { createRequireOrgPermissionMiddleware } from "./organizations.js";
 
 const embeddingProvider = new FakeEmbeddingProvider();
 const chatProvider = new FakeAiChatProvider();
+const llmCircuitBreaker = new LlmCircuitBreaker({
+  failureThreshold: 3,
+  recoveryTimeMs: 30_000,
+  name: "ai-chat-provider"
+});
 
 export interface BotRouterOptions {
   db: DbClient;
@@ -226,8 +237,17 @@ export function createBotRouter(options: BotRouterOptions): Router {
         const latestCustomerMsg =
           [...recentMessages].reverse().find((m) => m.sender === "customer")?.text || "Hello";
 
-        // 1. Generate query embedding
-        const embeddings = await embeddingProvider.generateEmbeddings([latestCustomerMsg]);
+        // M4-07: 1. Prompt injection check on customer message
+        const injectionCheck = checkPromptInjection(latestCustomerMsg);
+        // Use sanitized message for all downstream processing
+        const safeCustomerMsg = injectionCheck.sanitized;
+
+        // M4-07: 2. PII redaction before sending to LLM
+        const piiRedaction = redactPiiFromPrompt(safeCustomerMsg);
+        const redactedMsg = piiRedaction.redacted;
+
+        // 1. Generate query embedding (use redacted msg to avoid PII in vector store)
+        const embeddings = await embeddingProvider.generateEmbeddings([redactedMsg]);
         const queryEmbedding = embeddings[0]?.embedding ?? new Array<number>(1536).fill(0);
 
         // 2. Perform vector search in pgvector
@@ -251,10 +271,21 @@ export function createBotRouter(options: BotRouterOptions): Router {
           messages: recentMessages
         });
 
-        // 5. Generate reply draft via AI Chat Provider
-        const chatResponse = await chatProvider.generateReplyDraft(
-          promptContext.systemInstructions,
-          latestCustomerMsg
+        // M4-07: 3. Token budget enforcement before calling LLM
+        const budgetCheck = checkTokenBudget(promptContext.systemInstructions, redactedMsg);
+        if (!budgetCheck.allowed) {
+          return sendProblem(
+            response,
+            422,
+            "BUDGET_EXCEEDED",
+            "Token budget exceeded",
+            budgetCheck.reason ?? "Prompt too large for configured token budget"
+          );
+        }
+
+        // M4-07: 4. Circuit-breaker-wrapped LLM call
+        const chatResponse = await llmCircuitBreaker.call(() =>
+          chatProvider.generateReplyDraft(promptContext.systemInstructions, redactedMsg)
         );
 
         const latencyMs = Date.now() - startTime;

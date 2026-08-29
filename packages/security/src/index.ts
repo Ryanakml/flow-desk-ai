@@ -31,6 +31,21 @@ export {
   type AntiSsrfFetchOptions,
   type AntiSsrfFetchResult
 } from "./ssrf.js";
+// M4-07: AI Safety Guardrails
+export {
+  checkPromptInjection,
+  validateSystemPromptSafety,
+  redactPiiFromPrompt,
+  checkTokenBudget,
+  LlmCircuitBreaker,
+  DEFAULT_TOKEN_BUDGET,
+  type InjectionCheckResult,
+  type PiiRedactionResult,
+  type TokenBudgetOptions,
+  type BudgetCheckResult,
+  type CircuitState,
+  type CircuitBreakerOptions
+} from "./ai-safety.js";
 
 export function redactRecord(input: Readonly<Record<string, unknown>>): Record<string, unknown> {
   return Object.fromEntries(
