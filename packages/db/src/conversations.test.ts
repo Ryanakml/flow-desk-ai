@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { DbClient } from "./auth.js";
 import {
   assignConversation,
+  ClosedConversationError,
+  createOutboundMessageWithOutbox,
   createMessage,
   findOrCreateConversation,
   getConversationById,
@@ -64,6 +66,17 @@ function createMockConversationDb(): {
           status: "new",
           priority: "medium",
           assignedToUserId: null,
+          queueId: null,
+          teamId: null,
+          waitingReason: null,
+          botPaused: false,
+          firstResponseDueAt: null,
+          resolutionDueAt: null,
+          resolvedAt: null,
+          firstRespondedAt: null,
+          slaPausedAt: null,
+          firstResponseRemainingSeconds: null,
+          resolutionRemainingSeconds: null,
           version: 1,
           lastMessageAt: new Date(),
           metadata,
@@ -403,5 +416,24 @@ describe("Conversations & Messages Repository (M2-05)", () => {
     expect(list.length).toBe(2);
     expect(list[0]?.content).toBe("First");
     expect(list[1]?.content).toBe("Second");
+  });
+
+  it("rejects outbound messages while a conversation is closed", async () => {
+    const { db } = createMockConversationDb();
+    const conv = await findOrCreateConversation(db, {
+      organizationId: orgId,
+      channelId,
+      customerPhone: "+628123456789"
+    });
+    await updateConversationStatus(db, orgId, conv.id, conv.version, "closed");
+
+    await expect(
+      createOutboundMessageWithOutbox(db, {
+        organizationId: orgId,
+        conversationId: conv.id,
+        senderUserId: "user-1",
+        content: "must not send"
+      })
+    ).rejects.toBeInstanceOf(ClosedConversationError);
   });
 });

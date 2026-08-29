@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AuditLogEntrySchema,
   BuildInfoSchema,
+  ConversationOperationRequestSchema,
   CursorPageQuerySchema,
   decodeCursor,
   encodeCursor,
@@ -10,6 +11,24 @@ import {
 } from "./index.js";
 
 describe("Contracts & Primitives (M1-06)", () => {
+  describe("M3 conversation operations", () => {
+    it("validates discriminated, versioned operations", () => {
+      expect(
+        ConversationOperationRequestSchema.parse({
+          version: 3,
+          action: "handoff",
+          targetUserId: "00000000-0000-7000-8000-000000000001"
+        }).action
+      ).toBe("handoff");
+      expect(() =>
+        ConversationOperationRequestSchema.parse({ version: 0, action: "claim" })
+      ).toThrow();
+      expect(() =>
+        ConversationOperationRequestSchema.parse({ version: 1, action: "note", body: " " })
+      ).toThrow();
+    });
+  });
+
   describe("BuildInfoSchema", () => {
     it("rejects an unknown environment", () => {
       expect(() =>

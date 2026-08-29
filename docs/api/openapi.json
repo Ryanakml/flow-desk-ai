@@ -1088,6 +1088,84 @@
           }
         }
       }
+    },
+    "/api/v1/organizations/{orgId}/conversations/{id}/actions": {
+      "post": {
+        "summary": "Perform a race-safe conversation operation",
+        "operationId": "performConversationOperation",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationOperationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated authoritative conversation projection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conversation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid operation payload",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission or active queue access denied",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale version, invalid transition, or action conflict",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1531,6 +1609,58 @@
             "format": "uuid",
             "nullable": true
           },
+          "queueId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "teamId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "waitingReason": {
+            "type": "string",
+            "nullable": true
+          },
+          "botPaused": {
+            "type": "boolean"
+          },
+          "firstResponseDueAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "resolutionDueAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "resolvedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "firstRespondedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "slaPausedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "firstResponseRemainingSeconds": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          },
+          "resolutionRemainingSeconds": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          },
           "version": {
             "type": "integer"
           },
@@ -1556,6 +1686,17 @@
           "status",
           "priority",
           "assignedToUserId",
+          "queueId",
+          "teamId",
+          "waitingReason",
+          "botPaused",
+          "firstResponseDueAt",
+          "resolutionDueAt",
+          "resolvedAt",
+          "firstRespondedAt",
+          "slaPausedAt",
+          "firstResponseRemainingSeconds",
+          "resolutionRemainingSeconds",
           "version",
           "lastMessageAt",
           "createdAt",
@@ -1701,6 +1842,62 @@
           }
         },
         "required": ["version"]
+      },
+      "ConversationOperationRequest": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "claim",
+              "release",
+              "handoff",
+              "note",
+              "tag.add",
+              "tag.remove",
+              "read",
+              "unread",
+              "wait",
+              "resolve",
+              "reopen",
+              "bot.pause",
+              "bot.resume",
+              "priority"
+            ]
+          },
+          "targetUserId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 10000
+          },
+          "tagId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "lastReadMessageId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "priority": {
+            "type": "string",
+            "enum": ["low", "medium", "high", "urgent"]
+          }
+        },
+        "required": ["version", "action"]
       },
       "CreateOutboundMessageRequest": {
         "type": "object",

@@ -24,6 +24,7 @@ import {
   type Message,
   MessageSchema,
   type UpdateConversationRequest,
+  type ConversationOperationRequest,
   type CreateOutboundMessageRequest,
   type Problem
 } from "@flowdesk/contracts";
@@ -291,4 +292,19 @@ export async function sendOutboundMessage(
   });
   const data = await handleResponse<unknown>(res);
   return MessageSchema.parse(data);
+}
+
+export async function performConversationOperation(
+  orgId: string,
+  conversationId: string,
+  body: ConversationOperationRequest,
+  fetcher: typeof fetch = fetch
+): Promise<Conversation> {
+  const url = `/api/v1/organizations/${orgId}/conversations/${conversationId}/actions`;
+  const res = await fetcher(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  return ConversationSchema.parse(await handleResponse<unknown>(res));
 }

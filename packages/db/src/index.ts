@@ -88,6 +88,7 @@ export {
   markOutboxEventPublished,
   recordOutboxEventFailure,
   OptimisticConcurrencyError,
+  ClosedConversationError,
   type ConversationRecord,
   type MessageRecord,
   type FindOrCreateConversationInput,
@@ -112,6 +113,13 @@ export {
   type CreateTeamInput,
   type CreateQueueInput
 } from "./operational-inbox.js";
+export {
+  performConversationOperation,
+  ConversationAccessRevokedError,
+  ConversationActionError,
+  type ConversationOperation,
+  type PerformConversationOperationInput
+} from "./conversation-operations.js";
 
 export const DATABASE_PACKAGE_STATE = "m1-foundation-ready" as const;
 

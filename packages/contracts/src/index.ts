@@ -351,6 +351,17 @@ export const ConversationSchema = z.object({
   status: ConversationStatusSchema,
   priority: ConversationPrioritySchema,
   assignedToUserId: z.string().uuid().nullable(),
+  queueId: z.string().uuid().nullable(),
+  teamId: z.string().uuid().nullable(),
+  waitingReason: z.string().nullable(),
+  botPaused: z.boolean(),
+  firstResponseDueAt: z.string().datetime().nullable(),
+  resolutionDueAt: z.string().datetime().nullable(),
+  resolvedAt: z.string().datetime().nullable(),
+  firstRespondedAt: z.string().datetime().nullable(),
+  slaPausedAt: z.string().datetime().nullable(),
+  firstResponseRemainingSeconds: z.number().int().min(0).nullable(),
+  resolutionRemainingSeconds: z.number().int().min(0).nullable(),
   version: z.number().int(),
   lastMessageAt: z.string().datetime(),
   createdAt: z.string().datetime(),
@@ -408,6 +419,32 @@ export const UpdateConversationRequestSchema = z
     message: "At least one update field (status or assignedToUserId) must be provided"
   });
 export type UpdateConversationRequest = z.infer<typeof UpdateConversationRequestSchema>;
+
+const ConversationOperationPayloadSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("claim") }),
+  z.object({ action: z.literal("release") }),
+  z.object({ action: z.literal("handoff"), targetUserId: z.string().uuid() }),
+  z.object({ action: z.literal("note"), body: z.string().trim().min(1).max(10000) }),
+  z.object({ action: z.literal("tag.add"), tagId: z.string().uuid() }),
+  z.object({ action: z.literal("tag.remove"), tagId: z.string().uuid() }),
+  z.object({
+    action: z.literal("read"),
+    lastReadMessageId: z.string().uuid().nullable().optional()
+  }),
+  z.object({ action: z.literal("unread") }),
+  z.object({ action: z.literal("wait"), reason: z.string().trim().min(1).max(500) }),
+  z.object({ action: z.literal("resolve") }),
+  z.object({ action: z.literal("reopen") }),
+  z.object({ action: z.literal("bot.pause") }),
+  z.object({ action: z.literal("bot.resume") }),
+  z.object({ action: z.literal("priority"), priority: ConversationPrioritySchema })
+]);
+
+export const ConversationOperationRequestSchema = z.intersection(
+  z.object({ version: z.number().int().min(1) }),
+  ConversationOperationPayloadSchema
+);
+export type ConversationOperationRequest = z.infer<typeof ConversationOperationRequestSchema>;
 
 export const CreateOutboundMessageRequestSchema = z.object({
   content: z.string().trim().min(1).max(4096)

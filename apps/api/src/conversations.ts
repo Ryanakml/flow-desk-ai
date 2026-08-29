@@ -1,5 +1,6 @@
 import {
   type Problem,
+  ConversationOperationRequestSchema,
   ConversationDetailResponseSchema,
   ConversationSchema,
   CreateOutboundMessageRequestSchema,
@@ -15,6 +16,10 @@ import {
   listConversations,
   listMessagesByConversation,
   OptimisticConcurrencyError,
+  ClosedConversationError,
+  ConversationAccessRevokedError,
+  ConversationActionError,
+  performConversationOperation,
   runInTenantTransaction,
   updateConversation
 } from "@flowdesk/db";
@@ -55,6 +60,17 @@ function serializeConversation(conv: {
   status: string;
   priority: string;
   assignedToUserId: string | null;
+  queueId?: string | null;
+  teamId?: string | null;
+  waitingReason?: string | null;
+  botPaused?: boolean;
+  firstResponseDueAt?: Date | null;
+  resolutionDueAt?: Date | null;
+  resolvedAt?: Date | null;
+  firstRespondedAt?: Date | null;
+  slaPausedAt?: Date | null;
+  firstResponseRemainingSeconds?: number | null;
+  resolutionRemainingSeconds?: number | null;
   version: number;
   lastMessageAt: Date;
   createdAt: Date;
@@ -69,6 +85,17 @@ function serializeConversation(conv: {
     status: conv.status,
     priority: conv.priority,
     assignedToUserId: conv.assignedToUserId,
+    queueId: conv.queueId ?? null,
+    teamId: conv.teamId ?? null,
+    waitingReason: conv.waitingReason ?? null,
+    botPaused: conv.botPaused ?? false,
+    firstResponseDueAt: conv.firstResponseDueAt?.toISOString() ?? null,
+    resolutionDueAt: conv.resolutionDueAt?.toISOString() ?? null,
+    resolvedAt: conv.resolvedAt?.toISOString() ?? null,
+    firstRespondedAt: conv.firstRespondedAt?.toISOString() ?? null,
+    slaPausedAt: conv.slaPausedAt?.toISOString() ?? null,
+    firstResponseRemainingSeconds: conv.firstResponseRemainingSeconds ?? null,
+    resolutionRemainingSeconds: conv.resolutionRemainingSeconds ?? null,
     version: conv.version,
     lastMessageAt: conv.lastMessageAt.toISOString(),
     createdAt: conv.createdAt.toISOString(),
@@ -225,6 +252,88 @@ export function createConversationsRouter(options: ConversationsRouterOptions): 
     }
   );
 
+  router.post(
+    "/:id/actions",
+    (request: Request, response: Response, next) => {
+      const parsed = ConversationOperationRequestSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return sendProblem(
+          response,
+          400,
+          "VALIDATION_ERROR",
+          "Invalid conversation operation",
+          parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join(", ")
+        );
+      }
+      const elevatedActions = new Set(["handoff", "priority"]);
+      const permission: Permission = elevatedActions.has(parsed.data.action)
+        ? "conversation:assign"
+        : parsed.data.action === "resolve"
+          ? "conversation:resolve"
+          : "conversation:read";
+      return createRequireOrgPermissionMiddleware(options.db, permission)(request, response, next);
+    },
+    async (request: Request, response: Response) => {
+      const organizationId = request.params["orgId"] as string;
+      const conversationId = request.params["id"] as string;
+      const { version, ...operation } = ConversationOperationRequestSchema.parse(request.body);
+      try {
+        const conversation = await runInTenantTransaction(options.db, { organizationId }, (db) =>
+          performConversationOperation(db, {
+            organizationId,
+            conversationId,
+            actorUserId: request.user!.id,
+            expectedVersion: version,
+            correlationId: response.getHeader("x-request-id")?.toString() ?? null,
+            operation
+          })
+        );
+        return response.status(200).json(serializeConversation(conversation));
+      } catch (error: unknown) {
+        if (error instanceof OptimisticConcurrencyError) {
+          return sendProblem(
+            response,
+            409,
+            "OPTIMISTIC_CONCURRENCY_CONFLICT",
+            "Version Conflict",
+            "The conversation has changed. Refresh and retry the operation."
+          );
+        }
+        if (error instanceof ConversationAccessRevokedError) {
+          return sendProblem(
+            response,
+            403,
+            "CONVERSATION_ACCESS_REVOKED",
+            "Conversation Access Revoked",
+            error.message
+          );
+        }
+        if (error instanceof ConversationActionError) {
+          return sendProblem(
+            response,
+            409,
+            "CONVERSATION_ACTION_CONFLICT",
+            "Action Conflict",
+            error.message
+          );
+        }
+        if (
+          error instanceof Error &&
+          error.message.includes("Invalid conversation status transition")
+        ) {
+          return sendProblem(
+            response,
+            409,
+            "INVALID_STATUS_TRANSITION",
+            "Invalid Status Transition",
+            error.message
+          );
+        }
+        throw error;
+      }
+    }
+  );
+
   // 2. GET /api/v1/organizations/:orgId/conversations/:id
   router.get(
     "/:id",
@@ -378,21 +487,35 @@ export function createConversationsRouter(options: ConversationsRouterOptions): 
         );
       }
 
-      const message = await runInTenantTransaction(
-        options.db,
-        { organizationId: orgId },
-        async (db) => {
-          const conversation = await getConversationById(db, orgId, id);
-          if (!conversation) return null;
-          return createOutboundMessageWithOutbox(db, {
-            organizationId: orgId,
-            conversationId: id,
-            senderUserId: request.user!.id,
-            content: parseResult.data.content,
-            correlationId: response.getHeader("x-request-id")?.toString()
-          });
+      let message;
+      try {
+        message = await runInTenantTransaction(
+          options.db,
+          { organizationId: orgId },
+          async (db) => {
+            const conversation = await getConversationById(db, orgId, id);
+            if (!conversation) return null;
+            return createOutboundMessageWithOutbox(db, {
+              organizationId: orgId,
+              conversationId: id,
+              senderUserId: request.user!.id,
+              content: parseResult.data.content,
+              correlationId: response.getHeader("x-request-id")?.toString()
+            });
+          }
+        );
+      } catch (error: unknown) {
+        if (error instanceof ClosedConversationError) {
+          return sendProblem(
+            response,
+            409,
+            "CONVERSATION_CLOSED",
+            "Conversation Closed",
+            error.message
+          );
         }
-      );
+        throw error;
+      }
       if (!message) {
         return sendProblem(
           response,

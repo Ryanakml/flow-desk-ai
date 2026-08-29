@@ -16,6 +16,13 @@ export class OptimisticConcurrencyError extends Error {
   }
 }
 
+export class ClosedConversationError extends Error {
+  constructor(message = "Closed conversations reject outbound messages until reopened.") {
+    super(message);
+    this.name = "ClosedConversationError";
+  }
+}
+
 export interface ConversationRecord {
   id: string;
   organizationId: string;
@@ -25,6 +32,17 @@ export interface ConversationRecord {
   status: ConversationStatus;
   priority: ConversationPriority;
   assignedToUserId: string | null;
+  queueId: string | null;
+  teamId: string | null;
+  waitingReason: string | null;
+  botPaused: boolean;
+  firstResponseDueAt: Date | null;
+  resolutionDueAt: Date | null;
+  resolvedAt: Date | null;
+  firstRespondedAt: Date | null;
+  slaPausedAt: Date | null;
+  firstResponseRemainingSeconds: number | null;
+  resolutionRemainingSeconds: number | null;
   version: number;
   lastMessageAt: Date;
   metadata: Record<string, unknown>;
@@ -87,6 +105,12 @@ export async function findOrCreateConversation(
        id, organization_id AS "organizationId", channel_id AS "channelId",
        customer_phone AS "customerPhone", customer_name AS "customerName",
        status, priority, assigned_to_user_id AS "assignedToUserId",
+       queue_id AS "queueId", team_id AS "teamId", waiting_reason AS "waitingReason",
+       bot_paused AS "botPaused", first_response_due_at AS "firstResponseDueAt",
+       resolution_due_at AS "resolutionDueAt", resolved_at AS "resolvedAt",
+       first_responded_at AS "firstRespondedAt", sla_paused_at AS "slaPausedAt",
+       first_response_remaining_seconds AS "firstResponseRemainingSeconds",
+       resolution_remaining_seconds AS "resolutionRemainingSeconds",
        version, last_message_at AS "lastMessageAt", metadata,
        created_at AS "createdAt", updated_at AS "updatedAt"
      FROM flowdesk.conversations
@@ -108,6 +132,12 @@ export async function findOrCreateConversation(
        id, organization_id AS "organizationId", channel_id AS "channelId",
        customer_phone AS "customerPhone", customer_name AS "customerName",
        status, priority, assigned_to_user_id AS "assignedToUserId",
+       queue_id AS "queueId", team_id AS "teamId", waiting_reason AS "waitingReason",
+       bot_paused AS "botPaused", first_response_due_at AS "firstResponseDueAt",
+       resolution_due_at AS "resolutionDueAt", resolved_at AS "resolvedAt",
+       first_responded_at AS "firstRespondedAt", sla_paused_at AS "slaPausedAt",
+       first_response_remaining_seconds AS "firstResponseRemainingSeconds",
+       resolution_remaining_seconds AS "resolutionRemainingSeconds",
        version, last_message_at AS "lastMessageAt", metadata,
        created_at AS "createdAt", updated_at AS "updatedAt"`,
     [
@@ -135,6 +165,12 @@ export async function getConversationById(
        id, organization_id AS "organizationId", channel_id AS "channelId",
        customer_phone AS "customerPhone", customer_name AS "customerName",
        status, priority, assigned_to_user_id AS "assignedToUserId",
+       queue_id AS "queueId", team_id AS "teamId", waiting_reason AS "waitingReason",
+       bot_paused AS "botPaused", first_response_due_at AS "firstResponseDueAt",
+       resolution_due_at AS "resolutionDueAt", resolved_at AS "resolvedAt",
+       first_responded_at AS "firstRespondedAt", sla_paused_at AS "slaPausedAt",
+       first_response_remaining_seconds AS "firstResponseRemainingSeconds",
+       resolution_remaining_seconds AS "resolutionRemainingSeconds",
        version, last_message_at AS "lastMessageAt", metadata,
        created_at AS "createdAt", updated_at AS "updatedAt"
      FROM flowdesk.conversations
@@ -169,6 +205,12 @@ export async function updateConversationStatus(
        id, organization_id AS "organizationId", channel_id AS "channelId",
        customer_phone AS "customerPhone", customer_name AS "customerName",
        status, priority, assigned_to_user_id AS "assignedToUserId",
+       queue_id AS "queueId", team_id AS "teamId", waiting_reason AS "waitingReason",
+       bot_paused AS "botPaused", first_response_due_at AS "firstResponseDueAt",
+       resolution_due_at AS "resolutionDueAt", resolved_at AS "resolvedAt",
+       first_responded_at AS "firstRespondedAt", sla_paused_at AS "slaPausedAt",
+       first_response_remaining_seconds AS "firstResponseRemainingSeconds",
+       resolution_remaining_seconds AS "resolutionRemainingSeconds",
        version, last_message_at AS "lastMessageAt", metadata,
        created_at AS "createdAt", updated_at AS "updatedAt"`,
     [targetStatus, id, organizationId, expectedVersion]
@@ -199,6 +241,12 @@ export async function assignConversation(
        id, organization_id AS "organizationId", channel_id AS "channelId",
        customer_phone AS "customerPhone", customer_name AS "customerName",
        status, priority, assigned_to_user_id AS "assignedToUserId",
+       queue_id AS "queueId", team_id AS "teamId", waiting_reason AS "waitingReason",
+       bot_paused AS "botPaused", first_response_due_at AS "firstResponseDueAt",
+       resolution_due_at AS "resolutionDueAt", resolved_at AS "resolvedAt",
+       first_responded_at AS "firstRespondedAt", sla_paused_at AS "slaPausedAt",
+       first_response_remaining_seconds AS "firstResponseRemainingSeconds",
+       resolution_remaining_seconds AS "resolutionRemainingSeconds",
        version, last_message_at AS "lastMessageAt", metadata,
        created_at AS "createdAt", updated_at AS "updatedAt"`,
     [userId, id, organizationId, expectedVersion]
@@ -447,6 +495,12 @@ export async function listConversations(
       id, organization_id AS "organizationId", channel_id AS "channelId",
       customer_phone AS "customerPhone", customer_name AS "customerName",
       status, priority, assigned_to_user_id AS "assignedToUserId",
+      queue_id AS "queueId", team_id AS "teamId", waiting_reason AS "waitingReason",
+      bot_paused AS "botPaused", first_response_due_at AS "firstResponseDueAt",
+      resolution_due_at AS "resolutionDueAt", resolved_at AS "resolvedAt",
+      first_responded_at AS "firstRespondedAt", sla_paused_at AS "slaPausedAt",
+      first_response_remaining_seconds AS "firstResponseRemainingSeconds",
+      resolution_remaining_seconds AS "resolutionRemainingSeconds",
       version, last_message_at AS "lastMessageAt", metadata,
       created_at AS "createdAt", updated_at AS "updatedAt"
     FROM flowdesk.conversations
@@ -524,6 +578,12 @@ export async function updateConversation(
       id, organization_id AS "organizationId", channel_id AS "channelId",
       customer_phone AS "customerPhone", customer_name AS "customerName",
       status, priority, assigned_to_user_id AS "assignedToUserId",
+      queue_id AS "queueId", team_id AS "teamId", waiting_reason AS "waitingReason",
+      bot_paused AS "botPaused", first_response_due_at AS "firstResponseDueAt",
+      resolution_due_at AS "resolutionDueAt", resolved_at AS "resolvedAt",
+      first_responded_at AS "firstRespondedAt", sla_paused_at AS "slaPausedAt",
+      first_response_remaining_seconds AS "firstResponseRemainingSeconds",
+      resolution_remaining_seconds AS "resolutionRemainingSeconds",
       version, last_message_at AS "lastMessageAt", metadata,
       created_at AS "createdAt", updated_at AS "updatedAt"`;
 
@@ -559,6 +619,7 @@ export async function createOutboundMessageWithOutbox(
   if (!conversation) {
     throw new Error(`Conversation '${input.conversationId}' not found.`);
   }
+  if (conversation.status === "closed") throw new ClosedConversationError();
 
   const message = await createMessage(client, {
     organizationId: input.organizationId,
