@@ -27,4 +27,4 @@
 | TPL-ELIG-001    | M3    | Central eligibility and rendering policy   | Boundary-clock/render/dispatch fixtures      | Complete |
 | MEDIA-PIPE-001  | M3    | Private upload, scan, send, and deletion   | Storage/scanner/provider/security suites     | Complete |
 | UX-OPS-001      | M3    | Accessible bilingual operational inbox     | Axe/visual/offline/conflict browser evidence | Complete |
-| E2E-M3-001      | M3    | Isolated staging operational workflow      | Hosted E2E; Terraform; runbooks; evidence    | Planned  |
+| E2E-M3-001      | M3    | Isolated staging operational workflow      | Hosted E2E; Terraform; runbooks; evidence    | Complete |
