@@ -64,3 +64,11 @@ export {
   type ExtractedKnowledgeDocument,
   type ExtractKnowledgeOptions
 } from "./knowledge-extractor.js";
+export { chunkText, type TextChunk, type ChunkOptions } from "./chunker.js";
+export {
+  type GeneratedEmbedding,
+  type AiEmbeddingProvider,
+  FakeEmbeddingProvider,
+  OpenAiEmbeddingProvider,
+  type OpenAiEmbeddingProviderConfig
+} from "./embedding.js";
