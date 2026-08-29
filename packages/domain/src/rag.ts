@@ -95,7 +95,10 @@ export function assemblePromptContext(params: FormatPromptParams): AssembledProm
         ? "Respond in clear, professional English."
         : "Respond in the same language as the customer's query.";
 
-  const systemInstructions = `${params.instructions.trim()}\n\nTone: ${tone}.\n${langInstruction}\n\nSTRICT SAFETY RULE: Answer ONLY based on the provided knowledge context. If the knowledge context does not contain sufficient evidence to answer, state clearly that you do not have enough information and escalate to human support. Do NOT invent facts or URLs.`;
+  const instructions = (
+    params.instructions || "You are a helpful customer support assistant."
+  ).trim();
+  const systemInstructions = `${instructions}\n\nTone: ${tone}.\n${langInstruction}\n\nSTRICT SAFETY RULE: Answer ONLY based on the provided knowledge context. If the knowledge context does not contain sufficient evidence to answer, state clearly that you do not have enough information and escalate to human support. Do NOT invent facts or URLs.`;
 
   // Format message history (reverse to prioritize recent messages)
   const historyLines: string[] = [];
@@ -105,7 +108,7 @@ export function assemblePromptContext(params: FormatPromptParams): AssembledProm
   const reversed = [...params.messages].reverse();
   for (const msg of reversed) {
     const roleLabel = msg.sender === "customer" ? "Customer" : "Agent";
-    const line = `${roleLabel}: ${msg.text.trim()}`;
+    const line = `${roleLabel}: ${(msg.text || "").trim()}`;
 
     if (currentChars + line.length > maxChars) {
       break;

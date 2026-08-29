@@ -737,3 +737,49 @@ export const GenerateDownloadUrlResponseSchema = z.object({
   expiresAt: z.string().datetime({ offset: true })
 });
 export type GenerateDownloadUrlResponse = z.infer<typeof GenerateDownloadUrlResponseSchema>;
+
+// M4: Bot Configuration and AI Draft schemas
+export const BotConfigSchema = z.object({
+  id: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  instructions: z.string(),
+  tone: z.string(),
+  language: z.string(),
+  model: z.string(),
+  confidenceThreshold: z.number().min(0).max(1),
+  topK: z.number().int().positive(),
+  mode: z.enum(["off", "draft"]),
+  emergencyDisabled: z.boolean(),
+  createdAt: z.string().datetime({ offset: true }),
+  updatedAt: z.string().datetime({ offset: true })
+});
+export type BotConfigResponse = z.infer<typeof BotConfigSchema>;
+
+export const UpdateBotConfigRequestSchema = z.object({
+  instructions: z.string().min(1).max(2000).optional(),
+  tone: z.enum(["professional", "friendly", "concise", "formal"]).optional(),
+  language: z.enum(["id", "en", "auto"]).optional(),
+  confidenceThreshold: z.number().min(0).max(1).optional(),
+  topK: z.number().int().min(1).max(10).optional(),
+  mode: z.enum(["off", "draft"]).optional(),
+  emergencyDisabled: z.boolean().optional()
+});
+export type UpdateBotConfigRequest = z.infer<typeof UpdateBotConfigRequestSchema>;
+
+export const CitationSchema = z.object({
+  chunkId: z.string(),
+  documentTitle: z.string(),
+  snippet: z.string(),
+  score: z.number()
+});
+export type CitationResponse = z.infer<typeof CitationSchema>;
+
+export const GenerateBotDraftResponseSchema = z.object({
+  runId: z.string().uuid(),
+  status: z.enum(["drafted", "escalated", "off"]),
+  suggestedContent: z.string(),
+  citations: z.array(CitationSchema),
+  confidence: z.number(),
+  reasoning: z.string().optional()
+});
+export type GenerateBotDraftResponse = z.infer<typeof GenerateBotDraftResponseSchema>;

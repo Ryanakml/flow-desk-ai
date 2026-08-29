@@ -20,6 +20,7 @@ import { createAuthRouter } from "./auth.js";
 import { createOrganizationsRouter, createInvitationsRouter } from "./organizations.js";
 import { createConversationsRouter } from "./conversations.js";
 import { createAttachmentsRouter } from "./attachments.js";
+import { createBotRouter } from "./bot.js";
 import type { ObjectStore } from "@flowdesk/providers";
 export { createAuthRouter, createRequireAuthMiddleware, type AuthenticatedUser } from "./auth.js";
 export {
@@ -29,6 +30,7 @@ export {
 } from "./organizations.js";
 export { createConversationsRouter } from "./conversations.js";
 export { createAttachmentsRouter } from "./attachments.js";
+export { createBotRouter } from "./bot.js";
 
 export interface ApiAppAuthOptions {
   db: DbClient;
@@ -180,6 +182,12 @@ export function createApiApp(options: ApiAppOptions) {
       createAttachmentsRouter({
         db: options.auth.db,
         storage: options.storage
+      })
+    );
+    app.use(
+      "/api/v1/organizations/:orgId/bot",
+      createBotRouter({
+        db: options.auth.db
       })
     );
   }

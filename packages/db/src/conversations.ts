@@ -8,6 +8,7 @@ import {
   type MessageStatus
 } from "@flowdesk/domain";
 import type { DbClient } from "./auth.js";
+import { runInTenantTransaction, type TenantContext } from "./tenant-context.js";
 
 export class OptimisticConcurrencyError extends Error {
   constructor(message = "Resource version conflict; please reload and retry.") {
@@ -770,4 +771,23 @@ export async function recordOutboxEventFailure(
      WHERE id = $1`,
     [eventId, errorMessage, terminal]
   );
+}
+
+export interface ConversationWithMessagesRecord {
+  conversation: ConversationRecord;
+  messages: MessageRecord[];
+}
+
+export async function getConversationWithMessages(
+  db: DbClient,
+  context: TenantContext,
+  conversationId: string
+): Promise<ConversationWithMessagesRecord | null> {
+  return runInTenantTransaction(db, context, async (tx) => {
+    const conversation = await getConversationById(tx, context.organizationId, conversationId);
+    if (!conversation) return null;
+
+    const messages = await listMessagesByConversation(tx, context.organizationId, conversationId);
+    return { conversation, messages };
+  });
 }
