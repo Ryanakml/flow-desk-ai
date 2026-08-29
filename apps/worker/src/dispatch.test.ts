@@ -82,6 +82,17 @@ function createDispatchMockDb() {
   const channels = new Map<string, MockChannel>();
   const messages = new Map<string, MockDbMessage>();
   const outboxEvents = new Map<string, MockOutboxEvent>();
+  const templates = new Map<
+    string,
+    {
+      channelId: string;
+      name: string;
+      language: string;
+      status: string;
+      category: string;
+      components: unknown[];
+    }
+  >();
 
   // Default active channel
   channels.set(channelId, {
@@ -235,11 +246,49 @@ function createDispatchMockDb() {
         return { rows: [], rowCount: 0, command: "UPDATE", oid: 0, fields: [] };
       }
 
+      // WhatsApp Template lookup
+      if (sql.includes("FROM flowdesk.whatsapp_templates t")) {
+        const [chId, tName, tLang] = values as [string, string, string];
+        const key = `${chId}:${tName}:${tLang}`;
+        const match = templates.get(key);
+        if (match) {
+          return {
+            rows: [
+              {
+                t_id: "mock-tpl-id",
+                t_org_id: orgId,
+                t_channel_id: match.channelId,
+                t_name: match.name,
+                t_category: match.category,
+                t_created_at: new Date(),
+                t_updated_at: new Date(),
+                v_id: "mock-ver-id",
+                v_provider_template_id: "meta-tpl-123",
+                v_language: match.language,
+                v_status: match.status,
+                v_rejected_reason: null,
+                v_components: match.components,
+                v_variable_count: 1,
+                v_payload_hash: "hash123",
+                v_version: 1,
+                v_created_at: new Date(),
+                v_updated_at: new Date()
+              }
+            ],
+            rowCount: 1,
+            command: "SELECT",
+            oid: 0,
+            fields: []
+          };
+        }
+        return { rows: [], rowCount: 0, command: "SELECT", oid: 0, fields: [] };
+      }
+
       return { rows: [], rowCount: 0, command: "SELECT", oid: 0, fields: [] };
     }
   } as unknown as DbClient;
 
-  return { db, channels, messages, outboxEvents };
+  return { db, channels, messages, outboxEvents, templates };
 }
 
 describe("Outbound Dispatch Worker (M2-08)", () => {
@@ -711,5 +760,198 @@ describe("Outbound Dispatch Worker (M2-08)", () => {
     const readMessage = messages.get(msgId)!;
     expect(readMessage.status).toBe("read");
     expect(readMessage.readAt).toBeInstanceOf(Date);
+  });
+
+  it("dispatches outbound template message via provider.sendTemplateMessage and marks published", async () => {
+    const { db, messages, outboxEvents, templates } = createDispatchMockDb();
+    const provider = new FakeWhatsAppProvider();
+
+    // Register approved template in provider & mock DB
+    provider.addTemplate({
+      id: "tpl-shipping",
+      name: "shipping_update",
+      language: "id",
+      category: "UTILITY",
+      status: "APPROVED",
+      components: [{ type: "BODY", text: "Paket {{1}} Anda telah dikirim." }]
+    });
+
+    templates.set(`${channelId}:shipping_update:id`, {
+      channelId,
+      name: "shipping_update",
+      language: "id",
+      status: "APPROVED",
+      category: "UTILITY",
+      components: [{ type: "BODY", text: "Paket {{1}} Anda telah dikirim." }]
+    });
+
+    const msgId = "00000000-0000-7000-8000-000000000099";
+    messages.set(msgId, {
+      id: msgId,
+      organizationId: orgId,
+      conversationId: convId,
+      channelId,
+      direction: "outbound",
+      senderType: "agent",
+      senderUserId: "user-123",
+      providerMessageId: null,
+      content: "Paket JNE-123 Anda telah dikirim.",
+      status: "queued",
+      errorDetail: null,
+      sentAt: null,
+      deliveredAt: null,
+      readAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    });
+
+    const eventId = "00000000-0000-7000-8000-000000000098";
+    const templatePayload = {
+      messageId: msgId,
+      conversationId: convId,
+      channelId,
+      customerPhone: "628123456789",
+      content: "Paket JNE-123 Anda telah dikirim.",
+      template: {
+        name: "shipping_update",
+        language: "id",
+        versionId: "ver-1",
+        variables: { "1": "JNE-123" },
+        renderedPayloadHash: "hash-rendered-123"
+      }
+    };
+
+    outboxEvents.set(eventId, {
+      id: eventId,
+      organization_id: orgId,
+      aggregate_type: "message",
+      aggregate_id: msgId,
+      event_type: "message.outbound.created",
+      payload: templatePayload,
+      correlation_id: "corr-tpl-1",
+      causation_id: null,
+      occurred_at: new Date(),
+      attempts: 0,
+      published_at: null,
+      last_error: null
+    });
+
+    const claimedEvent: ClaimedOutboxEvent<OutboundMessagePayload> = {
+      id: eventId,
+      organizationId: orgId,
+      aggregateType: "message",
+      aggregateId: msgId,
+      eventType: "message.outbound.created",
+      payload: templatePayload,
+      correlationId: "corr-tpl-1",
+      causationId: null,
+      occurredAt: new Date(),
+      attempts: 0
+    };
+
+    const result = await dispatchOutboundMessage(db, claimedEvent, { provider });
+    expect(result.status).toBe("sent");
+    expect(result.providerMessageId).toContain("wamid.HBgL");
+
+    const sentMessage = messages.get(msgId)!;
+    expect(sentMessage.status).toBe("sent");
+    expect(sentMessage.providerMessageId).toBe(result.providerMessageId);
+
+    const outboxRecord = outboxEvents.get(eventId)!;
+    expect(outboxRecord.published_at).toBeInstanceOf(Date);
+
+    // Verify provider sent records
+    expect(provider.getSentMessages()).toHaveLength(1);
+    expect(provider.getSentMessages()[0]?.text).toContain("shipping_update");
+  });
+
+  it("fails terminal if template status is not approved at dispatch time", async () => {
+    const { db, messages, outboxEvents, templates } = createDispatchMockDb();
+    const provider = new FakeWhatsAppProvider();
+
+    // Template was paused / disabled by provider
+    templates.set(`${channelId}:promo_blast:id`, {
+      channelId,
+      name: "promo_blast",
+      language: "id",
+      status: "PAUSED",
+      category: "MARKETING",
+      components: [{ type: "BODY", text: "Promo diskon!" }]
+    });
+
+    const msgId = "00000000-0000-7000-8000-000000000088";
+    messages.set(msgId, {
+      id: msgId,
+      organizationId: orgId,
+      conversationId: convId,
+      channelId,
+      direction: "outbound",
+      senderType: "agent",
+      senderUserId: "user-123",
+      providerMessageId: null,
+      content: "Promo diskon!",
+      status: "queued",
+      errorDetail: null,
+      sentAt: null,
+      deliveredAt: null,
+      readAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    });
+
+    const eventId = "00000000-0000-7000-8000-000000000087";
+    const templatePayload = {
+      messageId: msgId,
+      conversationId: convId,
+      channelId,
+      customerPhone: "628123456789",
+      content: "Promo diskon!",
+      template: {
+        name: "promo_blast",
+        language: "id",
+        versionId: "ver-2",
+        variables: {},
+        renderedPayloadHash: "hash-rendered-promo"
+      }
+    };
+
+    outboxEvents.set(eventId, {
+      id: eventId,
+      organization_id: orgId,
+      aggregate_type: "message",
+      aggregate_id: msgId,
+      event_type: "message.outbound.created",
+      payload: templatePayload,
+      correlation_id: "corr-tpl-2",
+      causation_id: null,
+      occurred_at: new Date(),
+      attempts: 0,
+      published_at: null,
+      last_error: null
+    });
+
+    const claimedEvent: ClaimedOutboxEvent<OutboundMessagePayload> = {
+      id: eventId,
+      organizationId: orgId,
+      aggregateType: "message",
+      aggregateId: msgId,
+      eventType: "message.outbound.created",
+      payload: templatePayload,
+      correlationId: "corr-tpl-2",
+      causationId: null,
+      occurredAt: new Date(),
+      attempts: 0
+    };
+
+    const result = await dispatchOutboundMessage(db, claimedEvent, { provider });
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("PAUSED, not approved for sending");
+
+    const failedMessage = messages.get(msgId)!;
+    expect(failedMessage.status).toBe("failed");
+    expect(failedMessage.errorDetail).toContain("PAUSED");
+
+    const outboxRecord = outboxEvents.get(eventId)!;
+    expect(outboxRecord.last_error).toContain("PAUSED");
   });
 });

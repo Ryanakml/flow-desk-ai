@@ -51,7 +51,8 @@ describe("database foundation", () => {
       "0010_m3_operational_inbox.sql",
       "0011_m3_conversation_operations.sql",
       "0012_m3_realtime_versions.sql",
-      "0013_m3_whatsapp_templates.sql"
+      "0013_m3_whatsapp_templates.sql",
+      "0014_m3_service_window.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });

@@ -4,9 +4,9 @@ export type WhatsAppTemplateStatus =
 
 export interface WhatsAppTemplateComponent {
   type: "HEADER" | "BODY" | "FOOTER" | "BUTTONS";
-  format?: "TEXT" | "IMAGE" | "DOCUMENT" | "VIDEO" | "LOCATION";
-  text?: string;
-  buttons?: unknown[];
+  format?: "TEXT" | "IMAGE" | "DOCUMENT" | "VIDEO" | "LOCATION" | undefined;
+  text?: string | undefined;
+  buttons?: unknown[] | undefined;
   example?: unknown;
 }
 
@@ -217,4 +217,141 @@ export function computeTemplatePayloadHash(params: {
  */
 export function isTemplateApprovedForSending(status: string): boolean {
   return status === "APPROVED";
+}
+
+export interface TemplateVariableValidationResult {
+  valid: boolean;
+  error?: string;
+  requiredVariables: number[];
+  missingVariables: number[];
+  extraVariables: string[];
+}
+
+/**
+ * Validates that all positional template variables ({{1}}, {{2}}, etc.) are provided
+ * and that no extra/unsupported variables are present.
+ */
+export function validateTemplateVariables(
+  components: WhatsAppTemplateComponent[],
+  variables: Record<string, string> = {}
+): TemplateVariableValidationResult {
+  const requiredVariables: number[] = [];
+
+  for (const component of components) {
+    if (component.text) {
+      const vars = extractTemplateVariables(component.text);
+      for (const v of vars) {
+        if (!requiredVariables.includes(v)) {
+          requiredVariables.push(v);
+        }
+      }
+    }
+  }
+  requiredVariables.sort((a, b) => a - b);
+
+  const missingVariables: number[] = [];
+  for (const req of requiredVariables) {
+    const val = variables[String(req)];
+    if (val === undefined || val === null || val.trim().length === 0) {
+      missingVariables.push(req);
+    }
+  }
+
+  const extraVariables: string[] = [];
+  for (const key of Object.keys(variables)) {
+    const num = Number.parseInt(key, 10);
+    if (Number.isNaN(num) || !requiredVariables.includes(num)) {
+      extraVariables.push(key);
+    }
+  }
+
+  if (missingVariables.length > 0) {
+    return {
+      valid: false,
+      error: `Missing required template variables: {{${missingVariables.join("}}, {{")}}}`,
+      requiredVariables,
+      missingVariables,
+      extraVariables
+    };
+  }
+
+  if (extraVariables.length > 0) {
+    return {
+      valid: false,
+      error: `Unexpected template variables: ${extraVariables.join(", ")}`,
+      requiredVariables,
+      missingVariables,
+      extraVariables
+    };
+  }
+
+  return {
+    valid: true,
+    requiredVariables,
+    missingVariables: [],
+    extraVariables: []
+  };
+}
+
+/**
+ * Replaces positional placeholders {{1}}, {{2}} with provided variable values.
+ */
+export function renderTemplateText(text: string, variables: Record<string, string>): string {
+  return text.replace(/\{\{(\d+)\}\}/g, (match, p1: string) => {
+    return variables[p1] ?? match;
+  });
+}
+
+export interface RenderTemplateResult {
+  renderedComponents: WhatsAppTemplateComponent[];
+  renderedBody: string;
+  renderedHeader: string | null;
+  renderedPayloadHash: string;
+}
+
+/**
+ * Deterministically renders template components with variable values and generates
+ * an audited SHA-256 payload hash.
+ */
+export function renderTemplate(
+  components: WhatsAppTemplateComponent[],
+  variables: Record<string, string> = {}
+): RenderTemplateResult {
+  const validation = validateTemplateVariables(components, variables);
+  if (!validation.valid) {
+    throw new Error(validation.error ?? "Invalid template variables");
+  }
+
+  let renderedBody = "";
+  let renderedHeader: string | null = null;
+
+  const renderedComponents: WhatsAppTemplateComponent[] = components.map((c) => {
+    if (c.type === "BODY" && c.text) {
+      const text = renderTemplateText(c.text, variables);
+      renderedBody = text;
+      return { ...c, text };
+    }
+    if (c.type === "HEADER" && (c.format === "TEXT" || !c.format) && c.text) {
+      const text = renderTemplateText(c.text, variables);
+      renderedHeader = text;
+      return { ...c, text };
+    }
+    return { ...c };
+  });
+
+  const renderedPayloadHash = sha256Hex(
+    JSON.stringify({
+      renderedBody,
+      renderedHeader,
+      renderedComponents,
+      variables
+    })
+  );
+
+  return {
+    renderedComponents,
+    renderedBody,
+    renderedHeader,
+    renderedPayloadHash
+  };
 }

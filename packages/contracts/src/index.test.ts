@@ -11,7 +11,11 @@ import {
   IdempotencyHeaderSchema,
   ListAuditLogsResponseSchema,
   WhatsAppTemplateSchema,
-  WhatsAppTemplateVersionSchema
+  WhatsAppTemplateVersionSchema,
+  CreateOutboundMessageRequestSchema,
+  ServiceWindowStatusSchema,
+  TemplatePreviewRequestSchema,
+  TemplatePreviewResponseSchema
 } from "./index.js";
 
 describe("Contracts & Primitives (M1-06)", () => {
@@ -218,6 +222,71 @@ describe("Contracts & Primitives (M1-06)", () => {
       expect(parsed.versions?.[0]?.status).toBe("APPROVED");
       expect(parsed.versions?.[0]?.components[0]?.type).toBe("BODY");
       expect(WhatsAppTemplateVersionSchema.parse(template.versions[0])).toBeDefined();
+    });
+
+    it("validates outbound message request union (text vs template)", () => {
+      // Text outbound message
+      const textMsg = CreateOutboundMessageRequestSchema.parse({
+        content: "Halo dari customer support!"
+      });
+      expect(textMsg).toEqual({ content: "Halo dari customer support!" });
+
+      // Explicit text outbound message
+      const explicitText = CreateOutboundMessageRequestSchema.parse({
+        type: "text",
+        content: "Halo lagi!"
+      });
+      expect(explicitText).toEqual({ type: "text", content: "Halo lagi!" });
+
+      // Template outbound message
+      const tplMsg = CreateOutboundMessageRequestSchema.parse({
+        type: "template",
+        templateName: "order_confirmation",
+        language: "id",
+        variables: { "1": "ORD-12345" }
+      });
+      expect(tplMsg).toMatchObject({
+        type: "template",
+        templateName: "order_confirmation",
+        language: "id",
+        variables: { "1": "ORD-12345" }
+      });
+    });
+
+    it("validates service window status and template preview schemas", () => {
+      const windowStatus = ServiceWindowStatusSchema.parse({
+        isOpen: true,
+        expiresAt: new Date(Date.now() + 3600000).toISOString(),
+        remainingSeconds: 3600
+      });
+      expect(windowStatus.isOpen).toBe(true);
+      expect(windowStatus.remainingSeconds).toBe(3600);
+
+      const previewReq = TemplatePreviewRequestSchema.parse({
+        templateName: "shipping_update",
+        language: "id",
+        variables: { "1": "Budi", "2": "JNE-998877" }
+      });
+      expect(previewReq.templateName).toBe("shipping_update");
+
+      const previewRes = TemplatePreviewResponseSchema.parse({
+        templateName: "shipping_update",
+        language: "id",
+        status: "APPROVED",
+        isEligible: true,
+        ineligibilityReason: null,
+        renderedBody: "Halo Budi, paket Anda dengan resi JNE-998877 telah dikirim.",
+        renderedHeader: null,
+        renderedComponents: [
+          {
+            type: "BODY",
+            text: "Halo Budi, paket Anda dengan resi JNE-998877 telah dikirim."
+          }
+        ],
+        renderedPayloadHash: "hash-rendered-abc"
+      });
+      expect(previewRes.isEligible).toBe(true);
+      expect(previewRes.renderedBody).toContain("Budi");
     });
   });
 });

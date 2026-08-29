@@ -44,9 +44,20 @@ export {
   type BusinessHoursPolicy
 } from "./sla.js";
 export {
+  calculateServiceWindow,
+  isWithinServiceWindow,
+  SERVICE_WINDOW_DURATION_MS,
+  type ServiceWindowEvaluation
+} from "./service-window.js";
+export {
   extractTemplateVariables,
   validateTemplateComponents,
+  validateTemplateVariables,
+  renderTemplateText,
+  renderTemplate,
   computeTemplatePayloadHash,
   isTemplateApprovedForSending,
-  type ComponentValidationResult
+  type ComponentValidationResult,
+  type TemplateVariableValidationResult,
+  type RenderTemplateResult
 } from "./templates.js";

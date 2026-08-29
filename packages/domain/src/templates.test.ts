@@ -4,7 +4,9 @@ import {
   computeTemplatePayloadHash,
   extractTemplateVariables,
   isTemplateApprovedForSending,
-  validateTemplateComponents
+  validateTemplateComponents,
+  validateTemplateVariables,
+  renderTemplate
 } from "./templates.js";
 
 describe("WhatsApp Templates Domain Logic (M3-04)", () => {
@@ -149,6 +151,118 @@ describe("WhatsApp Templates Domain Logic (M3-04)", () => {
       expect(isTemplateApprovedForSending("IN_APPEAL")).toBe(false);
       expect(isTemplateApprovedForSending("DRAFT")).toBe(false);
       expect(isTemplateApprovedForSending("unknown")).toBe(false);
+    });
+  });
+
+  describe("validateTemplateVariables", () => {
+    const components = [
+      {
+        type: "HEADER" as const,
+        format: "TEXT" as const,
+        text: "Pemberitahuan {{1}}"
+      },
+      {
+        type: "BODY" as const,
+        text: "Halo {{2}}, pesanan Anda {{3}} sedang dikirim."
+      }
+    ];
+
+    it("accepts exactly matching positional variables", () => {
+      const res = validateTemplateVariables(components, {
+        "1": "Penting",
+        "2": "Budi",
+        "3": "ORD-123"
+      });
+      expect(res.valid).toBe(true);
+      expect(res.requiredVariables).toEqual([1, 2, 3]);
+      expect(res.missingVariables).toEqual([]);
+      expect(res.extraVariables).toEqual([]);
+    });
+
+    it("rejects missing variables", () => {
+      const res = validateTemplateVariables(components, {
+        "1": "Penting",
+        "2": "Budi"
+        // "3" is missing
+      });
+      expect(res.valid).toBe(false);
+      expect(res.missingVariables).toEqual([3]);
+      expect(res.error).toContain("Missing required template variables: {{3}}");
+    });
+
+    it("rejects empty or whitespace-only variables", () => {
+      const res = validateTemplateVariables(components, {
+        "1": "Penting",
+        "2": "  ",
+        "3": "ORD-123"
+      });
+      expect(res.valid).toBe(false);
+      expect(res.missingVariables).toEqual([2]);
+    });
+
+    it("rejects extra unexpected variables", () => {
+      const res = validateTemplateVariables(components, {
+        "1": "Penting",
+        "2": "Budi",
+        "3": "ORD-123",
+        "4": "unexpected",
+        extraKey: "foo"
+      });
+      expect(res.valid).toBe(false);
+      expect(res.extraVariables).toEqual(["4", "extraKey"]);
+      expect(res.error).toContain("Unexpected template variables: 4, extraKey");
+    });
+  });
+
+  describe("renderTemplate", () => {
+    const components = [
+      {
+        type: "HEADER" as const,
+        format: "TEXT" as const,
+        text: "Halo {{1}}!"
+      },
+      {
+        type: "BODY" as const,
+        text: "Tagihan sebesar {{2}} telah lunas pada {{3}}."
+      },
+      {
+        type: "FOOTER" as const,
+        text: "FlowDesk Support"
+      }
+    ];
+
+    it("renders body and header with bound variables and generates deterministic hash", () => {
+      const variables = {
+        "1": "Siti",
+        "2": "Rp 150.000",
+        "3": "29 Agustus 2026"
+      };
+
+      const result1 = renderTemplate(components, variables);
+      const result2 = renderTemplate(components, variables);
+
+      expect(result1.renderedHeader).toBe("Halo Siti!");
+      expect(result1.renderedBody).toBe(
+        "Tagihan sebesar Rp 150.000 telah lunas pada 29 Agustus 2026."
+      );
+      expect(result1.renderedPayloadHash).toMatch(/^[a-f0-9]{64}$/);
+      expect(result1.renderedPayloadHash).toBe(result2.renderedPayloadHash);
+
+      // Verify components structure
+      const renderedHeaderComp = result1.renderedComponents.find((c) => c.type === "HEADER");
+      expect(renderedHeaderComp?.text).toBe("Halo Siti!");
+      const renderedBodyComp = result1.renderedComponents.find((c) => c.type === "BODY");
+      expect(renderedBodyComp?.text).toBe(
+        "Tagihan sebesar Rp 150.000 telah lunas pada 29 Agustus 2026."
+      );
+      const renderedFooterComp = result1.renderedComponents.find((c) => c.type === "FOOTER");
+      expect(renderedFooterComp?.text).toBe("FlowDesk Support");
+    });
+
+    it("throws error when variables are invalid", () => {
+      expect(() => renderTemplate(components, { "1": "Siti" })).toThrow(
+        "Missing required template variables"
+      );
     });
   });
 });

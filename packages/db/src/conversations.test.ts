@@ -79,6 +79,7 @@ function createMockConversationDb(): {
           resolutionRemainingSeconds: null,
           version: 1,
           lastMessageAt: new Date(),
+          lastInboundAt: null,
           metadata,
           createdAt: new Date(),
           updatedAt: new Date()

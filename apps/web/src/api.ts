@@ -26,6 +26,9 @@ import {
   type UpdateConversationRequest,
   type ConversationOperationRequest,
   type CreateOutboundMessageRequest,
+  type TemplatePreviewRequest,
+  type TemplatePreviewResponse,
+  TemplatePreviewResponseSchema,
   type Problem
 } from "@flowdesk/contracts";
 import type { RoleKey } from "@flowdesk/domain";
@@ -307,4 +310,45 @@ export async function performConversationOperation(
     body: JSON.stringify(body)
   });
   return ConversationSchema.parse(await handleResponse<unknown>(res));
+}
+
+export interface ConversationTemplateItem {
+  templateId: string;
+  name: string;
+  category: string;
+  versionId: string;
+  language: string;
+  status: string;
+  components: Array<{
+    type: string;
+    text?: string | undefined;
+    format?: string | undefined;
+  }>;
+  variableCount: number;
+}
+
+export async function listConversationTemplates(
+  orgId: string,
+  conversationId: string,
+  fetcher: typeof fetch = fetch
+): Promise<{ items: ConversationTemplateItem[] }> {
+  const url = `/api/v1/organizations/${orgId}/conversations/${conversationId}/templates`;
+  const res = await fetcher(url);
+  return handleResponse<{ items: ConversationTemplateItem[] }>(res);
+}
+
+export async function previewTemplate(
+  orgId: string,
+  conversationId: string,
+  body: TemplatePreviewRequest,
+  fetcher: typeof fetch = fetch
+): Promise<TemplatePreviewResponse> {
+  const url = `/api/v1/organizations/${orgId}/conversations/${conversationId}/template-preview`;
+  const res = await fetcher(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  const data = await handleResponse<unknown>(res);
+  return TemplatePreviewResponseSchema.parse(data);
 }

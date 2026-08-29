@@ -19,6 +19,8 @@ export {
   type WhatsAppProvider,
   type SendTextMessageInput,
   type SendTextMessageResult,
+  type SendTemplateMessageInput,
+  type SendTemplateMessageResult,
   type WhatsAppErrorClassification,
   type MetaWhatsAppProviderOptions,
   type SentMessageLog,
