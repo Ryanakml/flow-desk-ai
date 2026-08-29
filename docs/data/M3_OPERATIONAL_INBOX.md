@@ -21,3 +21,17 @@ Private notes, tags, per-agent read markers, and saved filters live in separate 
 - Teams and queues are archived instead of deleted during ordinary operation.
 - Notes remain internal records; editing records `edited_at` and deletion is not exposed to runtime workflows.
 - Business-hour holiday dates and weekly schedules are policy inputs. M3-02 calculates timezone-aware claim deadlines, records the first agent response, and keeps SLA evidence in the authoritative conversation projection.
+
+## Operator workspace (M3-08)
+
+The web inbox now reads visible queues, organization tags, private notes, and the active user's saved filters from tenant-scoped REST projections. Claim, resolve/reopen, note, and tag mutations use the versioned conversation operation API; a `409` never silently overwrites another operator and presents an explicit authoritative-reload action.
+
+The browser treats Socket.IO events as invalidation hints. A version gap skips the hint and refetches the authorized REST projection. Offline and reconnecting states are announced through a live region, outbound controls stop while offline, failed optimistic text can be restored to the composer or removed, and a reconnect preserves the already rendered list until fresh data arrives.
+
+Media composition uses the M3-06/M3-07 lifecycle: create a short-lived upload session, upload directly to the private object store, complete quarantine, poll the authorized attachment projection until scanning is clean, then create a media outbound intent. The browser never receives a permanent public object URL.
+
+The primary workflow uses native controls, listbox keyboard navigation, visible focus rings, trapped/restored modal focus, and English/Indonesian copy. Automated browser coverage runs axe-core and rejects serious or critical findings. Responsive rules collapse collaboration and composer controls below tablet/mobile breakpoints.
+
+## Privacy boundary
+
+No third-party analytics or browser telemetry SDK is installed in `@flowdesk/web`. Realtime events contain identifiers and projection versions, never message bodies, private-note bodies, phone numbers, filenames, or attachment bytes. Customer content travels only to first-party authenticated REST endpoints and the explicitly authorized short-lived object-store upload URL. Introducing browser telemetry requires a separate privacy review and payload test before release.

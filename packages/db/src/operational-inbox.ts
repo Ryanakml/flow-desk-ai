@@ -43,6 +43,29 @@ export interface CreateQueueInput {
   routingStrategy?: QueueRoutingStrategy;
 }
 
+export interface TagRecord {
+  id: string;
+  organizationId: string;
+  name: string;
+  color: string;
+}
+
+export interface ConversationNoteRecord {
+  id: string;
+  authorUserId: string;
+  body: string;
+  createdAt: Date;
+}
+
+export interface SavedFilterRecord {
+  id: string;
+  name: string;
+  definition: Record<string, unknown>;
+  isDefault: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 const queueProjection = `
   id, organization_id AS "organizationId", team_id AS "teamId",
   business_hours_policy_id AS "businessHoursPolicyId", sla_policy_id AS "slaPolicyId",
@@ -166,4 +189,112 @@ export async function listVisibleQueues(
     [input.organizationId, input.userId, input.canManageAllQueues ?? false]
   );
   return result.rows;
+}
+
+export async function listTags(db: DbClient, organizationId: string): Promise<TagRecord[]> {
+  const result = await db.query<TagRecord>(
+    `SELECT id, organization_id AS "organizationId", name, color
+     FROM flowdesk.tags WHERE organization_id = $1 ORDER BY name, id`,
+    [organizationId]
+  );
+  return result.rows;
+}
+
+export async function listConversationNotes(
+  db: DbClient,
+  organizationId: string,
+  conversationId: string
+): Promise<ConversationNoteRecord[]> {
+  const result = await db.query<ConversationNoteRecord>(
+    `SELECT id, author_user_id AS "authorUserId", body, created_at AS "createdAt"
+     FROM flowdesk.conversation_notes
+     WHERE organization_id = $1 AND conversation_id = $2
+     ORDER BY created_at, id`,
+    [organizationId, conversationId]
+  );
+  return result.rows;
+}
+
+export async function listConversationTags(
+  db: DbClient,
+  organizationId: string,
+  conversationId: string
+): Promise<TagRecord[]> {
+  const result = await db.query<TagRecord>(
+    `SELECT tag.id, tag.organization_id AS "organizationId", tag.name, tag.color
+     FROM flowdesk.tags AS tag
+     JOIN flowdesk.conversation_tags AS applied
+       ON applied.organization_id = tag.organization_id AND applied.tag_id = tag.id
+     WHERE applied.organization_id = $1 AND applied.conversation_id = $2
+     ORDER BY tag.name, tag.id`,
+    [organizationId, conversationId]
+  );
+  return result.rows;
+}
+
+export async function listSavedFilters(
+  db: DbClient,
+  organizationId: string,
+  userId: string
+): Promise<SavedFilterRecord[]> {
+  const result = await db.query<SavedFilterRecord>(
+    `SELECT id, name, definition, is_default AS "isDefault",
+            created_at AS "createdAt", updated_at AS "updatedAt"
+     FROM flowdesk.saved_filters
+     WHERE organization_id = $1 AND user_id = $2
+     ORDER BY is_default DESC, name, id`,
+    [organizationId, userId]
+  );
+  return result.rows;
+}
+
+export async function createSavedFilter(
+  db: DbClient,
+  input: {
+    organizationId: string;
+    userId: string;
+    name: string;
+    definition: Record<string, unknown>;
+    isDefault: boolean;
+  }
+): Promise<SavedFilterRecord> {
+  if (input.isDefault) {
+    await db.query(
+      `UPDATE flowdesk.saved_filters SET is_default = false, updated_at = clock_timestamp()
+       WHERE organization_id = $1 AND user_id = $2 AND is_default`,
+      [input.organizationId, input.userId]
+    );
+  }
+  const result = await db.query<SavedFilterRecord>(
+    `INSERT INTO flowdesk.saved_filters
+       (organization_id, user_id, name, definition, is_default)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (organization_id, user_id, name)
+     DO UPDATE SET definition = EXCLUDED.definition, is_default = EXCLUDED.is_default,
+                   updated_at = clock_timestamp()
+     RETURNING id, name, definition, is_default AS "isDefault",
+               created_at AS "createdAt", updated_at AS "updatedAt"`,
+    [
+      input.organizationId,
+      input.userId,
+      input.name,
+      JSON.stringify(input.definition),
+      input.isDefault
+    ]
+  );
+  return result.rows[0]!;
+}
+
+export async function deleteSavedFilter(
+  db: DbClient,
+  organizationId: string,
+  userId: string,
+  filterId: string
+): Promise<boolean> {
+  const result = await db.query(
+    `DELETE FROM flowdesk.saved_filters
+     WHERE organization_id = $1 AND user_id = $2 AND id = $3`,
+    [organizationId, userId, filterId]
+  );
+  return (result.rowCount ?? 0) > 0;
 }

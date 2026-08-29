@@ -544,6 +544,12 @@ export function buildOpenApiSpec() {
               schema: { type: "string", enum: ["new", "open", "pending", "resolved", "closed"] }
             },
             { name: "assignedTo", in: "query", required: false, schema: { type: "string" } },
+            {
+              name: "queueId",
+              in: "query",
+              required: false,
+              schema: { type: "string", format: "uuid" }
+            },
             { name: "cursor", in: "query", required: false, schema: { type: "string" } },
             {
               name: "limit",
@@ -573,6 +579,77 @@ export function buildOpenApiSpec() {
                 "application/problem+json": { schema: { $ref: "#/components/schemas/Problem" } }
               }
             }
+          }
+        }
+      },
+      "/api/v1/organizations/{orgId}/conversations/workspace-resources": {
+        get: {
+          summary: "List the current operator's visible queues, tags, and saved filters",
+          operationId: "getInboxWorkspaceResources",
+          parameters: [
+            {
+              name: "orgId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" }
+            }
+          ],
+          responses: {
+            200: {
+              description: "Tenant and user scoped inbox resources",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/InboxWorkspaceResources" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/api/v1/organizations/{orgId}/conversations/saved-filters": {
+        post: {
+          summary: "Create or replace a personal inbox filter",
+          operationId: "saveInboxFilter",
+          parameters: [
+            {
+              name: "orgId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" }
+            }
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/CreateSavedFilterRequest" }
+              }
+            }
+          },
+          responses: { 201: { description: "Saved filter" } }
+        }
+      },
+      "/api/v1/organizations/{orgId}/conversations/saved-filters/{filterId}": {
+        delete: {
+          summary: "Delete a personal inbox filter",
+          operationId: "deleteInboxFilter",
+          parameters: [
+            {
+              name: "orgId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" }
+            },
+            {
+              name: "filterId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" }
+            }
+          ],
+          responses: {
+            204: { description: "Saved filter deleted" },
+            404: { description: "Filter not found or not owned by the operator" }
           }
         }
       },
@@ -1181,9 +1258,82 @@ export function buildOpenApiSpec() {
             messages: {
               type: "array",
               items: { $ref: "#/components/schemas/Message" }
+            },
+            notes: { type: "array", items: { $ref: "#/components/schemas/ConversationNote" } },
+            tags: { type: "array", items: { $ref: "#/components/schemas/InboxTag" } }
+          },
+          required: ["conversation", "messages", "notes", "tags"]
+        },
+        InboxTag: {
+          type: "object",
+          properties: {
+            id: { type: "string", format: "uuid" },
+            name: { type: "string" },
+            color: { type: "string", pattern: "^#[0-9A-Fa-f]{6}$" }
+          },
+          required: ["id", "name", "color"]
+        },
+        ConversationNote: {
+          type: "object",
+          properties: {
+            id: { type: "string", format: "uuid" },
+            authorUserId: { type: "string", format: "uuid" },
+            body: { type: "string" },
+            createdAt: { type: "string", format: "date-time" }
+          },
+          required: ["id", "authorUserId", "body", "createdAt"]
+        },
+        SavedFilterDefinition: {
+          type: "object",
+          properties: {
+            status: { type: "string", enum: ["new", "open", "pending", "resolved", "closed"] },
+            assignedTo: { type: "string" },
+            queueId: { type: "string", format: "uuid" },
+            search: { type: "string", maxLength: 200 }
+          }
+        },
+        CreateSavedFilterRequest: {
+          type: "object",
+          properties: {
+            name: { type: "string", minLength: 1, maxLength: 120 },
+            definition: { $ref: "#/components/schemas/SavedFilterDefinition" },
+            isDefault: { type: "boolean", default: false }
+          },
+          required: ["name", "definition"]
+        },
+        InboxWorkspaceResources: {
+          type: "object",
+          properties: {
+            queues: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string", format: "uuid" },
+                  name: { type: "string" },
+                  slug: { type: "string" }
+                },
+                required: ["id", "name", "slug"]
+              }
+            },
+            tags: { type: "array", items: { $ref: "#/components/schemas/InboxTag" } },
+            savedFilters: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string", format: "uuid" },
+                  name: { type: "string" },
+                  definition: { $ref: "#/components/schemas/SavedFilterDefinition" },
+                  isDefault: { type: "boolean" },
+                  createdAt: { type: "string", format: "date-time" },
+                  updatedAt: { type: "string", format: "date-time" }
+                },
+                required: ["id", "name", "definition", "isDefault", "createdAt", "updatedAt"]
+              }
             }
           },
-          required: ["conversation", "messages"]
+          required: ["queues", "tags", "savedFilters"]
         },
         UpdateConversationRequest: {
           type: "object",

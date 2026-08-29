@@ -735,6 +735,33 @@ describe("Conversations & Messages API (M2-07)", () => {
       expect(body.messages.length).toBe(1);
       expect(body.messages[0]?.content).toBe("Halo admin, butuh bantuan.");
       expect(body.messages[0]?.direction).toBe("inbound");
+      expect((response.body as { notes: unknown[] }).notes).toEqual([]);
+      expect((response.body as { tags: unknown[] }).tags).toEqual([]);
+    });
+  });
+
+  describe("M3-08 workspace resources", () => {
+    it("keeps the static workspace route ahead of the conversation id route", async () => {
+      const response = await request(app)
+        .get(`/api/v1/organizations/${orgId}/conversations/workspace-resources`)
+        .set("Cookie", bobCookie);
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ queues: [], tags: [], savedFilters: [] });
+    });
+
+    it("validates saved-filter definitions and scopes deletion to the active user", async () => {
+      const invalid = await request(app)
+        .post(`/api/v1/organizations/${orgId}/conversations/saved-filters`)
+        .set("Cookie", bobCookie)
+        .send({ name: "", definition: { search: "x".repeat(201) } });
+      expect(invalid.status).toBe(400);
+
+      const missing = await request(app)
+        .delete(
+          `/api/v1/organizations/${orgId}/conversations/saved-filters/00000000-0000-7000-8000-000000000099`
+        )
+        .set("Cookie", bobCookie);
+      expect(missing.status).toBe(404);
     });
   });
 
