@@ -44,6 +44,7 @@ declare global {
     interface Request {
       user?: AuthenticatedUser;
       sessionToken?: string;
+      sessionExpiresAt?: Date;
     }
   }
 }
@@ -107,6 +108,7 @@ export function createRequireAuthMiddleware(db: DbClient): RequestHandler {
         displayName: session.displayName
       };
       request.sessionToken = cookieToken;
+      request.sessionExpiresAt = session.expiresAt;
       next();
     } catch (error) {
       return next(error);
@@ -126,8 +128,8 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
           clientSecret: options.config.AUTH_OIDC_CLIENT_SECRET
         }));
 
-  // GET /api/v1/auth/login
-  router.get("/login", async (request: Request, response: Response, next) => {
+  // GET /api/v1/auth/login or /api/v1/auth/authorize
+  router.get(["/login", "/authorize"], async (request: Request, response: Response, next) => {
     try {
       const returnTo =
         typeof request.query["returnTo"] === "string" && request.query["returnTo"].startsWith("/")
@@ -153,7 +155,22 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
       const pkceCookie = `flowdesk_pkce=${authRequest.codeVerifier}; Path=/api/v1/auth/callback; HttpOnly; SameSite=Lax; Max-Age=600${secure ? "; Secure" : ""}`;
       response.setHeader("Set-Cookie", pkceCookie);
 
-      if (request.headers.accept?.includes("application/json")) {
+      const prefersJson = Boolean(request.accepts("json") && !request.accepts("html"));
+
+      if (options.config.AUTH_MOCK_ENABLED) {
+        const mockUrl = new URL(options.config.AUTH_OIDC_REDIRECT_URI);
+        mockUrl.searchParams.set("code", "user:operator@flowdesk.dev");
+        mockUrl.searchParams.set("state", authRequest.state);
+        const mockCallbackUrl = mockUrl.toString();
+        if (prefersJson) {
+          return response.status(200).json({
+            authorizationUrl: mockCallbackUrl
+          });
+        }
+        return response.redirect(302, mockCallbackUrl);
+      }
+
+      if (prefersJson) {
         return response.status(200).json({
           authorizationUrl: authRequest.authorizationUrl.toString()
         });
@@ -239,7 +256,8 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
 
       response.setHeader("Set-Cookie", [sessionCookie, clearPkceCookie]);
 
-      if (request.headers.accept?.includes("application/json")) {
+      const prefersJson = Boolean(request.accepts("json") && !request.accepts("html"));
+      if (prefersJson) {
         return response.status(200).json({
           status: "ok",
           returnTo: transaction.returnTo,
@@ -251,7 +269,12 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
         });
       }
 
-      return response.redirect(302, transaction.returnTo || "/");
+      const destination = transaction.returnTo || "/";
+      const redirectUrl =
+        destination.startsWith("http://") || destination.startsWith("https://")
+          ? destination
+          : `${options.config.APP_BASE_URL || "http://localhost:3000"}${destination.startsWith("/") ? destination : `/${destination}`}`;
+      return response.redirect(302, redirectUrl);
     } catch (error) {
       return next(error);
     }
@@ -279,13 +302,15 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
     "/session",
     createRequireAuthMiddleware(options.db),
     (request: Request, response: Response) => {
+      response.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
       const user = request.user!;
       return response.status(200).json({
         user: {
           id: user.id,
           email: user.email,
           displayName: user.displayName
-        }
+        },
+        expiresAt: (request.sessionExpiresAt || new Date()).toISOString()
       });
     }
   );

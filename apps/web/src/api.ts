@@ -75,7 +75,9 @@ export async function getBuildInfo(fetcher: typeof fetch = fetch): Promise<Build
 }
 
 export async function getSession(fetcher: typeof fetch = fetch): Promise<SessionState> {
-  const res = await fetcher("/api/v1/auth/session");
+  const res = await fetcher("/api/v1/auth/session", {
+    cache: "no-store"
+  });
   const data = await handleResponse<unknown>(res);
   return SessionStateSchema.parse(data);
 }

@@ -103,7 +103,8 @@ export const authConfigSchema = z.object({
   AUTH_OIDC_REDIRECT_URI: z.string().url().default("http://localhost:4000/api/v1/auth/callback"),
   AUTH_COOKIE_SECURE: booleanString.default(false),
   AUTH_SESSION_TTL_SECONDS: z.coerce.number().int().positive().default(28_800),
-  AUTH_MOCK_ENABLED: booleanString.default(true)
+  AUTH_MOCK_ENABLED: booleanString.default(true),
+  APP_BASE_URL: z.string().url().default("http://localhost:3000")
 });
 
 export type AuthConfig = z.infer<typeof authConfigSchema>;

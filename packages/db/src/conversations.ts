@@ -717,7 +717,7 @@ export async function claimUnpublishedOutboxEvents<TPayload = Record<string, unk
     causation_id: string | null;
     occurred_at: Date;
     attempts: number;
-  }>(`SELECT * FROM flowdesk.claim_outbox_events($1, $2)`, [eventType, limit]);
+  }>(`SELECT * FROM flowdesk.claim_outbox_events($1::text, $2::integer)`, [eventType, limit]);
 
   return res.rows.map((row) => ({
     id: row.id,

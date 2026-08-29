@@ -593,7 +593,9 @@ export async function processOutboxOutboundBatch(
     causation_id: string | null;
     occurred_at: Date;
     attempts: number;
-  }>(`SELECT * FROM flowdesk.claim_outbox_events('message.outbound.created', $1)`, [batchSize]);
+  }>(`SELECT * FROM flowdesk.claim_outbox_events('message.outbound.created'::text, $1::integer)`, [
+    batchSize
+  ]);
 
   let processedCount = 0;
 

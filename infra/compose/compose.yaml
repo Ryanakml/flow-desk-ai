@@ -54,6 +54,7 @@ services:
     restart: "no"
 
   clamav:
+    platform: linux/amd64
     image: clamav/clamav:1.4.3
     ports: ["127.0.0.1:3310:3310"]
     volumes: ["clamav-data:/var/lib/clamav"]

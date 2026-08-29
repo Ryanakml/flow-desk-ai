@@ -66,7 +66,7 @@ describe("API foundation & security (M1-08)", () => {
       service: "api",
       version: "test",
       gitSha: "test-sha",
-      environment: "local",
+      environment: "production",
       auth: {
         db: mockDb,
         config: authConfig,

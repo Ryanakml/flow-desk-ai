@@ -373,11 +373,10 @@ export async function listAttachmentRetentionCandidates(
     storage_key: string;
     status: AttachmentStatus;
     created_at: Date;
-  }>(`SELECT * FROM flowdesk.list_attachment_retention_candidates($1, $2, $3)`, [
-    cleanBefore,
-    rejectedBefore,
-    limit
-  ]);
+  }>(
+    `SELECT * FROM flowdesk.list_attachment_retention_candidates($1::timestamptz, $2::timestamptz, $3::integer)`,
+    [cleanBefore, rejectedBefore, limit]
+  );
   return result.rows.map((row) => ({
     id: row.id,
     organizationId: row.organization_id,
@@ -402,7 +401,7 @@ export async function claimAttachmentScanEvents(
     causation_id: string | null;
     occurred_at: Date;
     attempts: number;
-  }>(`SELECT * FROM flowdesk.claim_attachment_scan_events($1)`, [limit]);
+  }>(`SELECT * FROM flowdesk.claim_attachment_scan_events($1::integer)`, [limit]);
   return result.rows.map((row) => ({
     id: row.id,
     organizationId: row.organization_id,

@@ -328,7 +328,7 @@ export async function processOutboxWebhookBatch(client: DbClient, batchSize = 10
     attempts: number;
   }>(
     `SELECT id, organization_id, aggregate_id, payload, correlation_id, attempts
-     FROM flowdesk.claim_outbox_events('webhook.received', $1)`,
+     FROM flowdesk.claim_outbox_events('webhook.received'::text, $1::integer)`,
     [batchSize]
   );
 

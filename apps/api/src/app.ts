@@ -97,7 +97,10 @@ export function createApiApp(options: ApiAppOptions) {
   }) satisfies RequestHandler);
 
   // Rate Limiting setup
-  const authRateLimiter = createSlidingWindowRateLimiter({ windowMs: 60_000, max: 20 });
+  const authRateLimiter = createSlidingWindowRateLimiter({
+    windowMs: 60_000,
+    max: options.environment === "local" ? 1000 : 20
+  });
   const getClientIp = (req: express.Request) =>
     req.headers["x-forwarded-for"]?.toString().split(",")[0]?.trim() ||
     req.socket.remoteAddress ||
