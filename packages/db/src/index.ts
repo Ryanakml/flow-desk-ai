@@ -160,6 +160,32 @@ export {
   type SoftDeleteAttachmentInput,
   type ExpiredAttachmentRow
 } from "./attachments.js";
+export {
+  createKnowledgeSource,
+  getKnowledgeSourceById,
+  listKnowledgeSources,
+  updateKnowledgeSourceStatus,
+  createDocumentWithChunks,
+  searchDocumentChunks,
+  getBotConfig,
+  upsertBotConfig,
+  recordBotRun,
+  updateBotRunAction,
+  type KnowledgeSourceType,
+  type KnowledgeSourceStatus,
+  type BotMode,
+  type BotTone,
+  type BotLanguage,
+  type BotRunStatus,
+  type OperatorAction,
+  type KnowledgeSource,
+  type DocumentRecord,
+  type DocumentChunk,
+  type DocumentChunkSearchResult,
+  type KnowledgeVersion,
+  type BotConfig,
+  type BotRun
+} from "./knowledge.js";
 
 export const DATABASE_PACKAGE_STATE = "m1-foundation-ready" as const;
 
