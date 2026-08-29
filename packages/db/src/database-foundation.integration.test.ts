@@ -143,6 +143,8 @@ describe("database foundation", () => {
       "attachments",
       "audit_logs",
       "auth_sessions",
+      "bot_configs",
+      "bot_runs",
       "business_hours_policies",
       "channels",
       "contacts",
@@ -151,9 +153,13 @@ describe("database foundation", () => {
       "conversation_read_markers",
       "conversation_tags",
       "conversations",
+      "document_chunks",
+      "documents",
       "idempotency_keys",
       "identities",
       "invitations",
+      "knowledge_sources",
+      "knowledge_versions",
       "memberships",
       "message_status_events",
       "messages",
@@ -182,6 +188,8 @@ describe("database foundation", () => {
       "attachment_upload_sessions",
       "attachments",
       "audit_logs",
+      "bot_configs",
+      "bot_runs",
       "business_hours_policies",
       "channels",
       "contacts",
@@ -190,8 +198,12 @@ describe("database foundation", () => {
       "conversation_read_markers",
       "conversation_tags",
       "conversations",
+      "document_chunks",
+      "documents",
       "idempotency_keys",
       "invitations",
+      "knowledge_sources",
+      "knowledge_versions",
       "memberships",
       "message_status_events",
       "messages",
@@ -763,5 +775,36 @@ describe("database foundation", () => {
     } finally {
       await pool.end();
     }
+  });
+
+  it("forces RLS on every M4 knowledge and vector table and creates HNSW index (M4-01)", async () => {
+    const m4Tables = [
+      "bot_configs",
+      "bot_runs",
+      "document_chunks",
+      "documents",
+      "knowledge_sources",
+      "knowledge_versions"
+    ];
+    const rls = await admin.query<{
+      relname: string;
+      relrowsecurity: boolean;
+      relforcerowsecurity: boolean;
+    }>(
+      `SELECT relname, relrowsecurity, relforcerowsecurity
+       FROM pg_class
+       WHERE relnamespace = 'flowdesk'::regnamespace AND relname = ANY($1::text[])
+       ORDER BY relname`,
+      [m4Tables]
+    );
+    expect(rls.rows).toHaveLength(m4Tables.length);
+    expect(rls.rows.every((row) => row.relrowsecurity && row.relforcerowsecurity)).toBe(true);
+
+    const indexes = await admin.query<{ indexname: string }>(
+      `SELECT indexname FROM pg_indexes
+       WHERE schemaname = 'flowdesk' AND indexname = 'idx_chunks_embedding_cosine'`
+    );
+    expect(indexes.rows).toHaveLength(1);
+    expect(indexes.rows[0]?.indexname).toBe("idx_chunks_embedding_cosine");
   });
 });
