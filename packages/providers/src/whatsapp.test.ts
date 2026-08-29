@@ -236,5 +236,114 @@ describe("WhatsApp Provider Adapter (M2-02)", () => {
         expect(wErr.isTransient).toBe(true);
       }
     });
+
+    it("fetches message templates via MetaWhatsAppProvider and parses payload", async () => {
+      const mockFetch = vi.fn().mockImplementation(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: [
+                {
+                  id: "tpl_123",
+                  name: "shipping_update",
+                  language: "id",
+                  category: "UTILITY",
+                  status: "APPROVED",
+                  components: [{ type: "BODY", text: "Pesanan {{1}} dikirim." }]
+                }
+              ],
+              paging: {
+                cursors: { after: "cursor_abc" },
+                next: "https://graph.facebook.com/v21.0/waba_123/message_templates?after=cursor_abc"
+              }
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" }
+            }
+          )
+        )
+      );
+
+      const provider = new MetaWhatsAppProvider({ fetchFn: mockFetch as typeof fetch });
+      const result = await provider.fetchMessageTemplates({
+        wabaId: "waba_123",
+        accessToken: "valid_token"
+      });
+
+      expect(result.data.length).toBe(1);
+      expect(result.data[0]?.name).toBe("shipping_update");
+      expect(result.data[0]?.status).toBe("APPROVED");
+      expect(result.paging?.cursors?.after).toBe("cursor_abc");
+    });
+  });
+
+  describe("FakeWhatsAppProvider template sync", () => {
+    it("manages and paginates mock templates", async () => {
+      const fake = new FakeWhatsAppProvider();
+      fake.setTemplates([
+        {
+          id: "tpl-1",
+          name: "welcome",
+          language: "en_US",
+          category: "MARKETING",
+          status: "APPROVED",
+          components: [{ type: "BODY", text: "Welcome!" }]
+        },
+        {
+          id: "tpl-2",
+          name: "alert",
+          language: "id",
+          category: "UTILITY",
+          status: "PENDING",
+          components: [{ type: "BODY", text: "Peringatan!" }]
+        }
+      ]);
+
+      const page1 = await fake.fetchMessageTemplates({
+        wabaId: "fake_waba",
+        accessToken: "tok",
+        limit: 1
+      });
+
+      expect(page1.data.length).toBe(1);
+      expect(page1.data[0]?.id).toBe("tpl-1");
+      expect(page1.paging?.cursors?.after).toBe("tpl-1");
+
+      const page2 = await fake.fetchMessageTemplates({
+        wabaId: "fake_waba",
+        accessToken: "tok",
+        after: "tpl-1"
+      });
+
+      expect(page2.data.length).toBe(1);
+      expect(page2.data[0]?.id).toBe("tpl-2");
+    });
+
+    it("simulates template status update", async () => {
+      const fake = new FakeWhatsAppProvider();
+      fake.addTemplate({
+        id: "tpl-reject",
+        name: "discount",
+        language: "id",
+        category: "MARKETING",
+        status: "PENDING",
+        components: [{ type: "BODY", text: "Diskon 50%!" }]
+      });
+
+      fake.simulateTemplateStatusUpdate(
+        "tpl-reject",
+        "REJECTED",
+        "Content violates commercial policy"
+      );
+
+      const res = await fake.fetchMessageTemplates({
+        wabaId: "fake_waba",
+        accessToken: "tok"
+      });
+
+      expect(res.data[0]?.status).toBe("REJECTED");
+      expect(res.data[0]?.rejected_reason).toBe("Content violates commercial policy");
+    });
   });
 });

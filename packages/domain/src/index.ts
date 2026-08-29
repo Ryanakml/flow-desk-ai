@@ -43,3 +43,10 @@ export {
   type BusinessHoursSchedule,
   type BusinessHoursPolicy
 } from "./sla.js";
+export {
+  extractTemplateVariables,
+  validateTemplateComponents,
+  computeTemplatePayloadHash,
+  isTemplateApprovedForSending,
+  type ComponentValidationResult
+} from "./templates.js";
