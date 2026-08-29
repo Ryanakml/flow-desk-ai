@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client, Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { listVisibleQueues } from "./operational-inbox.js";
 import { withTenantTransaction } from "./tenant-context.js";
 
 const executeFile = promisify(execFile);
@@ -41,7 +42,8 @@ describe("database foundation", () => {
       "0006_channels.sql",
       "0007_webhook_events.sql",
       "0008_conversations_and_messages.sql",
-      "0009_m2_completion_hardening.sql"
+      "0009_m2_completion_hardening.sql",
+      "0010_m3_operational_inbox.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -118,9 +120,13 @@ describe("database foundation", () => {
     expect(tables.rows.map((row) => row.table_name)).toEqual([
       "audit_logs",
       "auth_sessions",
+      "business_hours_policies",
       "channels",
       "contacts",
       "conversation_events",
+      "conversation_notes",
+      "conversation_read_markers",
+      "conversation_tags",
       "conversations",
       "idempotency_keys",
       "identities",
@@ -133,15 +139,26 @@ describe("database foundation", () => {
       "organizations",
       "outbound_intents",
       "outbox_events",
+      "queue_memberships",
+      "queues",
       "roles",
+      "saved_filters",
+      "sla_policies",
+      "tags",
+      "team_memberships",
+      "teams",
       "users",
       "webhook_events"
     ]);
     expect(tenantColumns.rows.map((row) => row.table_name).sort()).toEqual([
       "audit_logs",
+      "business_hours_policies",
       "channels",
       "contacts",
       "conversation_events",
+      "conversation_notes",
+      "conversation_read_markers",
+      "conversation_tags",
       "conversations",
       "idempotency_keys",
       "invitations",
@@ -151,8 +168,248 @@ describe("database foundation", () => {
       "organization_settings",
       "outbound_intents",
       "outbox_events",
-      "roles"
+      "queue_memberships",
+      "queues",
+      "roles",
+      "saved_filters",
+      "sla_policies",
+      "tags",
+      "team_memberships",
+      "teams"
     ]);
+  });
+
+  it("forces RLS and installs the inbox access-path indexes on every M3 tenant table", async () => {
+    const m3Tables = [
+      "business_hours_policies",
+      "conversation_notes",
+      "conversation_read_markers",
+      "conversation_tags",
+      "queue_memberships",
+      "queues",
+      "saved_filters",
+      "sla_policies",
+      "tags",
+      "team_memberships",
+      "teams"
+    ];
+    const rls = await admin.query<{
+      relname: string;
+      relrowsecurity: boolean;
+      relforcerowsecurity: boolean;
+    }>(
+      `SELECT relname, relrowsecurity, relforcerowsecurity
+       FROM pg_class
+       WHERE relnamespace = 'flowdesk'::regnamespace AND relname = ANY($1::text[])
+       ORDER BY relname`,
+      [m3Tables]
+    );
+    expect(rls.rows).toHaveLength(m3Tables.length);
+    expect(rls.rows.every((row) => row.relrowsecurity && row.relforcerowsecurity)).toBe(true);
+
+    const indexes = await admin.query<{ indexname: string }>(
+      `SELECT indexname FROM pg_indexes
+       WHERE schemaname = 'flowdesk' AND indexname = ANY($1::text[])
+       ORDER BY indexname`,
+      [
+        "conversations_inbox_queue_idx",
+        "conversations_inbox_team_idx",
+        "conversations_sla_due_idx",
+        "queue_memberships_user_active_idx"
+      ]
+    );
+    expect(indexes.rows.map((row) => row.indexname)).toEqual([
+      "conversations_inbox_queue_idx",
+      "conversations_inbox_team_idx",
+      "conversations_sla_due_idx",
+      "queue_memberships_user_active_idx"
+    ]);
+
+    await admin.query("SET enable_seqscan = off");
+    try {
+      const plan = await admin.query<{ "QUERY PLAN": unknown }>(
+        `EXPLAIN (FORMAT JSON)
+         SELECT id FROM flowdesk.conversations
+         WHERE organization_id = $1 AND queue_id = $2
+           AND status = 'open' AND priority = 'medium'
+         ORDER BY last_message_at DESC, id DESC LIMIT 20`,
+        ["00000000-0000-7000-8000-0000000000a1", "00000000-0000-7000-8000-0000000000d1"]
+      );
+      expect(JSON.stringify(plan.rows)).toContain("conversations_inbox_queue_idx");
+    } finally {
+      await admin.query("RESET enable_seqscan");
+    }
+  });
+
+  it("fails closed across M3 tables and blocks cross-tenant writes", async () => {
+    const organizationA = "00000000-0000-7000-8000-0000000000a1";
+    const organizationB = "00000000-0000-7000-8000-0000000000b2";
+    await admin.query(
+      `INSERT INTO flowdesk.organizations (id, slug, display_name) VALUES
+       ($1, 'tenant-a', 'Tenant A'), ($2, 'tenant-b', 'Tenant B')
+       ON CONFLICT (id) DO NOTHING`,
+      [organizationA, organizationB]
+    );
+    await admin.query(
+      `INSERT INTO flowdesk.teams (organization_id, name, slug) VALUES
+       ($1, 'Tenant A Support', 'tenant-a-support'),
+       ($2, 'Tenant B Support', 'tenant-b-support')
+       ON CONFLICT (organization_id, slug) DO NOTHING`,
+      [organizationA, organizationB]
+    );
+
+    await admin.query("BEGIN");
+    try {
+      await admin.query("SET LOCAL ROLE flowdesk_runtime");
+      expect((await admin.query("SELECT id FROM flowdesk.teams")).rows).toEqual([]);
+      await admin.query("SELECT set_config('app.organization_id', $1, true)", [organizationA]);
+      expect((await admin.query("SELECT name FROM flowdesk.teams ORDER BY name")).rows).toEqual([
+        { name: "Tenant A Support" }
+      ]);
+      await expect(
+        admin.query(
+          "INSERT INTO flowdesk.tags (organization_id, name, color) VALUES ($1, 'denied', '#FF0000')",
+          [organizationB]
+        )
+      ).rejects.toThrow();
+    } finally {
+      await admin.query("ROLLBACK");
+    }
+  });
+
+  it("removes queue visibility immediately when routing membership is removed", async () => {
+    const organizationId = "00000000-0000-7000-8000-0000000000a1";
+    const userId = "00000000-0000-7000-8000-0000000000c1";
+    await admin.query(
+      `INSERT INTO flowdesk.organizations (id, slug, display_name)
+       VALUES ($1, 'tenant-a', 'Tenant A') ON CONFLICT (id) DO NOTHING`,
+      [organizationId]
+    );
+    await admin.query(
+      `INSERT INTO flowdesk.users (id, email, display_name)
+       VALUES ($1, 'm3-agent@example.com', 'M3 Agent') ON CONFLICT (id) DO NOTHING`,
+      [userId]
+    );
+    const role = await admin.query<{ id: string }>(
+      `INSERT INTO flowdesk.roles (organization_id, key, label)
+       VALUES ($1, 'm3_agent', 'M3 Agent')
+       ON CONFLICT (organization_id, key) DO UPDATE SET label = EXCLUDED.label
+       RETURNING id`,
+      [organizationId]
+    );
+    await admin.query(
+      `INSERT INTO flowdesk.memberships (organization_id, user_id, role_id, status)
+       VALUES ($1, $2, $3, 'active')
+       ON CONFLICT (organization_id, user_id)
+       DO UPDATE SET role_id = EXCLUDED.role_id, status = 'active'`,
+      [organizationId, userId, role.rows[0]!.id]
+    );
+    const queue = await admin.query<{ id: string }>(
+      `INSERT INTO flowdesk.queues (organization_id, name, slug)
+       VALUES ($1, 'M3 Support', 'm3-support')
+       ON CONFLICT (organization_id, slug) DO UPDATE SET status = 'active'
+       RETURNING id`,
+      [organizationId]
+    );
+    await admin.query(
+      `INSERT INTO flowdesk.queue_memberships (organization_id, queue_id, user_id)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (organization_id, queue_id, user_id)
+       DO UPDATE SET status = 'active', removed_at = NULL`,
+      [organizationId, queue.rows[0]!.id, userId]
+    );
+
+    const pool = new Pool({ connectionString });
+    const visibleQueues = async () =>
+      withTenantTransaction(pool, { organizationId }, async (client) => {
+        await client.query("SET LOCAL ROLE flowdesk_runtime");
+        return listVisibleQueues(client, { organizationId, userId });
+      });
+    try {
+      expect((await visibleQueues()).map((item) => item.id)).toContain(queue.rows[0]!.id);
+      await admin.query(
+        `UPDATE flowdesk.queue_memberships
+         SET status = 'removed', removed_at = clock_timestamp()
+         WHERE organization_id = $1 AND queue_id = $2 AND user_id = $3`,
+        [organizationId, queue.rows[0]!.id, userId]
+      );
+      expect(await visibleQueues()).toEqual([]);
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it("keeps private notes out of the outbound message pipeline while recording history", async () => {
+    const organizationId = "00000000-0000-7000-8000-0000000000a1";
+    const userId = "00000000-0000-7000-8000-0000000000c1";
+    await admin.query(
+      `INSERT INTO flowdesk.organizations (id, slug, display_name)
+       VALUES ($1, 'tenant-a', 'Tenant A') ON CONFLICT (id) DO NOTHING`,
+      [organizationId]
+    );
+    await admin.query(
+      `INSERT INTO flowdesk.users (id, email, display_name)
+       VALUES ($1, 'm3-agent@example.com', 'M3 Agent') ON CONFLICT (id) DO NOTHING`,
+      [userId]
+    );
+    const role = await admin.query<{ id: string }>(
+      `INSERT INTO flowdesk.roles (organization_id, key, label)
+       VALUES ($1, 'm3_agent', 'M3 Agent')
+       ON CONFLICT (organization_id, key) DO UPDATE SET label = EXCLUDED.label
+       RETURNING id`,
+      [organizationId]
+    );
+    await admin.query(
+      `INSERT INTO flowdesk.memberships (organization_id, user_id, role_id, status)
+       VALUES ($1, $2, $3, 'active')
+       ON CONFLICT (organization_id, user_id)
+       DO UPDATE SET role_id = EXCLUDED.role_id, status = 'active'`,
+      [organizationId, userId, role.rows[0]!.id]
+    );
+    const channel = await admin.query<{ id: string }>(
+      `INSERT INTO flowdesk.channels
+         (organization_id, type, name, phone_number_id, waba_id, encrypted_credentials)
+       VALUES ($1, 'whatsapp', 'M3 Test', 'm3-phone', 'm3-waba', 'encrypted-test-value')
+       ON CONFLICT (organization_id, phone_number_id) DO UPDATE SET name = EXCLUDED.name
+       RETURNING id`,
+      [organizationId]
+    );
+    const conversation = await admin.query<{ id: string }>(
+      `INSERT INTO flowdesk.conversations
+         (organization_id, channel_id, customer_phone, customer_name)
+       VALUES ($1, $2, '+628111111111', 'M3 Customer')
+       ON CONFLICT (organization_id, channel_id, customer_phone)
+       DO UPDATE SET customer_name = EXCLUDED.customer_name
+       RETURNING id`,
+      [organizationId, channel.rows[0]!.id]
+    );
+
+    await admin.query(
+      `INSERT INTO flowdesk.conversation_notes
+         (organization_id, conversation_id, author_user_id, body)
+       VALUES ($1, $2, $3, 'Internal note: do not send to customer')`,
+      [organizationId, conversation.rows[0]!.id, userId]
+    );
+
+    expect(
+      (
+        await admin.query<{ count: string }>(
+          `SELECT count(*) FROM flowdesk.messages
+           WHERE organization_id = $1 AND conversation_id = $2 AND direction = 'outbound'`,
+          [organizationId, conversation.rows[0]!.id]
+        )
+      ).rows[0]!.count
+    ).toBe("0");
+    expect(
+      (
+        await admin.query<{ event_type: string }>(
+          `SELECT event_type FROM flowdesk.conversation_events
+           WHERE organization_id = $1 AND conversation_id = $2
+             AND event_type = 'conversation.note_added'`,
+          [organizationId, conversation.rows[0]!.id]
+        )
+      ).rows
+    ).toEqual([{ event_type: "conversation.note_added" }]);
   });
 
   it("fails closed without context and denies organization B from organization A", async () => {
