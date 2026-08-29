@@ -1,7 +1,16 @@
 import { createHash } from "node:crypto";
-import { type DbClient, getAttachmentById, updateAttachmentScanResult } from "@flowdesk/db";
+import {
+  type DbClient,
+  claimAttachmentScanEvents,
+  getAttachmentById,
+  markOutboxEventPublished,
+  recordOutboxEventFailure,
+  runInTenantTransaction,
+  updateAttachmentScanResult
+} from "@flowdesk/db";
 import { validateMediaAttachment } from "@flowdesk/domain";
 import type { MalwareScanner, ObjectStore } from "@flowdesk/providers";
+import { recordMediaLifecycle } from "@flowdesk/observability";
 
 export interface ScanAttachmentParams {
   organizationId: string;
@@ -236,4 +245,34 @@ export async function scanQuarantinedAttachment(
     status: "clean",
     detectedMimeType: validation.detectedMime
   };
+}
+
+export async function processAttachmentScanBatch(
+  client: DbClient,
+  deps: Omit<ScanAttachmentDeps, "db">,
+  batchSize = 10
+): Promise<number> {
+  const events = await claimAttachmentScanEvents(client, batchSize);
+  for (const event of events) {
+    await runInTenantTransaction(client, { organizationId: event.organizationId }, async (db) => {
+      try {
+        const result = await scanQuarantinedAttachment(
+          { organizationId: event.organizationId, attachmentId: event.payload.attachmentId },
+          { ...deps, db }
+        );
+        recordMediaLifecycle("scan", result.outcome);
+        await markOutboxEventPublished(db, event.id);
+        return result;
+      } catch (error) {
+        recordMediaLifecycle("scan", "failed");
+        await recordOutboxEventFailure(
+          db,
+          event.id,
+          error instanceof Error ? error.message : String(error),
+          event.attempts >= 4
+        );
+      }
+    });
+  }
+  return events.length;
 }

@@ -31,8 +31,19 @@ export interface HeadObjectResult {
   contentType?: string | undefined;
 }
 
+export interface PresignedDownloadInput {
+  key: string;
+  expiresInSeconds: number;
+  fileName?: string | undefined;
+}
+
+export interface PresignedDownloadResult {
+  downloadUrl: string;
+}
+
 export interface ObjectStore {
   createPresignedUploadUrl(input: PresignedUploadInput): Promise<PresignedUploadResult>;
+  createPresignedDownloadUrl(input: PresignedDownloadInput): Promise<PresignedDownloadResult>;
   getObject(key: string): Promise<GetObjectResult>;
   putObject(key: string, data: Buffer, contentType: string): Promise<void>;
   deleteObject(key: string): Promise<void>;
@@ -83,6 +94,26 @@ export class S3ObjectStore implements ObjectStore {
         "Content-Type": input.contentType
       }
     };
+  }
+
+  async createPresignedDownloadUrl(
+    input: PresignedDownloadInput
+  ): Promise<PresignedDownloadResult> {
+    const command = new GetObjectCommand({
+      Bucket: this.bucket,
+      Key: input.key,
+      ...(input.fileName
+        ? {
+            ResponseContentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(input.fileName)}`
+          }
+        : {})
+    });
+
+    const downloadUrl = await getSignedUrl(this.client, command, {
+      expiresIn: input.expiresInSeconds
+    });
+
+    return { downloadUrl };
   }
 
   async getObject(key: string): Promise<GetObjectResult> {
@@ -157,6 +188,14 @@ export class InMemoryObjectStore implements ObjectStore {
         "Content-Type": input.contentType
       }
     };
+  }
+
+  async createPresignedDownloadUrl(
+    input: PresignedDownloadInput
+  ): Promise<PresignedDownloadResult> {
+    await Promise.resolve();
+    const downloadUrl = `https://in-memory-s3.local/${encodeURIComponent(input.key)}?download=1&expires=${Date.now() + input.expiresInSeconds * 1000}`;
+    return { downloadUrl };
   }
 
   async getObject(key: string): Promise<GetObjectResult> {

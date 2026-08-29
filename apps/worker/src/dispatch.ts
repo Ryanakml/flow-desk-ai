@@ -1,6 +1,7 @@
 import type { DbClient, ClaimedOutboxEvent } from "@flowdesk/db";
 import {
   getChannelById,
+  getAttachmentById,
   getMessageById,
   getTemplateByNameAndLanguage,
   markOutboxEventPublished,
@@ -11,6 +12,7 @@ import {
 import { isTemplateApprovedForSending } from "@flowdesk/domain";
 import {
   type WhatsAppProvider,
+  type ObjectStore,
   FakeWhatsAppProvider,
   WhatsAppProviderError
 } from "@flowdesk/providers";
@@ -33,12 +35,21 @@ export interface OutboundMessagePayload {
         renderedPayloadHash: string;
       }
     | undefined;
+  media?:
+    | {
+        attachmentId: string;
+        fileName: string;
+        contentType: string;
+        caption?: string | undefined;
+      }
+    | undefined;
 }
 
 export interface DispatchWorkerOptions {
   provider?: WhatsAppProvider | undefined;
   maxRetries?: number | undefined;
   encryptionKey?: string | undefined;
+  storage?: ObjectStore | undefined;
 }
 
 export interface DispatchResult {
@@ -54,6 +65,24 @@ interface PreparedDispatch {
   phoneNumberId: string;
   encryptedCredentials: string;
   content: string;
+  customerPhone: string;
+  template?: OutboundMessagePayload["template"];
+  media?:
+    | {
+        attachmentId: string;
+        storageKey: string;
+        fileName: string;
+        contentType: string;
+        caption?: string | undefined;
+      }
+    | undefined;
+}
+
+function mediaTypeFor(contentType: string): "image" | "video" | "document" | "audio" {
+  if (contentType.startsWith("image/")) return "image";
+  if (contentType.startsWith("video/")) return "video";
+  if (contentType.startsWith("audio/")) return "audio";
+  return "document";
 }
 
 function resolveAccessToken(rawCredentials: string, encryptionKey?: string): string {
@@ -142,8 +171,37 @@ export async function dispatchOutboundMessage(
   try {
     let sendResult;
     const templatePayload = event.payload.template;
+    const mediaPayload = event.payload.media;
 
-    if (templatePayload) {
+    if (mediaPayload) {
+      if (!options.storage) throw new Error("Object storage is required for media dispatch.");
+      const attachment = await getAttachmentById(client, orgId, mediaPayload.attachmentId);
+      if (!attachment || attachment.status !== "clean") {
+        const errorMsg = `Attachment '${mediaPayload.attachmentId}' is unavailable or not clean.`;
+        await updateMessageStatus(client, orgId, message.id, "failed", { errorDetail: errorMsg });
+        await recordOutboxEventFailure(client, event.id, errorMsg, true);
+        return { messageId, status: "failed", error: errorMsg };
+      }
+      const object = await options.storage.getObject(attachment.storageKey);
+      const uploaded = await provider.uploadMedia({
+        phoneNumberId: channel.phoneNumberId,
+        fileName: attachment.fileName,
+        contentType: attachment.detectedMimeType ?? attachment.contentType,
+        data: object.data,
+        accessToken
+      });
+      sendResult = await provider.sendMediaMessage({
+        phoneNumberId: channel.phoneNumberId,
+        to: event.payload.customerPhone,
+        mediaType: mediaTypeFor(attachment.detectedMimeType ?? attachment.contentType),
+        mediaId: uploaded.mediaId,
+        ...(mediaPayload.caption ? { caption: mediaPayload.caption } : {}),
+        ...(mediaTypeFor(attachment.contentType) === "document"
+          ? { fileName: attachment.fileName }
+          : {}),
+        accessToken
+      });
+    } else if (templatePayload) {
       // Re-verify provider status before dispatching template
       const templateRecord = await getTemplateByNameAndLanguage(client, {
         channelId: channel.id,
@@ -337,6 +395,46 @@ async function dispatchOutboundMessageCrashSafe(
         return { messageId: row.message_id, status: "failed", error };
       }
 
+      let preparedMedia: PreparedDispatch["media"];
+      if (event.payload.media) {
+        const attachment = await getAttachmentById(
+          tenantDb,
+          event.organizationId,
+          event.payload.media.attachmentId
+        );
+        if (!attachment || attachment.status !== "clean") {
+          const error = `Attachment '${event.payload.media.attachmentId}' is unavailable or not clean.`;
+          await updateMessageStatus(tenantDb, event.organizationId, row.message_id, "failed", {
+            errorDetail: error
+          });
+          await recordOutboxEventFailure(tenantDb, event.id, error, true);
+          return { messageId: row.message_id, status: "failed", error };
+        }
+        preparedMedia = {
+          attachmentId: attachment.id,
+          storageKey: attachment.storageKey,
+          fileName: attachment.fileName,
+          contentType: attachment.detectedMimeType ?? attachment.contentType,
+          ...(event.payload.media.caption ? { caption: event.payload.media.caption } : {})
+        };
+      }
+
+      if (event.payload.template) {
+        const templateRecord = await getTemplateByNameAndLanguage(tenantDb, {
+          channelId: row.channel_id,
+          name: event.payload.template.name,
+          language: event.payload.template.language
+        });
+        if (!templateRecord || !isTemplateApprovedForSending(templateRecord.version.status)) {
+          const error = `Template '${event.payload.template.name}' is unavailable or not approved.`;
+          await updateMessageStatus(tenantDb, event.organizationId, row.message_id, "failed", {
+            errorDetail: error
+          });
+          await recordOutboxEventFailure(tenantDb, event.id, error, true);
+          return { messageId: row.message_id, status: "failed", error };
+        }
+      }
+
       await tenantDb.query(
         `UPDATE flowdesk.outbound_intents
          SET state = 'dispatching', attempt_count = attempt_count + 1,
@@ -350,7 +448,10 @@ async function dispatchOutboundMessageCrashSafe(
         channelId: row.channel_id,
         phoneNumberId: row.phone_number_id,
         encryptedCredentials: row.encrypted_credentials,
-        content: row.content
+        content: row.content,
+        customerPhone: event.payload.customerPhone,
+        ...(event.payload.template ? { template: event.payload.template } : {}),
+        ...(preparedMedia ? { media: preparedMedia } : {})
       };
     }
   );
@@ -373,12 +474,57 @@ async function dispatchOutboundMessageCrashSafe(
   }
 
   try {
-    const sent = await provider.sendTextMessage({
-      phoneNumberId: prepared.phoneNumberId,
-      to: event.payload.customerPhone,
-      text: prepared.content,
-      accessToken
-    });
+    let sent;
+    if (prepared.media) {
+      if (!options.storage) throw new Error("Object storage is required for media dispatch.");
+      const object = await options.storage.getObject(prepared.media.storageKey);
+      const uploaded = await provider.uploadMedia({
+        phoneNumberId: prepared.phoneNumberId,
+        fileName: prepared.media.fileName,
+        contentType: prepared.media.contentType,
+        data: object.data,
+        accessToken
+      });
+      sent = await provider.sendMediaMessage({
+        phoneNumberId: prepared.phoneNumberId,
+        to: prepared.customerPhone,
+        mediaType: mediaTypeFor(prepared.media.contentType),
+        mediaId: uploaded.mediaId,
+        ...(prepared.media.caption ? { caption: prepared.media.caption } : {}),
+        ...(mediaTypeFor(prepared.media.contentType) === "document"
+          ? { fileName: prepared.media.fileName }
+          : {}),
+        accessToken
+      });
+    } else if (prepared.template) {
+      const variableEntries = Object.entries(prepared.template.variables).sort(
+        ([left], [right]) => Number(left) - Number(right)
+      );
+      sent = await provider.sendTemplateMessage({
+        phoneNumberId: prepared.phoneNumberId,
+        to: prepared.customerPhone,
+        templateName: prepared.template.name,
+        language: prepared.template.language,
+        ...(variableEntries.length > 0
+          ? {
+              components: [
+                {
+                  type: "body" as const,
+                  parameters: variableEntries.map(([, text]) => ({ type: "text" as const, text }))
+                }
+              ]
+            }
+          : {}),
+        accessToken
+      });
+    } else {
+      sent = await provider.sendTextMessage({
+        phoneNumberId: prepared.phoneNumberId,
+        to: prepared.customerPhone,
+        text: prepared.content,
+        accessToken
+      });
+    }
     return runInTenantTransaction(client, { organizationId: event.organizationId }, async (db) => {
       await updateMessageStatus(db, event.organizationId, prepared.messageId, "sent", {
         providerMessageId: sent.messageId,
@@ -391,7 +537,9 @@ async function dispatchOutboundMessageCrashSafe(
     const detail = error instanceof Error ? error.message : String(error);
     const uncertain =
       error instanceof WhatsAppProviderError &&
-      (detail.startsWith("Network error") || detail.startsWith("Malformed response"));
+      (detail.startsWith("Network error") ||
+        detail.startsWith("Malformed response") ||
+        error.statusCode >= 500);
     const retryable =
       error instanceof WhatsAppProviderError &&
       error.isTransient &&

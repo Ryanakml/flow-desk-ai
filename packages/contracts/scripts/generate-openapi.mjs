@@ -1230,11 +1230,35 @@ export function buildOpenApiSpec() {
           required: ["version", "action"]
         },
         CreateOutboundMessageRequest: {
-          type: "object",
-          properties: {
-            content: { type: "string", minLength: 1, maxLength: 4096 }
-          },
-          required: ["content"]
+          oneOf: [
+            {
+              type: "object",
+              properties: {
+                type: { type: "string", enum: ["text"] },
+                content: { type: "string", minLength: 1, maxLength: 4096 }
+              },
+              required: ["content"]
+            },
+            {
+              type: "object",
+              properties: {
+                type: { type: "string", enum: ["template"] },
+                templateName: { type: "string", minLength: 1, maxLength: 512 },
+                language: { type: "string", minLength: 1, maxLength: 32 },
+                variables: { type: "object", additionalProperties: { type: "string" } }
+              },
+              required: ["type", "templateName", "language"]
+            },
+            {
+              type: "object",
+              properties: {
+                type: { type: "string", enum: ["media"] },
+                attachmentId: { type: "string", format: "uuid" },
+                caption: { type: "string", maxLength: 1024 }
+              },
+              required: ["type", "attachmentId"]
+            }
+          ]
         }
       }
     }

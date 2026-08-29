@@ -507,8 +507,16 @@ export const OutboundTemplateMessageRequestSchema = z.object({
 });
 export type OutboundTemplateMessageRequest = z.infer<typeof OutboundTemplateMessageRequestSchema>;
 
+export const OutboundMediaMessageRequestSchema = z.object({
+  type: z.literal("media"),
+  attachmentId: z.string().uuid(),
+  caption: z.string().trim().max(1024).optional()
+});
+export type OutboundMediaMessageRequest = z.infer<typeof OutboundMediaMessageRequestSchema>;
+
 export const CreateOutboundMessageRequestSchema = z.union([
   OutboundTemplateMessageRequestSchema,
+  OutboundMediaMessageRequestSchema,
   OutboundTextMessageRequestSchema
 ]);
 export type CreateOutboundMessageRequest = z.infer<typeof CreateOutboundMessageRequestSchema>;
@@ -671,7 +679,16 @@ export const AttachmentDetailResponseSchema = z.object({
   quarantineReason: z.string().nullable(),
   scannedAt: z.string().datetime({ offset: true }).nullable(),
   scannerName: z.string().nullable(),
+  deletedAt: z.string().datetime({ offset: true }).nullable(),
+  deletionReason: z.string().nullable(),
   createdAt: z.string().datetime({ offset: true }),
   updatedAt: z.string().datetime({ offset: true })
 });
 export type AttachmentDetailResponse = z.infer<typeof AttachmentDetailResponseSchema>;
+
+// M3-07: Authorized download URL generation
+export const GenerateDownloadUrlResponseSchema = z.object({
+  downloadUrl: z.string().url(),
+  expiresAt: z.string().datetime({ offset: true })
+});
+export type GenerateDownloadUrlResponse = z.infer<typeof GenerateDownloadUrlResponseSchema>;

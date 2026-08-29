@@ -1,6 +1,7 @@
-import { loadAuthConfig, loadHttpConfig } from "@flowdesk/config";
+import { loadAuthConfig, loadHttpConfig, loadMediaConfig } from "@flowdesk/config";
 import { createLogger, initializeTelemetry } from "@flowdesk/observability";
 import { Pool } from "pg";
+import { S3ObjectStore } from "@flowdesk/providers";
 import { createApiApp } from "./app.js";
 
 const config = loadHttpConfig("api", Number(process.env["API_PORT"] ?? 4000));
@@ -18,6 +19,23 @@ const logger = createLogger({
 const databaseUrl = process.env["DATABASE_URL"];
 const dbPool = databaseUrl ? new Pool({ connectionString: databaseUrl }) : undefined;
 const authConfig = loadAuthConfig();
+const mediaConfig = loadMediaConfig();
+const hasStorageConfig = Boolean(
+  mediaConfig.S3_BUCKET &&
+  mediaConfig.S3_REGION &&
+  mediaConfig.S3_ACCESS_KEY_ID &&
+  mediaConfig.S3_SECRET_ACCESS_KEY
+);
+const storage = hasStorageConfig
+  ? new S3ObjectStore({
+      ...(mediaConfig.S3_ENDPOINT ? { endpoint: mediaConfig.S3_ENDPOINT } : {}),
+      region: mediaConfig.S3_REGION!,
+      bucket: mediaConfig.S3_BUCKET!,
+      accessKeyId: mediaConfig.S3_ACCESS_KEY_ID!,
+      secretAccessKey: mediaConfig.S3_SECRET_ACCESS_KEY!,
+      forcePathStyle: mediaConfig.S3_FORCE_PATH_STYLE
+    })
+  : undefined;
 
 const app = createApiApp({
   service: config.SERVICE_NAME,
@@ -25,6 +43,7 @@ const app = createApiApp({
   gitSha: config.GIT_SHA,
   environment: config.APP_ENV,
   ...(dbPool ? { auth: { db: dbPool, config: authConfig } } : {}),
+  ...(storage ? { storage } : {}),
   logRequest: (event) => logger.info(event, "http.request.completed")
 });
 const server = app.listen(config.PORT, () => logger.info({ port: config.PORT }, "api.started"));

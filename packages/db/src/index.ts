@@ -139,11 +139,17 @@ export {
   getUploadSessionById,
   completeAttachmentUploadSession,
   updateAttachmentScanResult,
+  softDeleteAttachment,
+  listExpiredAttachments,
+  listAttachmentRetentionCandidates,
+  claimAttachmentScanEvents,
   type AttachmentStatus,
   type AttachmentRecord,
   type AttachmentUploadSessionRecord,
   type CreateAttachmentUploadSessionInput,
-  type UpdateAttachmentScanResultInput
+  type UpdateAttachmentScanResultInput,
+  type SoftDeleteAttachmentInput,
+  type ExpiredAttachmentRow
 } from "./attachments.js";
 
 export const DATABASE_PACKAGE_STATE = "m1-foundation-ready" as const;

@@ -10,6 +10,12 @@ import {
 } from "./conversation-operations.js";
 import { OptimisticConcurrencyError } from "./conversations.js";
 import { withTenantTransaction } from "./tenant-context.js";
+import {
+  createAttachmentUploadSession,
+  getAttachmentById,
+  softDeleteAttachment,
+  listExpiredAttachments
+} from "./attachments.js";
 
 const executeFile = promisify(execFile);
 const connectionString = process.env["DATABASE_MIGRATOR_URL"];
@@ -53,7 +59,8 @@ describe("database foundation", () => {
       "0012_m3_realtime_versions.sql",
       "0013_m3_whatsapp_templates.sql",
       "0014_m3_service_window.sql",
-      "0015_m3_media_quarantine.sql"
+      "0015_m3_media_quarantine.sql",
+      "0016_m3_media_lifecycle.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -89,7 +96,7 @@ describe("database foundation", () => {
     ]);
   });
 
-  it("limits cross-tenant queue capabilities to non-login security-definer functions", async () => {
+  it("limits cross-tenant worker capabilities to non-login security-definer functions", async () => {
     const systemRole = await admin.query<{
       rolcanlogin: boolean;
       rolbypassrls: boolean;
@@ -107,12 +114,15 @@ describe("database foundation", () => {
        JOIN pg_roles AS owner ON owner.oid = procedure.proowner
        WHERE namespace.nspname = 'flowdesk'
          AND procedure.proname IN (
-           'claim_outbox_events', 'messaging_operational_snapshot', 'record_whatsapp_webhook'
+           'claim_attachment_scan_events', 'claim_outbox_events', 'list_attachment_retention_candidates',
+           'messaging_operational_snapshot', 'record_whatsapp_webhook'
          )
        ORDER BY procedure.proname`
     );
     expect(functions.rows).toEqual([
+      { proname: "claim_attachment_scan_events", owner: "flowdesk_system" },
       { proname: "claim_outbox_events", owner: "flowdesk_system" },
+      { proname: "list_attachment_retention_candidates", owner: "flowdesk_system" },
       { proname: "messaging_operational_snapshot", owner: "flowdesk_system" },
       { proname: "record_whatsapp_webhook", owner: "flowdesk_system" }
     ]);
@@ -656,6 +666,98 @@ describe("database foundation", () => {
         ).toEqual([{ organization_id: null }]);
       } finally {
         client.release();
+      }
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it("soft-deletes an attachment and hides it from getAttachmentById (M3-07)", async () => {
+    const pool = new Pool({ connectionString });
+    const orgId = "00000000-0000-7000-8000-0000000000a1";
+    try {
+      // Create an attachment via the DB layer inside tenant context
+      const created = await withTenantTransaction(
+        pool,
+        { organizationId: orgId },
+        async (client) => {
+          await client.query("SET LOCAL ROLE flowdesk_runtime");
+          return createAttachmentUploadSession(client, {
+            organizationId: orgId,
+            uploaderUserId: null,
+            fileName: "retention-test.pdf",
+            contentType: "application/pdf",
+            byteSize: 1024,
+            storageKey: `org-${orgId}/quarantine/retention-test-${Date.now()}`,
+            uploadUrl: "https://s3.example.com/upload",
+            expiresAt: new Date(Date.now() + 900000)
+          });
+        }
+      );
+      const attachmentId = created.attachment.id;
+
+      // Verify visible before deletion
+      const before = await withTenantTransaction(
+        pool,
+        { organizationId: orgId },
+        async (client) => {
+          await client.query("SET LOCAL ROLE flowdesk_runtime");
+          return getAttachmentById(client, orgId, attachmentId);
+        }
+      );
+      expect(before).not.toBeNull();
+      expect(before!.deletedAt).toBeNull();
+
+      // Soft-delete it
+      const deleted = await withTenantTransaction(
+        pool,
+        { organizationId: orgId },
+        async (client) => {
+          await client.query("SET LOCAL ROLE flowdesk_runtime");
+          return softDeleteAttachment(client, {
+            organizationId: orgId,
+            attachmentId,
+            deletionReason: "retention_expiry"
+          });
+        }
+      );
+      expect(deleted).not.toBeNull();
+      expect(deleted!.deletedAt).not.toBeNull();
+      expect(deleted!.deletionReason).toBe("retention_expiry");
+
+      // Now invisible via getAttachmentById
+      const after = await withTenantTransaction(pool, { organizationId: orgId }, async (client) => {
+        await client.query("SET LOCAL ROLE flowdesk_runtime");
+        return getAttachmentById(client, orgId, attachmentId);
+      });
+      expect(after).toBeNull();
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it("listExpiredAttachments returns only non-deleted attachments older than cutoff (M3-07)", async () => {
+    const pool = new Pool({ connectionString });
+    const orgId = "00000000-0000-7000-8000-0000000000a1";
+    try {
+      // List expired attachments older than far-future cutoff — should include our existing test fixtures
+      const futureCutoff = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+      const candidates = await withTenantTransaction(
+        pool,
+        { organizationId: orgId },
+        async (client) => {
+          await client.query("SET LOCAL ROLE flowdesk_runtime");
+          return listExpiredAttachments(client, orgId, futureCutoff);
+        }
+      );
+
+      // Should be an array (may be empty if all were soft-deleted in prior test)
+      expect(Array.isArray(candidates)).toBe(true);
+      // All returned items must belong to this org and have expected fields
+      for (const c of candidates) {
+        expect(c.organizationId).toBe(orgId);
+        expect(typeof c.storageKey).toBe("string");
+        expect(["clean", "quarantine", "rejected"]).toContain(c.status);
       }
     } finally {
       await pool.end();

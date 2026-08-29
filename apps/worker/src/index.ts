@@ -1,4 +1,4 @@
-import { loadHttpConfig } from "@flowdesk/config";
+import { loadHttpConfig, loadMediaConfig } from "@flowdesk/config";
 import {
   createLogger,
   createProcessHealthServer,
@@ -9,6 +9,14 @@ import {
 import { Pool } from "pg";
 import { processOutboxWebhookBatch } from "./normalization.js";
 import { processOutboxOutboundBatch, dispatchOutboundMessage } from "./dispatch.js";
+import {
+  ClamAvScanner,
+  FakeMalwareScanner,
+  MetaWhatsAppProvider,
+  S3ObjectStore
+} from "@flowdesk/providers";
+import { processAttachmentScanBatch } from "./media-scanner.js";
+import { processAttachmentRetentionBatch } from "./media-retention.js";
 
 export { processOutboxOutboundBatch, dispatchOutboundMessage };
 
@@ -26,22 +34,79 @@ const stopTelemetry = initializeTelemetry({
 
 const databaseUrl = process.env["DATABASE_URL"];
 const dbPool = databaseUrl ? new Pool({ connectionString: databaseUrl }) : undefined;
+const mediaConfig = loadMediaConfig();
+const hasStorageConfig = Boolean(
+  mediaConfig.S3_BUCKET &&
+  mediaConfig.S3_REGION &&
+  mediaConfig.S3_ACCESS_KEY_ID &&
+  mediaConfig.S3_SECRET_ACCESS_KEY
+);
+const storage = hasStorageConfig
+  ? new S3ObjectStore({
+      ...(mediaConfig.S3_ENDPOINT ? { endpoint: mediaConfig.S3_ENDPOINT } : {}),
+      region: mediaConfig.S3_REGION!,
+      bucket: mediaConfig.S3_BUCKET!,
+      accessKeyId: mediaConfig.S3_ACCESS_KEY_ID!,
+      secretAccessKey: mediaConfig.S3_SECRET_ACCESS_KEY!,
+      forcePathStyle: mediaConfig.S3_FORCE_PATH_STYLE
+    })
+  : undefined;
+const scanner = mediaConfig.CLAMAV_HOST
+  ? new ClamAvScanner({
+      host: mediaConfig.CLAMAV_HOST,
+      port: mediaConfig.CLAMAV_PORT
+    })
+  : new FakeMalwareScanner();
+const provider = new MetaWhatsAppProvider();
+const mediaLogger = {
+  info: (message: string, context?: Record<string, unknown>) => logger.info(context ?? {}, message),
+  warn: (message: string, context?: Record<string, unknown>) => logger.warn(context ?? {}, message),
+  error: (message: string, context?: Record<string, unknown>) =>
+    logger.error(context ?? {}, message)
+};
 
 let pollingTimer: NodeJS.Timeout | undefined;
 let isPolling = false;
+let lastRetentionRun = 0;
 
 if (dbPool) {
   pollingTimer = setInterval(() => {
     if (isPolling) return;
     isPolling = true;
+    const retentionDue = Date.now() - lastRetentionRun >= 60 * 60 * 1000;
     void Promise.all([
       processOutboxWebhookBatch(dbPool, 10),
-      processOutboxOutboundBatch(dbPool, {}, 10)
+      processOutboxOutboundBatch(dbPool, { provider, ...(storage ? { storage } : {}) }, 10),
+      ...(storage
+        ? [
+            processAttachmentScanBatch(dbPool, { storage, scanner, logger: mediaLogger }, 10),
+            ...(retentionDue
+              ? [
+                  processAttachmentRetentionBatch(
+                    dbPool,
+                    { storage, logger: mediaLogger },
+                    {
+                      cleanRetentionDays: mediaConfig.MEDIA_CLEAN_RETENTION_DAYS,
+                      rejectedRetentionDays: mediaConfig.MEDIA_REJECTED_RETENTION_DAYS
+                    }
+                  ).then((result) => {
+                    lastRetentionRun = Date.now();
+                    return result.processed;
+                  })
+                ]
+              : [])
+          ]
+        : [])
     ])
-      .then(([webhookCount, outboundCount]) => {
-        if (webhookCount > 0 || outboundCount > 0) {
+      .then(([webhookCount = 0, outboundCount = 0, scanCount = 0, retentionCount = 0]) => {
+        if (webhookCount > 0 || outboundCount > 0 || scanCount > 0 || retentionCount > 0) {
           logger.info(
-            { webhookProcessed: webhookCount, outboundProcessed: outboundCount },
+            {
+              webhookProcessed: webhookCount,
+              outboundProcessed: outboundCount,
+              attachmentScanned: scanCount,
+              attachmentRetained: retentionCount
+            },
             "worker.outbox_batch.processed"
           );
         }

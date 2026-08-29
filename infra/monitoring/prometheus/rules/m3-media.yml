@@ -1,0 +1,19 @@
+groups:
+  - name: flowdesk-m3-media
+    rules:
+      - alert: FlowDeskMediaScanFailures
+        expr: sum(rate(media_lifecycle_total{operation="scan",outcome="failed"}[10m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Media quarantine scanning is failing
+          runbook: docs/runbooks/media-quarantine.md
+      - alert: FlowDeskMediaRetentionFailures
+        expr: sum(increase(media_lifecycle_total{operation="retention",outcome="failed"}[1h])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Attachment retention could not delete object bytes or tombstone metadata
+          runbook: docs/runbooks/media-quarantine.md

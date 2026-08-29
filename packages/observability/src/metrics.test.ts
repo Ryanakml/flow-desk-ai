@@ -12,6 +12,7 @@ import {
   recordRealtimeAuthorizationDenial,
   recordRealtimeReconnectGap,
   recordRealtimeDroppedHint,
+  recordMediaLifecycle,
   getPrometheusMetrics,
   resetMetrics
 } from "./metrics.js";
@@ -93,5 +94,13 @@ describe("Prometheus Metrics (M1-08)", () => {
     expect(output).toContain('realtime_reconnect_gaps_total{result="reconcile_required"} 1');
     expect(output).toContain('realtime_dropped_hints_total{reason="backpressure"} 1');
     recordRealtimeConnection(-1);
+  });
+
+  it("exports media scan and retention outcomes without tenant or content labels", () => {
+    recordMediaLifecycle("scan", "clean");
+    recordMediaLifecycle("retention", "deleted");
+    const output = getPrometheusMetrics();
+    expect(output).toContain('media_lifecycle_total{operation="scan",outcome="clean"} 1');
+    expect(output).toContain('media_lifecycle_total{operation="retention",outcome="deleted"} 1');
   });
 });

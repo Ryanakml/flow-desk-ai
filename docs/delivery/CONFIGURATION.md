@@ -14,3 +14,5 @@ All processes read environment variables through `@flowdesk/config`; direct read
 | Safety flags     | bot auto-send default                      | The safe default is always false                         |
 
 Environment isolation is strict: local, preview, staging, and production never share database, Redis, bucket, provider sender, or secrets.
+
+M3 media runtime variables are validated together. Staging and production require `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, and `CLAMAV_HOST`; startup fails before work is accepted if any is absent. `S3_ENDPOINT` is optional for AWS and required by local MinIO, while `S3_FORCE_PATH_STYLE` defaults false. `CLAMAV_PORT` defaults to `3310`. Retention defaults are `MEDIA_CLEAN_RETENTION_DAYS=90` and `MEDIA_REJECTED_RETENTION_DAYS=7`; policy changes require product/privacy approval and a deletion rehearsal.

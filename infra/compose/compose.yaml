@@ -53,6 +53,16 @@ services:
       ]
     restart: "no"
 
+  clamav:
+    image: clamav/clamav:1.4.3
+    ports: ["127.0.0.1:3310:3310"]
+    volumes: ["clamav-data:/var/lib/clamav"]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+
   mailpit:
     image: axllent/mailpit:v1.27.4
     ports: ["1025:1025", "8025:8025"]
@@ -94,3 +104,4 @@ volumes:
   redis-data:
   minio-data:
   grafana-data:
+  clamav-data:

@@ -50,6 +50,7 @@ interface MockMessage {
 }
 
 function createConversationsMockDb() {
+  const cleanAttachmentId = "00000000-0000-7000-8000-000000000030";
   const users = new Map<
     string,
     { id: string; email: string; displayName: string; status: string }
@@ -430,6 +431,45 @@ function createConversationsMockDb() {
       }
 
       // Insert message
+      if (
+        sql.includes("FROM flowdesk.attachments") &&
+        sql.includes("organization_id = $1 AND id = $2")
+      ) {
+        const [targetOrg, attachmentId] = values as [string, string];
+        if (targetOrg !== orgId || attachmentId !== cleanAttachmentId) {
+          return { rows: [], rowCount: 0, command: "SELECT", oid: 0, fields: [] };
+        }
+        return {
+          rows: [
+            {
+              id: cleanAttachmentId,
+              organizationId: orgId,
+              uploaderUserId: bobId,
+              fileName: "invoice.pdf",
+              contentType: "application/pdf",
+              detectedMimeType: "application/pdf",
+              byteSize: "1024",
+              sha256Checksum: "a".repeat(64),
+              storageKey: `org-${orgId}/clean/${cleanAttachmentId}`,
+              status: "clean",
+              quarantineReason: null,
+              scannedAt: new Date(),
+              scannerName: "test-scanner",
+              scanMetadata: {},
+              metadata: {},
+              deletedAt: null,
+              deletionReason: null,
+              createdAt: new Date(),
+              updatedAt: new Date()
+            }
+          ],
+          rowCount: 1,
+          command: "SELECT",
+          oid: 0,
+          fields: []
+        };
+      }
+
       if (sql.includes("INSERT INTO flowdesk.messages")) {
         const newMsgId = `00000000-0000-7000-8000-${String(messages.size + 21).padStart(12, "0")}`;
         const newMsg: MockMessage = {
@@ -560,11 +600,12 @@ function createConversationsMockDb() {
     }
   } as unknown as DbClient;
 
-  return { db, conversations, messages, outboxEvents, templates };
+  return { db, conversations, messages, outboxEvents, templates, cleanAttachmentId };
 }
 
 describe("Conversations & Messages API (M2-07)", () => {
-  const { db, conversations, outboxEvents, templates } = createConversationsMockDb();
+  const { db, conversations, outboxEvents, templates, cleanAttachmentId } =
+    createConversationsMockDb();
   const config = loadAuthConfig();
   const idp = new MockIdentityProvider();
   const app = createApiApp({
@@ -819,6 +860,33 @@ describe("Conversations & Messages API (M2-07)", () => {
       const createdEvent = outboxEvents[outboxEvents.length - 1]!;
       expect(createdEvent.eventType).toBe("message.outbound.created");
       expect(createdEvent.aggregateId).toBe(body.id);
+    });
+
+    it("creates a media outbound intent only for a clean tenant attachment", async () => {
+      const response = await request(app)
+        .post(`/api/v1/organizations/${orgId}/conversations/${convId}/messages`)
+        .set("Cookie", bobCookie)
+        .set("Idempotency-Key", "media-send-001")
+        .send({ type: "media", attachmentId: cleanAttachmentId, caption: "Invoice Anda" });
+
+      expect(response.status).toBe(201);
+      const lastOutbox = outboxEvents[outboxEvents.length - 1]!;
+      expect(lastOutbox.payload["media"]).toMatchObject({
+        attachmentId: cleanAttachmentId,
+        fileName: "invoice.pdf",
+        contentType: "application/pdf",
+        caption: "Invoice Anda"
+      });
+    });
+
+    it("fails closed when a media attachment is absent from the tenant", async () => {
+      const response = await request(app)
+        .post(`/api/v1/organizations/${orgId}/conversations/${convId}/messages`)
+        .set("Cookie", bobCookie)
+        .set("Idempotency-Key", "media-send-missing")
+        .send({ type: "media", attachmentId: "00000000-0000-7000-8000-999999999999" });
+      expect(response.status).toBe(404);
+      expect((response.body as { code: string }).code).toBe("ATTACHMENT_NOT_FOUND");
     });
 
     it("rejects free-form text message with 422 OUTSIDE_SERVICE_WINDOW when outside 24h window", async () => {

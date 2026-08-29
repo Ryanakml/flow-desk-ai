@@ -119,6 +119,7 @@ export {
   recordRealtimeAuthorizationDenial,
   recordRealtimeReconnectGap,
   recordRealtimeDroppedHint,
+  recordMediaLifecycle,
   getPrometheusMetrics,
   resetMetrics
 } from "./metrics.js";
