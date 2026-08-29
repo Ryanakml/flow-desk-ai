@@ -20,4 +20,4 @@ Private notes, tags, per-agent read markers, and saved filters live in separate 
 - Membership rows are retained with `removed` status so authorization changes are auditable.
 - Teams and queues are archived instead of deleted during ordinary operation.
 - Notes remain internal records; editing records `edited_at` and deletion is not exposed to runtime workflows.
-- Business-hour holiday dates and weekly schedules are policy inputs. SLA deadline calculation and pause/resume semantics are centralized in M3-02 rather than database triggers.
+- Business-hour holiday dates and weekly schedules are policy inputs. M3-02 calculates timezone-aware claim deadlines, records the first agent response, and keeps SLA evidence in the authoritative conversation projection.

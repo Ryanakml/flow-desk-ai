@@ -14,6 +14,7 @@ import {
   listConversations,
   getConversation,
   updateConversation,
+  performConversationOperation,
   sendOutboundMessage,
   ApiError
 } from "./api.js";
@@ -262,6 +263,17 @@ describe("typed API client (M1-07)", () => {
               status: "open",
               priority: "medium",
               assignedToUserId: null,
+              queueId: null,
+              teamId: null,
+              waitingReason: null,
+              botPaused: false,
+              firstResponseDueAt: null,
+              resolutionDueAt: null,
+              resolvedAt: null,
+              firstRespondedAt: null,
+              slaPausedAt: null,
+              firstResponseRemainingSeconds: null,
+              resolutionRemainingSeconds: null,
               version: 1,
               lastMessageAt: new Date().toISOString(),
               createdAt: new Date().toISOString(),
@@ -300,6 +312,17 @@ describe("typed API client (M1-07)", () => {
             status: "open",
             priority: "medium",
             assignedToUserId: null,
+            queueId: null,
+            teamId: null,
+            waitingReason: null,
+            botPaused: false,
+            firstResponseDueAt: null,
+            resolutionDueAt: null,
+            resolvedAt: null,
+            firstRespondedAt: null,
+            slaPausedAt: null,
+            firstResponseRemainingSeconds: null,
+            resolutionRemainingSeconds: null,
             version: 1,
             lastMessageAt: new Date().toISOString(),
             createdAt: new Date().toISOString(),
@@ -353,6 +376,17 @@ describe("typed API client (M1-07)", () => {
           status: "resolved",
           priority: "medium",
           assignedToUserId: null,
+          queueId: null,
+          teamId: null,
+          waitingReason: null,
+          botPaused: false,
+          firstResponseDueAt: null,
+          resolutionDueAt: null,
+          resolvedAt: null,
+          firstRespondedAt: null,
+          slaPausedAt: null,
+          firstResponseRemainingSeconds: null,
+          resolutionRemainingSeconds: null,
           version: 2,
           lastMessageAt: new Date().toISOString(),
           createdAt: new Date().toISOString(),
@@ -446,5 +480,49 @@ describe("typed API client (M1-07)", () => {
         fetcher
       )
     ).rejects.toThrow("Conversation has been modified by another user");
+  });
+
+  it("performs a versioned conversation operation", async () => {
+    const updated = {
+      id: "b0000000-0000-7000-8000-000000000001",
+      organizationId: "a0000000-0000-4000-8000-000000000001",
+      channelId: "c0000000-0000-7000-8000-000000000001",
+      customerPhone: "+628111111111",
+      customerName: "Customer",
+      status: "pending",
+      priority: "medium",
+      assignedToUserId: "a0000000-0000-4000-8000-000000000012",
+      queueId: null,
+      teamId: null,
+      waitingReason: "Waiting for customer",
+      botPaused: false,
+      firstResponseDueAt: null,
+      resolutionDueAt: null,
+      resolvedAt: null,
+      firstRespondedAt: null,
+      slaPausedAt: null,
+      firstResponseRemainingSeconds: null,
+      resolutionRemainingSeconds: null,
+      version: 2,
+      lastMessageAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(JSON.stringify(updated), { status: 200 }));
+
+    await expect(
+      performConversationOperation(
+        updated.organizationId,
+        updated.id,
+        { version: 1, action: "wait", reason: "Waiting for customer" },
+        fetcher
+      )
+    ).resolves.toMatchObject({ status: "pending", version: 2 });
+    expect(fetcher).toHaveBeenCalledWith(
+      expect.stringContaining("/actions"),
+      expect.objectContaining({ method: "POST" })
+    );
   });
 });

@@ -129,6 +129,22 @@ function createConversationsMockDb() {
     createdAt: new Date(),
     updatedAt: new Date()
   });
+  const actionConvId = "00000000-0000-7000-8000-000000000011";
+  conversations.set(actionConvId, {
+    id: actionConvId,
+    organizationId: orgId,
+    channelId,
+    customerPhone: "628123456780",
+    customerName: "Action Customer",
+    status: "open",
+    priority: "medium",
+    assignedToUserId: null,
+    version: 1,
+    lastMessageAt: new Date(),
+    metadata: {},
+    createdAt: new Date(),
+    updatedAt: new Date()
+  });
 
   // Initial mock message
   const msgId = "00000000-0000-7000-8000-000000000020";
@@ -156,6 +172,57 @@ function createConversationsMockDb() {
     async query(queryText: string, values: unknown[] = []) {
       await Promise.resolve();
       const sql = queryText.replace(/\s+/g, " ").trim();
+
+      if (sql.includes("FOR UPDATE OF conversation, membership")) {
+        const [targetOrg, targetConversation, actorUserId] = values as [string, string, string];
+        const c = conversations.get(targetConversation);
+        const member = memberRoles.get(`${targetOrg}:${actorUserId}`);
+        if (!c || c.organizationId !== targetOrg || !member) return { rows: [] };
+        return {
+          rows: [
+            {
+              status: c.status,
+              assignedToUserId: c.assignedToUserId,
+              queueId: null,
+              version: c.version,
+              roleKey: member.roleKey,
+              canAccess: true,
+              firstResponseSeconds: null,
+              resolutionSeconds: null,
+              businessTimezone: null,
+              weeklySchedule: null,
+              holidayDates: null,
+              pauseWhileWaiting: false,
+              firstResponseRemainingSeconds: null,
+              resolutionRemainingSeconds: null
+            }
+          ]
+        };
+      }
+
+      if (sql.includes("INSERT INTO flowdesk.audit_logs")) {
+        return { rows: [{ id: "audit-operation", occurred_at: new Date() }], rowCount: 1 };
+      }
+
+      if (
+        sql.startsWith("UPDATE flowdesk.conversations") &&
+        sql.includes("WHERE organization_id = $")
+      ) {
+        const targetOrg = values[values.length - 3] as string;
+        const targetId = values[values.length - 2] as string;
+        const expectedVersion = values[values.length - 1] as number;
+        const c = conversations.get(targetId);
+        if (!c || c.organizationId !== targetOrg || c.version !== expectedVersion) {
+          return { rows: [], rowCount: 0 };
+        }
+        if (sql.includes("assigned_to_user_id = $1")) c.assignedToUserId = values[0] as string;
+        if (sql.includes("status = CASE WHEN status = 'new'")) {
+          c.status = c.status === "new" ? "open" : c.status;
+        }
+        c.version += 1;
+        c.updatedAt = new Date();
+        return { rows: [], rowCount: 1 };
+      }
 
       // Auth Session lookup
       if (sql.includes("FROM flowdesk.auth_sessions s JOIN flowdesk.users u")) {
@@ -433,6 +500,50 @@ describe("Conversations & Messages API (M2-07)", () => {
   const charlieCookie = serializeSessionCookie("charlie-token", false);
 
   const convId = "00000000-0000-7000-8000-000000000010";
+  const actionConvId = "00000000-0000-7000-8000-000000000011";
+
+  describe("POST /api/v1/organizations/:orgId/conversations/:id/actions", () => {
+    it("rejects malformed operations before persistence", async () => {
+      const response = await request(app)
+        .post(`/api/v1/organizations/${orgId}/conversations/${convId}/actions`)
+        .set("Cookie", bobCookie)
+        .send({ version: 1, action: "note", body: " " });
+      expect(response.status).toBe(400);
+      expect((response.body as { code: string }).code).toBe("VALIDATION_ERROR");
+    });
+
+    it("requires assignment permission for handoff", async () => {
+      const response = await request(app)
+        .post(`/api/v1/organizations/${orgId}/conversations/${convId}/actions`)
+        .set("Cookie", charlieCookie)
+        .send({
+          version: 1,
+          action: "handoff",
+          targetUserId: bobId
+        });
+      expect(response.status).toBe(403);
+      expect((response.body as { code: string }).code).toBe("FORBIDDEN");
+    });
+
+    it("allows one claim winner and returns 409 to the stale contender", async () => {
+      const winner = await request(app)
+        .post(`/api/v1/organizations/${orgId}/conversations/${actionConvId}/actions`)
+        .set("Cookie", bobCookie)
+        .send({ version: 1, action: "claim" });
+      expect(winner.status).toBe(200);
+      expect(winner.body as { assignedToUserId: string; version: number }).toMatchObject({
+        assignedToUserId: bobId,
+        version: 2
+      });
+
+      const stale = await request(app)
+        .post(`/api/v1/organizations/${orgId}/conversations/${actionConvId}/actions`)
+        .set("Cookie", aliceCookie)
+        .send({ version: 1, action: "claim" });
+      expect(stale.status).toBe(409);
+      expect((stale.body as { code: string }).code).toBe("OPTIMISTIC_CONCURRENCY_CONFLICT");
+    });
+  });
 
   describe("GET /api/v1/organizations/:orgId/conversations", () => {
     it("returns 401 when no session cookie is provided", async () => {

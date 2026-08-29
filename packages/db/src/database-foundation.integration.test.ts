@@ -4,6 +4,11 @@ import { promisify } from "node:util";
 import { Client, Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { listVisibleQueues } from "./operational-inbox.js";
+import {
+  ConversationAccessRevokedError,
+  performConversationOperation
+} from "./conversation-operations.js";
+import { OptimisticConcurrencyError } from "./conversations.js";
 import { withTenantTransaction } from "./tenant-context.js";
 
 const executeFile = promisify(execFile);
@@ -43,7 +48,8 @@ describe("database foundation", () => {
       "0007_webhook_events.sql",
       "0008_conversations_and_messages.sql",
       "0009_m2_completion_hardening.sql",
-      "0010_m3_operational_inbox.sql"
+      "0010_m3_operational_inbox.sql",
+      "0011_m3_conversation_operations.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -412,6 +418,135 @@ describe("database foundation", () => {
         )
       ).rows
     ).toEqual([{ event_type: "conversation.note_added" }]);
+
+    await admin.query(
+      `INSERT INTO flowdesk.messages
+         (organization_id, conversation_id, channel_id, direction, sender_type,
+          sender_user_id, content, status)
+       VALUES ($1, $2, $3, 'outbound', 'agent', $4, 'First response', 'queued')`,
+      [organizationId, conversation.rows[0]!.id, channel.rows[0]!.id, userId]
+    );
+    expect(
+      (
+        await admin.query<{ first_responded_at: Date | null }>(
+          `SELECT first_responded_at FROM flowdesk.conversations
+           WHERE organization_id = $1 AND id = $2`,
+          [organizationId, conversation.rows[0]!.id]
+        )
+      ).rows[0]!.first_responded_at
+    ).toBeInstanceOf(Date);
+  });
+
+  it("serializes simultaneous claims and fails closed after queue membership removal", async () => {
+    const organizationId = "00000000-0000-7000-8000-0000000000a1";
+    const agentA = "00000000-0000-7000-8000-0000000000c1";
+    const agentB = "00000000-0000-7000-8000-0000000000c2";
+    await admin.query(
+      `INSERT INTO flowdesk.users (id, email, display_name) VALUES
+       ($1, 'm3-agent@example.com', 'M3 Agent A'),
+       ($2, 'm3-agent-b@example.com', 'M3 Agent B')
+       ON CONFLICT (id) DO NOTHING`,
+      [agentA, agentB]
+    );
+    const role = await admin.query<{ id: string }>(
+      `INSERT INTO flowdesk.roles (organization_id, key, label)
+       VALUES ($1, 'm3_agent', 'M3 Agent')
+       ON CONFLICT (organization_id, key) DO UPDATE SET label = EXCLUDED.label
+       RETURNING id`,
+      [organizationId]
+    );
+    await admin.query(
+      `INSERT INTO flowdesk.memberships (organization_id, user_id, role_id, status) VALUES
+       ($1, $2, $4, 'active'), ($1, $3, $4, 'active')
+       ON CONFLICT (organization_id, user_id)
+       DO UPDATE SET role_id = EXCLUDED.role_id, status = 'active'`,
+      [organizationId, agentA, agentB, role.rows[0]!.id]
+    );
+    const queue = await admin.query<{ id: string }>(
+      `INSERT INTO flowdesk.queues (organization_id, name, slug)
+       VALUES ($1, 'M3 Race Queue', 'm3-race')
+       ON CONFLICT (organization_id, slug) DO UPDATE SET status = 'active'
+       RETURNING id`,
+      [organizationId]
+    );
+    await admin.query(
+      `INSERT INTO flowdesk.queue_memberships (organization_id, queue_id, user_id, status) VALUES
+       ($1, $2, $3, 'active'), ($1, $2, $4, 'active')
+       ON CONFLICT (organization_id, queue_id, user_id)
+       DO UPDATE SET status = 'active', removed_at = NULL`,
+      [organizationId, queue.rows[0]!.id, agentA, agentB]
+    );
+    const channel = await admin.query<{ id: string }>(
+      `INSERT INTO flowdesk.channels
+         (organization_id, type, name, phone_number_id, waba_id, encrypted_credentials)
+       VALUES ($1, 'whatsapp', 'M3 Race', 'm3-race-phone', 'm3-waba', 'encrypted')
+       ON CONFLICT (organization_id, phone_number_id) DO UPDATE SET name = EXCLUDED.name
+       RETURNING id`,
+      [organizationId]
+    );
+    const conversation = await admin.query<{ id: string }>(
+      `INSERT INTO flowdesk.conversations
+         (organization_id, channel_id, customer_phone, status, queue_id, version)
+       VALUES ($1, $2, '+628222222222', 'open', $3, 1)
+       ON CONFLICT (organization_id, channel_id, customer_phone)
+       DO UPDATE SET status = 'open', queue_id = EXCLUDED.queue_id,
+                     assigned_to_user_id = NULL, version = 1, resolved_at = NULL
+       RETURNING id`,
+      [organizationId, channel.rows[0]!.id, queue.rows[0]!.id]
+    );
+    const pool = new Pool({ connectionString, max: 4 });
+    const claim = (actorUserId: string) =>
+      withTenantTransaction(pool, { organizationId }, async (client) => {
+        await client.query("SET LOCAL ROLE flowdesk_runtime");
+        return performConversationOperation(client, {
+          organizationId,
+          conversationId: conversation.rows[0]!.id,
+          actorUserId,
+          expectedVersion: 1,
+          operation: { action: "claim" }
+        });
+      });
+    try {
+      const claims = await Promise.allSettled([claim(agentA), claim(agentB)]);
+      expect(claims.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      const rejected = claims.find((result) => result.status === "rejected");
+      expect(rejected?.status === "rejected" ? rejected.reason : null).toBeInstanceOf(
+        OptimisticConcurrencyError
+      );
+      const winner = claims.find(
+        (result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof claim>>> =>
+          result.status === "fulfilled"
+      )!.value.assignedToUserId!;
+      expect(
+        (
+          await admin.query<{ count: string }>(
+            `SELECT count(*) FROM flowdesk.audit_logs
+             WHERE organization_id = $1 AND target_id = $2 AND action = 'conversation.claim'`,
+            [organizationId, conversation.rows[0]!.id]
+          )
+        ).rows[0]!.count
+      ).toBe("1");
+      await admin.query(
+        `UPDATE flowdesk.queue_memberships
+         SET status = 'removed', removed_at = clock_timestamp()
+         WHERE organization_id = $1 AND queue_id = $2 AND user_id = $3`,
+        [organizationId, queue.rows[0]!.id, winner]
+      );
+      await expect(
+        withTenantTransaction(pool, { organizationId }, async (client) => {
+          await client.query("SET LOCAL ROLE flowdesk_runtime");
+          return performConversationOperation(client, {
+            organizationId,
+            conversationId: conversation.rows[0]!.id,
+            actorUserId: winner,
+            expectedVersion: 2,
+            operation: { action: "unread" }
+          });
+        })
+      ).rejects.toBeInstanceOf(ConversationAccessRevokedError);
+    } finally {
+      await pool.end();
+    }
   });
 
   it("fails closed without context and denies organization B from organization A", async () => {
