@@ -45,6 +45,7 @@ export interface ConversationRecord {
   resolutionRemainingSeconds: number | null;
   version: number;
   lastMessageAt: Date;
+  lastInboundAt: Date | null;
   metadata: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
@@ -111,7 +112,7 @@ export async function findOrCreateConversation(
        first_responded_at AS "firstRespondedAt", sla_paused_at AS "slaPausedAt",
        first_response_remaining_seconds AS "firstResponseRemainingSeconds",
        resolution_remaining_seconds AS "resolutionRemainingSeconds",
-       version, last_message_at AS "lastMessageAt", metadata,
+       version, last_message_at AS "lastMessageAt", last_inbound_at AS "lastInboundAt", metadata,
        created_at AS "createdAt", updated_at AS "updatedAt"
      FROM flowdesk.conversations
      WHERE organization_id = $1 AND channel_id = $2 AND customer_phone = $3`,
@@ -138,7 +139,7 @@ export async function findOrCreateConversation(
        first_responded_at AS "firstRespondedAt", sla_paused_at AS "slaPausedAt",
        first_response_remaining_seconds AS "firstResponseRemainingSeconds",
        resolution_remaining_seconds AS "resolutionRemainingSeconds",
-       version, last_message_at AS "lastMessageAt", metadata,
+       version, last_message_at AS "lastMessageAt", last_inbound_at AS "lastInboundAt", metadata,
        created_at AS "createdAt", updated_at AS "updatedAt"`,
     [
       input.organizationId,
@@ -171,7 +172,7 @@ export async function getConversationById(
        first_responded_at AS "firstRespondedAt", sla_paused_at AS "slaPausedAt",
        first_response_remaining_seconds AS "firstResponseRemainingSeconds",
        resolution_remaining_seconds AS "resolutionRemainingSeconds",
-       version, last_message_at AS "lastMessageAt", metadata,
+       version, last_message_at AS "lastMessageAt", last_inbound_at AS "lastInboundAt", metadata,
        created_at AS "createdAt", updated_at AS "updatedAt"
      FROM flowdesk.conversations
      WHERE organization_id = $1 AND id = $2`,
@@ -211,7 +212,7 @@ export async function updateConversationStatus(
        first_responded_at AS "firstRespondedAt", sla_paused_at AS "slaPausedAt",
        first_response_remaining_seconds AS "firstResponseRemainingSeconds",
        resolution_remaining_seconds AS "resolutionRemainingSeconds",
-       version, last_message_at AS "lastMessageAt", metadata,
+       version, last_message_at AS "lastMessageAt", last_inbound_at AS "lastInboundAt", metadata,
        created_at AS "createdAt", updated_at AS "updatedAt"`,
     [targetStatus, id, organizationId, expectedVersion]
   );
@@ -247,7 +248,7 @@ export async function assignConversation(
        first_responded_at AS "firstRespondedAt", sla_paused_at AS "slaPausedAt",
        first_response_remaining_seconds AS "firstResponseRemainingSeconds",
        resolution_remaining_seconds AS "resolutionRemainingSeconds",
-       version, last_message_at AS "lastMessageAt", metadata,
+       version, last_message_at AS "lastMessageAt", last_inbound_at AS "lastInboundAt", metadata,
        created_at AS "createdAt", updated_at AS "updatedAt"`,
     [userId, id, organizationId, expectedVersion]
   );
@@ -296,15 +297,18 @@ export async function createMessage(
 
   const message = insertRes.rows[0]!;
 
-  // Update conversation last_message_at; reopen if inbound customer reply on closed/resolved
+  // Update conversation last_message_at; reopen if inbound customer reply on closed/resolved;
+  // record last_inbound_at when message is from customer
   if (input.direction === "inbound") {
+    const isCustomerInbound = input.senderType === "customer";
     await client.query(
       `UPDATE flowdesk.conversations
        SET last_message_at = clock_timestamp(),
+           last_inbound_at = CASE WHEN $3 = true THEN COALESCE($4, clock_timestamp()) ELSE last_inbound_at END,
            status = CASE WHEN status IN ('resolved', 'closed') THEN 'open' ELSE status END,
            updated_at = clock_timestamp()
        WHERE id = $1 AND organization_id = $2`,
-      [input.conversationId, input.organizationId]
+      [input.conversationId, input.organizationId, isCustomerInbound, input.sentAt ?? null]
     );
   } else {
     await client.query(
@@ -501,7 +505,7 @@ export async function listConversations(
       first_responded_at AS "firstRespondedAt", sla_paused_at AS "slaPausedAt",
       first_response_remaining_seconds AS "firstResponseRemainingSeconds",
       resolution_remaining_seconds AS "resolutionRemainingSeconds",
-      version, last_message_at AS "lastMessageAt", metadata,
+      version, last_message_at AS "lastMessageAt", last_inbound_at AS "lastInboundAt", metadata,
       created_at AS "createdAt", updated_at AS "updatedAt"
     FROM flowdesk.conversations
     WHERE ${conditions.join(" AND ")}
@@ -584,7 +588,7 @@ export async function updateConversation(
       first_responded_at AS "firstRespondedAt", sla_paused_at AS "slaPausedAt",
       first_response_remaining_seconds AS "firstResponseRemainingSeconds",
       resolution_remaining_seconds AS "resolutionRemainingSeconds",
-      version, last_message_at AS "lastMessageAt", metadata,
+      version, last_message_at AS "lastMessageAt", last_inbound_at AS "lastInboundAt", metadata,
       created_at AS "createdAt", updated_at AS "updatedAt"`;
 
   const res = await client.query<ConversationRecord>(sql, values);
@@ -596,12 +600,21 @@ export async function updateConversation(
   return res.rows[0];
 }
 
+export interface OutboundTemplateMetadata {
+  name: string;
+  language: string;
+  versionId: string;
+  variables: Record<string, string>;
+  renderedPayloadHash: string;
+}
+
 export interface CreateOutboundMessageWithOutboxInput {
   organizationId: string;
   conversationId: string;
   senderUserId: string;
   content: string;
   correlationId?: string | undefined;
+  template?: OutboundTemplateMetadata | undefined;
 }
 
 /**
@@ -629,7 +642,8 @@ export async function createOutboundMessageWithOutbox(
     senderType: "agent",
     senderUserId: input.senderUserId,
     content: input.content,
-    status: "queued"
+    status: "queued",
+    ...(input.template ? { metadata: { template: input.template } } : {})
   });
 
   const outboxPayload = {
@@ -638,7 +652,8 @@ export async function createOutboundMessageWithOutbox(
     channelId: conversation.channelId,
     customerPhone: conversation.customerPhone,
     content: input.content,
-    senderUserId: input.senderUserId
+    senderUserId: input.senderUserId,
+    ...(input.template ? { template: input.template } : {})
   };
 
   await client.query(

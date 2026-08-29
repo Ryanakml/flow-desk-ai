@@ -23,6 +23,7 @@ interface MockConversation {
   assignedToUserId: string | null;
   version: number;
   lastMessageAt: Date;
+  lastInboundAt: Date | null;
   metadata: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
@@ -60,6 +61,18 @@ function createConversationsMockDb() {
   const memberRoles = new Map<string, { membershipId: string; roleKey: string }>();
   const conversations = new Map<string, MockConversation>();
   const messages = new Map<string, MockMessage>();
+  const templates = new Map<
+    string,
+    {
+      channelId: string;
+      name: string;
+      language: string;
+      status: string;
+      category: string;
+      components: unknown[];
+      variableCount?: number;
+    }
+  >();
   const outboxEvents: Array<{
     id: string;
     eventType: string;
@@ -125,6 +138,7 @@ function createConversationsMockDb() {
     assignedToUserId: null,
     version: 1,
     lastMessageAt: new Date(),
+    lastInboundAt: new Date(),
     metadata: {},
     createdAt: new Date(),
     updatedAt: new Date()
@@ -141,6 +155,7 @@ function createConversationsMockDb() {
     assignedToUserId: null,
     version: 1,
     lastMessageAt: new Date(),
+    lastInboundAt: new Date(),
     metadata: {},
     createdAt: new Date(),
     updatedAt: new Date()
@@ -294,6 +309,7 @@ function createConversationsMockDb() {
           assignedToUserId: c.assignedToUserId,
           version: c.version,
           lastMessageAt: c.lastMessageAt,
+          lastInboundAt: c.lastInboundAt,
           metadata: c.metadata,
           createdAt: c.createdAt,
           updatedAt: c.updatedAt
@@ -323,6 +339,7 @@ function createConversationsMockDb() {
                 assignedToUserId: c.assignedToUserId,
                 version: c.version,
                 lastMessageAt: c.lastMessageAt,
+                lastInboundAt: c.lastInboundAt,
                 metadata: c.metadata,
                 createdAt: c.createdAt,
                 updatedAt: c.updatedAt
@@ -476,15 +493,78 @@ function createConversationsMockDb() {
         return { rows: [], rowCount: 1, command: "INSERT", oid: 0, fields: [] };
       }
 
+      // WhatsApp Template lookups
+      if (sql.includes("FROM flowdesk.whatsapp_templates t")) {
+        if (sql.includes("WHERE t.channel_id = $1 AND t.name = $2 AND v.language = $3")) {
+          const [chId, tName, tLang] = values as [string, string, string];
+          const key = `${chId}:${tName}:${tLang}`;
+          const match = templates.get(key);
+          if (match) {
+            return {
+              rows: [
+                {
+                  t_id: "tpl-id-001",
+                  t_org_id: orgId,
+                  t_channel_id: match.channelId,
+                  t_name: match.name,
+                  t_category: match.category,
+                  t_created_at: new Date(),
+                  t_updated_at: new Date(),
+                  v_id: "ver-id-001",
+                  v_provider_template_id: "meta-tpl-123",
+                  v_language: match.language,
+                  v_status: match.status,
+                  v_rejected_reason: null,
+                  v_components: match.components,
+                  v_variable_count: match.variableCount ?? 0,
+                  v_payload_hash: "hash123",
+                  v_version: 1,
+                  v_created_at: new Date(),
+                  v_updated_at: new Date()
+                }
+              ],
+              rowCount: 1,
+              command: "SELECT",
+              oid: 0,
+              fields: []
+            };
+          }
+          return { rows: [], rowCount: 0, command: "SELECT", oid: 0, fields: [] };
+        }
+
+        if (sql.includes("WHERE t.organization_id = $1 AND t.channel_id = $2")) {
+          const [, targetCh] = values as [string, string];
+          const matching = Array.from(templates.values())
+            .filter((t) => t.channelId === targetCh)
+            .map((t) => ({
+              templateId: "tpl-id-001",
+              name: t.name,
+              category: t.category,
+              versionId: "ver-id-001",
+              language: t.language,
+              status: t.status,
+              components: t.components,
+              variableCount: t.variableCount ?? 0
+            }));
+          return {
+            rows: matching,
+            rowCount: matching.length,
+            command: "SELECT",
+            oid: 0,
+            fields: []
+          };
+        }
+      }
+
       return { rows: [], rowCount: 0, command: "SELECT", oid: 0, fields: [] };
     }
   } as unknown as DbClient;
 
-  return { db, conversations, messages, outboxEvents };
+  return { db, conversations, messages, outboxEvents, templates };
 }
 
 describe("Conversations & Messages API (M2-07)", () => {
-  const { db, outboxEvents } = createConversationsMockDb();
+  const { db, conversations, outboxEvents, templates } = createConversationsMockDb();
   const config = loadAuthConfig();
   const idp = new MockIdentityProvider();
   const app = createApiApp({
@@ -739,6 +819,162 @@ describe("Conversations & Messages API (M2-07)", () => {
       const createdEvent = outboxEvents[outboxEvents.length - 1]!;
       expect(createdEvent.eventType).toBe("message.outbound.created");
       expect(createdEvent.aggregateId).toBe(body.id);
+    });
+
+    it("rejects free-form text message with 422 OUTSIDE_SERVICE_WINDOW when outside 24h window", async () => {
+      // Create expired conversation (lastInboundAt was 25 hours ago)
+      const expiredConvId = "00000000-0000-7000-8000-000000000099";
+      conversations.set(expiredConvId, {
+        id: expiredConvId,
+        organizationId: orgId,
+        channelId,
+        customerPhone: "628123456999",
+        customerName: "Expired Customer",
+        status: "open",
+        priority: "medium",
+        assignedToUserId: null,
+        version: 1,
+        lastMessageAt: new Date(Date.now() - 25 * 3600 * 1000),
+        lastInboundAt: new Date(Date.now() - 25 * 3600 * 1000),
+        metadata: {},
+        createdAt: new Date(Date.now() - 30 * 3600 * 1000),
+        updatedAt: new Date()
+      });
+
+      const response = await request(app)
+        .post(`/api/v1/organizations/${orgId}/conversations/${expiredConvId}/messages`)
+        .set("Cookie", bobCookie)
+        .set("Idempotency-Key", "expired-freeform-1")
+        .send({ content: "Halo, ini pesan follow up." });
+
+      expect(response.status).toBe(422);
+      expect((response.body as { code: string }).code).toBe("OUTSIDE_SERVICE_WINDOW");
+    });
+
+    it("allows approved template message with variables when outside service window", async () => {
+      // Register approved template in mock DB
+      templates.set(`${channelId}:reengage_customer:id`, {
+        channelId,
+        name: "reengage_customer",
+        language: "id",
+        status: "APPROVED",
+        category: "UTILITY",
+        components: [
+          {
+            type: "BODY",
+            text: "Halo {{1}}, pesanan {{2}} Anda sedang menunggu pembayaran."
+          }
+        ],
+        variableCount: 2
+      });
+
+      const expiredConvId = "00000000-0000-7000-8000-000000000099";
+      const response = await request(app)
+        .post(`/api/v1/organizations/${orgId}/conversations/${expiredConvId}/messages`)
+        .set("Cookie", bobCookie)
+        .set("Idempotency-Key", "template-send-001")
+        .send({
+          type: "template",
+          templateName: "reengage_customer",
+          language: "id",
+          variables: {
+            "1": "Budi",
+            "2": "ORD-9999"
+          }
+        });
+
+      expect(response.status).toBe(201);
+      const body = response.body as { content: string; direction: string };
+      expect(body.content).toBe("Halo Budi, pesanan ORD-9999 Anda sedang menunggu pembayaran.");
+
+      const lastOutbox = outboxEvents[outboxEvents.length - 1]!;
+      expect(lastOutbox.eventType).toBe("message.outbound.created");
+      expect(lastOutbox.payload["template"]).toMatchObject({
+        name: "reengage_customer",
+        language: "id",
+        variables: { "1": "Budi", "2": "ORD-9999" }
+      });
+    });
+
+    it("rejects non-approved template with 422 TEMPLATE_NOT_APPROVED", async () => {
+      templates.set(`${channelId}:pending_offer:id`, {
+        channelId,
+        name: "pending_offer",
+        language: "id",
+        status: "PENDING",
+        category: "MARKETING",
+        components: [{ type: "BODY", text: "Diskon hari ini!" }],
+        variableCount: 0
+      });
+
+      const response = await request(app)
+        .post(`/api/v1/organizations/${orgId}/conversations/${convId}/messages`)
+        .set("Cookie", bobCookie)
+        .set("Idempotency-Key", "template-pending-001")
+        .send({
+          type: "template",
+          templateName: "pending_offer",
+          language: "id"
+        });
+
+      expect(response.status).toBe(422);
+      expect((response.body as { code: string }).code).toBe("TEMPLATE_NOT_APPROVED");
+    });
+
+    it("rejects template with missing variables (422 INVALID_TEMPLATE_VARIABLES)", async () => {
+      const response = await request(app)
+        .post(`/api/v1/organizations/${orgId}/conversations/${convId}/messages`)
+        .set("Cookie", bobCookie)
+        .set("Idempotency-Key", "template-missing-vars")
+        .send({
+          type: "template",
+          templateName: "reengage_customer",
+          language: "id",
+          variables: { "1": "Budi" } // missing variable 2
+        });
+
+      expect(response.status).toBe(422);
+      expect((response.body as { code: string }).code).toBe("INVALID_TEMPLATE_VARIABLES");
+    });
+  });
+
+  describe("POST /api/v1/organizations/:orgId/conversations/:id/template-preview", () => {
+    it("renders preview with variable substitutions and determinism", async () => {
+      const response = await request(app)
+        .post(`/api/v1/organizations/${orgId}/conversations/${convId}/template-preview`)
+        .set("Cookie", bobCookie)
+        .send({
+          templateName: "reengage_customer",
+          language: "id",
+          variables: { "1": "Dewi", "2": "ORD-1234" }
+        });
+
+      expect(response.status).toBe(200);
+      const body = response.body as {
+        templateName: string;
+        isEligible: boolean;
+        renderedBody: string;
+        renderedPayloadHash: string;
+      };
+      expect(body.templateName).toBe("reengage_customer");
+      expect(body.isEligible).toBe(true);
+      expect(body.renderedBody).toBe(
+        "Halo Dewi, pesanan ORD-1234 Anda sedang menunggu pembayaran."
+      );
+      expect(body.renderedPayloadHash).toMatch(/^[a-f0-9]{64}$/);
+    });
+  });
+
+  describe("GET /api/v1/organizations/:orgId/conversations/:id/templates", () => {
+    it("lists channel templates for selection in composer", async () => {
+      const response = await request(app)
+        .get(`/api/v1/organizations/${orgId}/conversations/${convId}/templates`)
+        .set("Cookie", bobCookie);
+
+      expect(response.status).toBe(200);
+      const body = response.body as { items: Array<{ name: string; status: string }> };
+      expect(Array.isArray(body.items)).toBe(true);
+      expect(body.items.some((t) => t.name === "reengage_customer")).toBe(true);
     });
   });
 });

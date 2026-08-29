@@ -97,6 +97,7 @@ export {
   type ListConversationsResult,
   type UpdateConversationOptions,
   type CreateOutboundMessageWithOutboxInput,
+  type OutboundTemplateMetadata,
   type ClaimedOutboxEvent
 } from "./conversations.js";
 export {

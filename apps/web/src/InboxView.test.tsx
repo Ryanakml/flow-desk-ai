@@ -291,4 +291,60 @@ describe("InboxView Operator Interface (M2-09)", () => {
     expect(html).toContain('data-testid="no-conv-selected"');
     expect(html).toContain("No conversation selected");
   });
+
+  it("renders service window active badge when customer window is open", () => {
+    const activeWindowConv: Conversation = {
+      ...sampleConversation,
+      serviceWindow: {
+        isOpen: true,
+        expiresAt: new Date(Date.now() + 3600000).toISOString(),
+        remainingSeconds: 3600
+      }
+    };
+
+    const html = renderToString(
+      <InboxView
+        organizationId={mockOrgId}
+        userRole="agent"
+        sessionUserId={mockUserId}
+        initialConversations={[activeWindowConv]}
+        initialActiveConversation={activeWindowConv}
+        initialMessages={sampleMessages}
+      />
+    );
+
+    expect(html).toContain('data-testid="service-window-badge"');
+    expect(html).toContain("24h Window Active");
+    expect(html).toContain('data-testid="thread-composer-form"');
+    expect(html).toContain('data-testid="btn-open-template-composer"');
+  });
+
+  it("renders service window expired banner and template button when window has closed", () => {
+    const expiredWindowConv: Conversation = {
+      ...sampleConversation,
+      serviceWindow: {
+        isOpen: false,
+        expiresAt: new Date(Date.now() - 3600000).toISOString(),
+        remainingSeconds: 0
+      }
+    };
+
+    const html = renderToString(
+      <InboxView
+        organizationId={mockOrgId}
+        userRole="agent"
+        sessionUserId={mockUserId}
+        initialConversations={[expiredWindowConv]}
+        initialActiveConversation={expiredWindowConv}
+        initialMessages={sampleMessages}
+      />
+    );
+
+    expect(html).toContain('data-testid="service-window-badge"');
+    expect(html).toContain("24h Window Expired");
+    expect(html).toContain('data-testid="composer-window-expired"');
+    expect(html).toContain("24-hour service window expired.");
+    expect(html).toContain('data-testid="btn-open-template-composer"');
+    expect(html).not.toContain('data-testid="thread-composer-form"');
+  });
 });

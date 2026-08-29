@@ -7,12 +7,14 @@ import {
   ListConversationsQuerySchema,
   ListConversationsResponseSchema,
   MessageSchema,
+  TemplatePreviewRequestSchema,
   UpdateConversationRequestSchema
 } from "@flowdesk/contracts";
 import {
   type DbClient,
   createOutboundMessageWithOutbox,
   getConversationById,
+  getTemplateByNameAndLanguage,
   listConversations,
   listMessagesByConversation,
   OptimisticConcurrencyError,
@@ -23,7 +25,13 @@ import {
   runInTenantTransaction,
   updateConversation
 } from "@flowdesk/db";
-import { type Permission } from "@flowdesk/domain";
+import {
+  type Permission,
+  calculateServiceWindow,
+  isTemplateApprovedForSending,
+  renderTemplate,
+  validateTemplateVariables
+} from "@flowdesk/domain";
 import { type Request, type Response, Router } from "express";
 import { createRequireAuthMiddleware } from "./auth.js";
 import { createIdempotencyMiddleware } from "./idempotency.js";
@@ -73,9 +81,11 @@ function serializeConversation(conv: {
   resolutionRemainingSeconds?: number | null;
   version: number;
   lastMessageAt: Date;
+  lastInboundAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }) {
+  const window = calculateServiceWindow(conv.lastInboundAt);
   return ConversationSchema.parse({
     id: conv.id,
     organizationId: conv.organizationId,
@@ -98,6 +108,12 @@ function serializeConversation(conv: {
     resolutionRemainingSeconds: conv.resolutionRemainingSeconds ?? null,
     version: conv.version,
     lastMessageAt: conv.lastMessageAt.toISOString(),
+    lastInboundAt: conv.lastInboundAt?.toISOString() ?? null,
+    serviceWindow: {
+      isOpen: window.isOpen,
+      expiresAt: window.expiresAt?.toISOString() ?? null,
+      remainingSeconds: window.remainingSeconds
+    },
     createdAt: conv.createdAt.toISOString(),
     updatedAt: conv.updatedAt.toISOString()
   });
@@ -495,6 +511,73 @@ export function createConversationsRouter(options: ConversationsRouterOptions): 
           async (db) => {
             const conversation = await getConversationById(db, orgId, id);
             if (!conversation) return null;
+
+            const serviceWindow = calculateServiceWindow(conversation.lastInboundAt);
+
+            if (parseResult.data.type === "template") {
+              const templateRecord = await getTemplateByNameAndLanguage(db, {
+                channelId: conversation.channelId,
+                name: parseResult.data.templateName,
+                language: parseResult.data.language
+              });
+
+              if (!templateRecord) {
+                const err = new Error(
+                  `Template '${parseResult.data.templateName}' (${parseResult.data.language}) not found.`
+                );
+                err.name = "TemplateNotFoundError";
+                throw err;
+              }
+
+              if (!isTemplateApprovedForSending(templateRecord.version.status)) {
+                const err = new Error(
+                  `Template '${parseResult.data.templateName}' status is ${templateRecord.version.status}, cannot be sent.`
+                );
+                err.name = "TemplateNotApprovedError";
+                throw err;
+              }
+
+              const variableValidation = validateTemplateVariables(
+                templateRecord.version.components,
+                parseResult.data.variables ?? {}
+              );
+
+              if (!variableValidation.valid) {
+                const err = new Error(variableValidation.error ?? "Invalid template variables");
+                err.name = "InvalidTemplateVariablesError";
+                throw err;
+              }
+
+              const rendered = renderTemplate(
+                templateRecord.version.components,
+                parseResult.data.variables ?? {}
+              );
+
+              return createOutboundMessageWithOutbox(db, {
+                organizationId: orgId,
+                conversationId: id,
+                senderUserId: request.user!.id,
+                content: rendered.renderedBody,
+                correlationId: response.getHeader("x-request-id")?.toString(),
+                template: {
+                  name: parseResult.data.templateName,
+                  language: parseResult.data.language,
+                  versionId: templateRecord.version.id,
+                  variables: parseResult.data.variables ?? {},
+                  renderedPayloadHash: rendered.renderedPayloadHash
+                }
+              });
+            }
+
+            // Free-form text message
+            if (!serviceWindow.isOpen) {
+              const err = new Error(
+                "Cannot send free-form message outside 24-hour service window. Please select an approved WhatsApp template."
+              );
+              err.name = "OutsideServiceWindowError";
+              throw err;
+            }
+
             return createOutboundMessageWithOutbox(db, {
               organizationId: orgId,
               conversationId: id,
@@ -514,6 +597,42 @@ export function createConversationsRouter(options: ConversationsRouterOptions): 
             error.message
           );
         }
+        if (error instanceof Error && error.name === "OutsideServiceWindowError") {
+          return sendProblem(
+            response,
+            422,
+            "OUTSIDE_SERVICE_WINDOW",
+            "Outside Customer Service Window",
+            error.message
+          );
+        }
+        if (error instanceof Error && error.name === "TemplateNotFoundError") {
+          return sendProblem(
+            response,
+            422,
+            "TEMPLATE_NOT_FOUND",
+            "Template Not Found",
+            error.message
+          );
+        }
+        if (error instanceof Error && error.name === "TemplateNotApprovedError") {
+          return sendProblem(
+            response,
+            422,
+            "TEMPLATE_NOT_APPROVED",
+            "Template Not Approved",
+            error.message
+          );
+        }
+        if (error instanceof Error && error.name === "InvalidTemplateVariablesError") {
+          return sendProblem(
+            response,
+            422,
+            "INVALID_TEMPLATE_VARIABLES",
+            "Invalid Template Variables",
+            error.message
+          );
+        }
         throw error;
       }
       if (!message) {
@@ -527,6 +646,134 @@ export function createConversationsRouter(options: ConversationsRouterOptions): 
       }
 
       return response.status(201).json(serializeMessage(message));
+    }
+  );
+
+  // 5. POST /api/v1/organizations/:orgId/conversations/:id/template-preview
+  router.post(
+    "/:id/template-preview",
+    createRequireOrgPermissionMiddleware(options.db, "message:send"),
+    async (request: Request, response: Response) => {
+      const orgId = request.params["orgId"] as string;
+      const id = request.params["id"] as string;
+
+      const parseResult = TemplatePreviewRequestSchema.safeParse(request.body);
+      if (!parseResult.success) {
+        return sendProblem(
+          response,
+          400,
+          "VALIDATION_ERROR",
+          "Invalid preview request",
+          parseResult.error.issues.map((e) => `${e.path.join(".")}: ${e.message}`).join(", ")
+        );
+      }
+
+      const conversation = await getConversationById(options.db, orgId, id);
+      if (!conversation) {
+        return sendProblem(
+          response,
+          404,
+          "CONVERSATION_NOT_FOUND",
+          "Conversation Not Found",
+          `Conversation '${id}' was not found in this organization.`
+        );
+      }
+
+      const templateRecord = await getTemplateByNameAndLanguage(options.db, {
+        channelId: conversation.channelId,
+        name: parseResult.data.templateName,
+        language: parseResult.data.language
+      });
+
+      if (!templateRecord) {
+        return sendProblem(
+          response,
+          422,
+          "TEMPLATE_NOT_FOUND",
+          "Template Not Found",
+          `Template '${parseResult.data.templateName}' (${parseResult.data.language}) was not found.`
+        );
+      }
+
+      const isEligible = isTemplateApprovedForSending(templateRecord.version.status);
+      let ineligibilityReason: string | null = null;
+      if (!isEligible) {
+        ineligibilityReason = `Template status is '${templateRecord.version.status}', must be 'APPROVED' to send.`;
+      }
+
+      const variableValidation = validateTemplateVariables(
+        templateRecord.version.components,
+        parseResult.data.variables ?? {}
+      );
+
+      if (!variableValidation.valid) {
+        return sendProblem(
+          response,
+          422,
+          "INVALID_TEMPLATE_VARIABLES",
+          "Invalid Template Variables",
+          variableValidation.error ?? "Invalid template variables"
+        );
+      }
+
+      const rendered = renderTemplate(
+        templateRecord.version.components,
+        parseResult.data.variables ?? {}
+      );
+
+      return response.json({
+        templateName: parseResult.data.templateName,
+        language: parseResult.data.language,
+        status: templateRecord.version.status,
+        isEligible,
+        ineligibilityReason,
+        renderedBody: rendered.renderedBody,
+        renderedHeader: rendered.renderedHeader,
+        renderedComponents: rendered.renderedComponents,
+        renderedPayloadHash: rendered.renderedPayloadHash
+      });
+    }
+  );
+
+  // 6. GET /api/v1/organizations/:orgId/conversations/:id/templates
+  router.get(
+    "/:id/templates",
+    createRequireOrgPermissionMiddleware(options.db, "conversation:read"),
+    async (request: Request, response: Response) => {
+      const orgId = request.params["orgId"] as string;
+      const id = request.params["id"] as string;
+
+      const conversation = await getConversationById(options.db, orgId, id);
+      if (!conversation) {
+        return sendProblem(
+          response,
+          404,
+          "CONVERSATION_NOT_FOUND",
+          "Conversation Not Found",
+          `Conversation '${id}' was not found in this organization.`
+        );
+      }
+
+      const res = await options.db.query(
+        `SELECT
+           t.id AS "templateId",
+           t.name,
+           t.category,
+           v.id AS "versionId",
+           v.language,
+           v.status,
+           v.components,
+           v.variable_count AS "variableCount"
+         FROM flowdesk.whatsapp_templates t
+         JOIN flowdesk.whatsapp_template_versions v ON v.template_id = t.id
+         WHERE t.organization_id = $1 AND t.channel_id = $2
+         ORDER BY t.name ASC, v.language ASC`,
+        [orgId, conversation.channelId]
+      );
+
+      return response.json({
+        items: res.rows
+      });
     }
   );
 

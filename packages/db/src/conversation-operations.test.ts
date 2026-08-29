@@ -30,6 +30,7 @@ const conversation: ConversationRecord = {
   resolutionRemainingSeconds: null,
   version: 2,
   lastMessageAt: new Date("2026-01-01T00:00:00Z"),
+  lastInboundAt: null,
   metadata: {},
   createdAt: new Date("2026-01-01T00:00:00Z"),
   updatedAt: new Date("2026-01-01T00:00:00Z")

@@ -1120,3 +1120,98 @@ body {
     height: 500px;
   }
 }
+
+/* Service Window & Template Composer (M3-05) */
+.composer-window-expired-banner {
+  background: rgba(234, 179, 8, 0.12);
+  border: 1px solid rgba(234, 179, 8, 0.35);
+  border-radius: var(--radius-md);
+  padding: 0.875rem 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.composer-window-expired-banner .banner-text {
+  font-size: 0.875rem;
+  color: #fde047;
+  line-height: 1.4;
+}
+
+.composer-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.composer-tpl-btn {
+  height: 42px;
+  padding: 0 1rem;
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+.template-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.template-variables-section {
+  background: rgba(17, 24, 39, 0.5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+}
+
+.template-variables-section h4 {
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+  color: var(--color-text-main);
+}
+
+.template-preview-card {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+}
+
+.template-preview-card h4 {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-dim);
+  margin-bottom: 0.75rem;
+}
+
+.preview-bubble {
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  border-radius: var(--radius-md);
+  padding: 0.875rem 1rem;
+  color: var(--color-text-main);
+}
+
+.preview-header {
+  font-weight: 700;
+  font-size: 0.9375rem;
+  margin-bottom: 0.375rem;
+}
+
+.preview-body {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  margin-bottom: 0.5rem;
+}
+
+.preview-placeholder {
+  font-size: 0.875rem;
+  color: var(--color-text-dim);
+  font-style: italic;
+  padding: 0.5rem 0;
+}

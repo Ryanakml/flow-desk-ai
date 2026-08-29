@@ -44,6 +44,31 @@ export interface SendTextMessageResult {
   recipientId: string;
 }
 
+export interface SendTemplateMessageInput {
+  phoneNumberId: string;
+  to: string;
+  templateName: string;
+  language: string;
+  components?:
+    | Array<{
+        type: "header" | "body" | "button";
+        sub_type?: string | undefined;
+        index?: string | undefined;
+        parameters: Array<{
+          type: "text" | "payload";
+          text?: string | undefined;
+          payload?: string | undefined;
+        }>;
+      }>
+    | undefined;
+  accessToken: string;
+}
+
+export interface SendTemplateMessageResult {
+  messageId: string;
+  recipientId: string;
+}
+
 export interface ProviderTemplateComponent {
   type: "HEADER" | "BODY" | "FOOTER" | "BUTTONS";
   format?: "TEXT" | "IMAGE" | "DOCUMENT" | "VIDEO" | "LOCATION";
@@ -93,6 +118,7 @@ export interface FetchTemplatesResult {
 export interface WhatsAppProvider {
   readonly name: string;
   sendTextMessage(input: SendTextMessageInput): Promise<SendTextMessageResult>;
+  sendTemplateMessage(input: SendTemplateMessageInput): Promise<SendTemplateMessageResult>;
   fetchMessageTemplates(input: FetchTemplatesInput): Promise<FetchTemplatesResult>;
 }
 
@@ -217,6 +243,99 @@ export class MetaWhatsAppProvider implements WhatsAppProvider {
         statusCode: res.status,
         providerCode: code,
         providerSubcode: subcode
+      });
+    }
+
+    const data = (await res.json()) as {
+      messages?: Array<{ id: string }>;
+      contacts?: Array<{ wa_id: string }>;
+    };
+
+    const messageId = data.messages?.[0]?.id;
+    const recipientId = data.contacts?.[0]?.wa_id ?? cleanTo;
+
+    if (!messageId) {
+      throw new WhatsAppProviderError({
+        message: "Malformed response from WhatsApp API: missing message ID",
+        classification: "TRANSIENT",
+        statusCode: 502
+      });
+    }
+
+    return { messageId, recipientId };
+  }
+
+  async sendTemplateMessage(input: SendTemplateMessageInput): Promise<SendTemplateMessageResult> {
+    const cleanTo = input.to.replace(/[^\d]/g, "");
+    if (!cleanTo) {
+      throw new WhatsAppProviderError({
+        message: "Recipient phone number must contain valid digits",
+        classification: "INVALID_PAYLOAD",
+        statusCode: 400
+      });
+    }
+
+    const url = `${this.baseUrl}/${input.phoneNumberId}/messages`;
+    const payload = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: cleanTo,
+      type: "template",
+      template: {
+        name: input.templateName,
+        language: {
+          code: input.language
+        },
+        ...(input.components && input.components.length > 0 ? { components: input.components } : {})
+      }
+    };
+
+    let res: Response;
+    try {
+      res = await this.fetcher(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${input.accessToken}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+    } catch (err) {
+      throw new WhatsAppProviderError({
+        message: `Network error dispatching template to WhatsApp API: ${err instanceof Error ? err.message : String(err)}`,
+        classification: "TRANSIENT",
+        statusCode: 503
+      });
+    }
+
+    if (!res.ok) {
+      let errorBody: {
+        error?: {
+          message?: string;
+          code?: number;
+          error_subcode?: number;
+          type?: string;
+        };
+      } = {};
+
+      try {
+        errorBody = (await res.json()) as typeof errorBody;
+      } catch {
+        // Non-JSON response
+      }
+
+      const metaErr = errorBody.error;
+      const status = res.status;
+      const code = metaErr?.code;
+      const message = metaErr?.message ?? `WhatsApp API returned HTTP ${status}`;
+      const classification = classifyMetaError(status, code);
+
+      throw new WhatsAppProviderError({
+        message,
+        classification,
+        statusCode: status,
+        providerCode: code,
+        providerSubcode: metaErr?.error_subcode
       });
     }
 
@@ -435,6 +554,53 @@ export class FakeWhatsAppProvider implements WhatsAppProvider {
     const messageId = `wamid.HBgL${Date.now()}fake${this.idCounter++}==`;
     const record: SentMessageLog = {
       ...input,
+      messageId,
+      timestamp: new Date()
+    };
+    this.sent.push(record);
+
+    return {
+      messageId,
+      recipientId: cleanTo
+    };
+  }
+
+  async sendTemplateMessage(input: SendTemplateMessageInput): Promise<SendTemplateMessageResult> {
+    await Promise.resolve();
+    if (this.simulateFailure) {
+      const err = this.simulateFailure({
+        phoneNumberId: input.phoneNumberId,
+        to: input.to,
+        text: `[Template: ${input.templateName}]`,
+        accessToken: input.accessToken
+      });
+      if (err) throw err;
+    }
+
+    const cleanTo = input.to.replace(/[^\d]/g, "");
+    if (!cleanTo) {
+      throw new WhatsAppProviderError({
+        message: "Recipient phone number must contain valid digits",
+        classification: "INVALID_PAYLOAD",
+        statusCode: 400
+      });
+    }
+
+    const matching = this.templates.find((t) => t.name === input.templateName);
+    if (matching && matching.status !== "APPROVED") {
+      throw new WhatsAppProviderError({
+        message: `Template '${input.templateName}' is ${matching.status}, sending is blocked.`,
+        classification: "INVALID_PAYLOAD",
+        statusCode: 400
+      });
+    }
+
+    const messageId = `wamid.HBgL${Date.now()}fakeTpl${this.idCounter++}==`;
+    const record: SentMessageLog = {
+      phoneNumberId: input.phoneNumberId,
+      to: cleanTo,
+      text: `[Template: ${input.templateName} (${input.language})]`,
+      accessToken: input.accessToken,
       messageId,
       timestamp: new Date()
     };

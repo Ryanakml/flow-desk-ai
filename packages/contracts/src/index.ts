@@ -342,6 +342,13 @@ export type MessageDirectionContract = z.infer<typeof MessageDirectionSchema>;
 export const MessageSenderTypeSchema = z.enum(["customer", "agent", "system", "bot"]);
 export type MessageSenderTypeContract = z.infer<typeof MessageSenderTypeSchema>;
 
+export const ServiceWindowStatusSchema = z.object({
+  isOpen: z.boolean(),
+  expiresAt: z.string().datetime().nullable(),
+  remainingSeconds: z.number().int().nullable()
+});
+export type ServiceWindowStatus = z.infer<typeof ServiceWindowStatusSchema>;
+
 export const ConversationSchema = z.object({
   id: z.string().uuid(),
   organizationId: z.string().uuid(),
@@ -364,6 +371,8 @@ export const ConversationSchema = z.object({
   resolutionRemainingSeconds: z.number().int().min(0).nullable(),
   version: z.number().int(),
   lastMessageAt: z.string().datetime(),
+  lastInboundAt: z.string().datetime().nullable().optional(),
+  serviceWindow: ServiceWindowStatusSchema.optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime()
 });
@@ -484,9 +493,24 @@ export const RealtimeHintSchema = z.object({
 });
 export type RealtimeHint = z.infer<typeof RealtimeHintSchema>;
 
-export const CreateOutboundMessageRequestSchema = z.object({
+export const OutboundTextMessageRequestSchema = z.object({
+  type: z.literal("text").optional(),
   content: z.string().trim().min(1).max(4096)
 });
+export type OutboundTextMessageRequest = z.infer<typeof OutboundTextMessageRequestSchema>;
+
+export const OutboundTemplateMessageRequestSchema = z.object({
+  type: z.literal("template"),
+  templateName: z.string().trim().min(1).max(512),
+  language: z.string().trim().min(1).max(32),
+  variables: z.record(z.string(), z.string()).optional()
+});
+export type OutboundTemplateMessageRequest = z.infer<typeof OutboundTemplateMessageRequestSchema>;
+
+export const CreateOutboundMessageRequestSchema = z.union([
+  OutboundTemplateMessageRequestSchema,
+  OutboundTextMessageRequestSchema
+]);
 export type CreateOutboundMessageRequest = z.infer<typeof CreateOutboundMessageRequestSchema>;
 
 // WhatsApp Template Schemas (M3-04)
@@ -577,3 +601,23 @@ export const WhatsAppTemplateSyncResultSchema = z.object({
   cursor: z.string().nullable()
 });
 export type WhatsAppTemplateSyncResult = z.infer<typeof WhatsAppTemplateSyncResultSchema>;
+
+export const TemplatePreviewRequestSchema = z.object({
+  templateName: z.string().trim().min(1).max(512),
+  language: z.string().trim().min(1).max(32),
+  variables: z.record(z.string(), z.string()).optional()
+});
+export type TemplatePreviewRequest = z.infer<typeof TemplatePreviewRequestSchema>;
+
+export const TemplatePreviewResponseSchema = z.object({
+  templateName: z.string(),
+  language: z.string(),
+  status: WhatsAppTemplateStatusSchema,
+  isEligible: z.boolean(),
+  ineligibilityReason: z.string().nullable(),
+  renderedBody: z.string(),
+  renderedHeader: z.string().nullable(),
+  renderedComponents: z.array(WhatsAppTemplateComponentSchema),
+  renderedPayloadHash: z.string()
+});
+export type TemplatePreviewResponse = z.infer<typeof TemplatePreviewResponseSchema>;

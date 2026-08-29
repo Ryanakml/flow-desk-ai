@@ -345,5 +345,147 @@ describe("WhatsApp Provider Adapter (M2-02)", () => {
       expect(res.data[0]?.status).toBe("REJECTED");
       expect(res.data[0]?.rejected_reason).toBe("Content violates commercial policy");
     });
+
+    it("sends approved template message and records log", async () => {
+      const fake = new FakeWhatsAppProvider();
+      fake.addTemplate({
+        id: "tpl-welcome",
+        name: "welcome_message",
+        language: "id",
+        category: "UTILITY",
+        status: "APPROVED",
+        components: [{ type: "BODY", text: "Selamat datang!" }]
+      });
+
+      const res = await fake.sendTemplateMessage({
+        phoneNumberId: "phone_12345",
+        to: "+628123456789",
+        templateName: "welcome_message",
+        language: "id",
+        accessToken: "test_token"
+      });
+
+      expect(res.messageId).toContain("wamid.HBgL");
+      expect(res.recipientId).toBe("628123456789");
+      expect(fake.getSentMessages()).toHaveLength(1);
+    });
+
+    it("blocks non-approved template send on FakeWhatsAppProvider", async () => {
+      const fake = new FakeWhatsAppProvider();
+      fake.addTemplate({
+        id: "tpl-pending",
+        name: "pending_tpl",
+        language: "id",
+        category: "MARKETING",
+        status: "PENDING",
+        components: [{ type: "BODY", text: "Promo pending" }]
+      });
+
+      await expect(
+        fake.sendTemplateMessage({
+          phoneNumberId: "phone_12345",
+          to: "+628123456789",
+          templateName: "pending_tpl",
+          language: "id",
+          accessToken: "test_token"
+        })
+      ).rejects.toThrow("Template 'pending_tpl' is PENDING, sending is blocked");
+    });
+  });
+
+  describe("MetaWhatsAppProvider sendTemplateMessage", () => {
+    it("formats template payload for Graph API and returns message ID", async () => {
+      let capturedUrl = "";
+      let capturedPayload: unknown = null;
+
+      const mockFetch = vi.fn().mockImplementation((url: string, opts: RequestInit) => {
+        capturedUrl = url;
+        capturedPayload = JSON.parse(opts.body as string);
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              messages: [{ id: "wamid.HBgLmetaTemplateSend123==" }],
+              contacts: [{ wa_id: "628123456789" }]
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" }
+            }
+          )
+        );
+      });
+
+      const provider = new MetaWhatsAppProvider({ fetchFn: mockFetch as typeof fetch });
+      const res = await provider.sendTemplateMessage({
+        phoneNumberId: "phone_001",
+        to: "+62 812-3456-789",
+        templateName: "order_status",
+        language: "id",
+        components: [
+          {
+            type: "body",
+            parameters: [{ type: "text", text: "ORD-999" }]
+          }
+        ],
+        accessToken: "EAAB_secret"
+      });
+
+      expect(capturedUrl).toBe("https://graph.facebook.com/v21.0/phone_001/messages");
+      expect(capturedPayload).toEqual({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: "628123456789",
+        type: "template",
+        template: {
+          name: "order_status",
+          language: { code: "id" },
+          components: [
+            {
+              type: "body",
+              parameters: [{ type: "text", text: "ORD-999" }]
+            }
+          ]
+        }
+      });
+      expect(res.messageId).toBe("wamid.HBgLmetaTemplateSend123==");
+      expect(res.recipientId).toBe("628123456789");
+    });
+
+    it("classifies outside service window error (code 131047)", async () => {
+      const mockFetch = vi.fn().mockImplementation(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: {
+                message:
+                  "Re-engagement message: More than 24 hours have elapsed since the customer last replied to this number.",
+                type: "OAuthException",
+                code: 131047
+              }
+            }),
+            {
+              status: 400,
+              headers: { "Content-Type": "application/json" }
+            }
+          )
+        )
+      );
+
+      const provider = new MetaWhatsAppProvider({ fetchFn: mockFetch as typeof fetch });
+      try {
+        await provider.sendTextMessage({
+          phoneNumberId: "phone_001",
+          to: "628123456789",
+          text: "Free-form follow up after 24h",
+          accessToken: "EAAB_secret"
+        });
+        expect.unreachable();
+      } catch (err) {
+        expect(err).toBeInstanceOf(WhatsAppProviderError);
+        const wErr = err as WhatsAppProviderError;
+        expect(wErr.classification).toBe("OUTSIDE_WINDOW");
+        expect(wErr.providerCode).toBe(131047);
+      }
+    });
   });
 });

@@ -1,11 +1,19 @@
 import { useState, useEffect, useCallback, useRef, useId } from "react";
-import type { Conversation, Message, UpdateConversationRequest } from "@flowdesk/contracts";
+import type {
+  Conversation,
+  Message,
+  TemplatePreviewResponse,
+  UpdateConversationRequest
+} from "@flowdesk/contracts";
 import { type RoleKey, hasPermission } from "@flowdesk/domain";
 import {
   listConversations,
   getConversation,
   updateConversation,
   sendOutboundMessage,
+  listConversationTemplates,
+  previewTemplate,
+  type ConversationTemplateItem,
   ApiError
 } from "./api.js";
 import { useRealtimeSync } from "./realtime.js";
@@ -58,6 +66,16 @@ export function InboxView({
   // Composer state
   const [composerText, setComposerText] = useState("");
   const [isSending, setIsSending] = useState(false);
+
+  // Template modal & composer state (M3-05)
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [channelTemplates, setChannelTemplates] = useState<ConversationTemplateItem[]>([]);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
+  const [selectedTemplateKey, setSelectedTemplateKey] = useState<string>("");
+  const [templateVariables, setTemplateVariables] = useState<Record<string, string>>({});
+  const [templatePreview, setTemplatePreview] = useState<TemplatePreviewResponse | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [isSendingTemplate, setIsSendingTemplate] = useState(false);
 
   // UI IDs
   const searchInputId = useId();
@@ -314,6 +332,110 @@ export function InboxView({
     }
   };
 
+  // Open Template Modal & Fetch Channel Templates
+  const handleOpenTemplateModal = useCallback(async () => {
+    if (!activeConversation) return;
+    setShowTemplateModal(true);
+    setLoadingTemplates(true);
+    setPreviewError(null);
+    setTemplatePreview(null);
+    try {
+      const res = await listConversationTemplates(organizationId, activeConversation.id, fetcher);
+      const approved = res.items.filter((t) => t.status === "APPROVED");
+      setChannelTemplates(approved);
+      if (approved.length > 0) {
+        setSelectedTemplateKey(`${approved[0]!.name}:${approved[0]!.language}`);
+        setTemplateVariables({});
+      }
+    } catch (err: unknown) {
+      setPreviewError(err instanceof Error ? err.message : "Failed to load templates");
+    } finally {
+      setLoadingTemplates(false);
+    }
+  }, [activeConversation, organizationId, fetcher]);
+
+  // Selected template object
+  const activeTemplate = channelTemplates.find(
+    (t) => `${t.name}:${t.language}` === selectedTemplateKey
+  );
+
+  // Real-time preview effect
+  useEffect(() => {
+    if (!showTemplateModal || !activeConversation || !activeTemplate) {
+      setTemplatePreview(null);
+      return;
+    }
+
+    let cancelled = false;
+    const runPreview = async () => {
+      try {
+        const res = await previewTemplate(
+          organizationId,
+          activeConversation.id,
+          {
+            templateName: activeTemplate.name,
+            language: activeTemplate.language,
+            variables: templateVariables
+          },
+          fetcher
+        );
+        if (!cancelled) {
+          setTemplatePreview(res);
+          setPreviewError(null);
+        }
+      } catch (err: unknown) {
+        if (!cancelled) {
+          setTemplatePreview(null);
+          // Show error only if variables were filled
+          if (Object.keys(templateVariables).length > 0) {
+            setPreviewError(err instanceof Error ? err.message : "Preview error");
+          }
+        }
+      }
+    };
+
+    void runPreview();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    showTemplateModal,
+    activeConversation,
+    activeTemplate,
+    templateVariables,
+    organizationId,
+    fetcher
+  ]);
+
+  // Send approved template
+  const handleSendTemplate = async () => {
+    if (!activeConversation || !activeTemplate) return;
+    try {
+      setIsSendingTemplate(true);
+      setPreviewError(null);
+      const key = `tpl-send-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const sentMsg = await sendOutboundMessage(
+        organizationId,
+        activeConversation.id,
+        {
+          type: "template",
+          templateName: activeTemplate.name,
+          language: activeTemplate.language,
+          variables: templateVariables
+        },
+        key,
+        fetcher
+      );
+      setMessages((prev) => [...prev, sentMsg]);
+      setShowTemplateModal(false);
+      setTemplateVariables({});
+    } catch (err: unknown) {
+      setPreviewError(err instanceof Error ? err.message : "Failed to send template message");
+    } finally {
+      setIsSendingTemplate(false);
+    }
+  };
+
   const renderStatusCheckmark = (msg: Message) => {
     if (msg.direction !== "outbound") return null;
 
@@ -533,6 +655,24 @@ export function InboxView({
                   <span className={`badge badge-status badge-${activeConversation.status}`}>
                     {activeConversation.status}
                   </span>
+                  {activeConversation.serviceWindow &&
+                    (activeConversation.serviceWindow.isOpen ? (
+                      <span
+                        className="badge badge-success"
+                        data-testid="service-window-badge"
+                        title={`Customer service window open. Expires: ${activeConversation.serviceWindow.expiresAt ? new Date(activeConversation.serviceWindow.expiresAt).toLocaleTimeString() : "in 24h"}`}
+                      >
+                        ⏱️ 24h Window Active
+                      </span>
+                    ) : (
+                      <span
+                        className="badge badge-warning"
+                        data-testid="service-window-badge"
+                        title="24h service window expired. Freeform messaging blocked."
+                      >
+                        ⚠️ 24h Window Expired
+                      </span>
+                    ))}
                 </div>
               </div>
 
@@ -628,6 +768,24 @@ export function InboxView({
                 <div className="composer-disabled-banner" data-testid="composer-closed">
                   This conversation is closed. Reopen it to send a reply.
                 </div>
+              ) : activeConversation.serviceWindow && !activeConversation.serviceWindow.isOpen ? (
+                <div
+                  className="composer-window-expired-banner"
+                  data-testid="composer-window-expired"
+                >
+                  <div className="banner-text">
+                    <strong>24-hour service window expired.</strong> Free-form messaging is blocked
+                    by WhatsApp policy. You must use an approved template to contact this customer.
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={() => void handleOpenTemplateModal()}
+                    data-testid="btn-open-template-composer"
+                  >
+                    📋 Select WhatsApp Template
+                  </button>
+                </div>
               ) : (
                 <form
                   className="thread-composer"
@@ -652,17 +810,171 @@ export function InboxView({
                     aria-label="Reply message"
                     data-testid="composer-input"
                   />
-                  <button
-                    type="submit"
-                    className="btn btn-primary composer-send-btn"
-                    disabled={!composerText.trim() || isSending}
-                    data-testid="composer-send-btn"
-                  >
-                    {isSending ? "Sending..." : "Send ↵"}
-                  </button>
+                  <div className="composer-actions">
+                    <button
+                      type="button"
+                      className="btn btn-secondary composer-tpl-btn"
+                      onClick={() => void handleOpenTemplateModal()}
+                      data-testid="btn-open-template-composer"
+                      title="Send WhatsApp Template"
+                    >
+                      📋 Template
+                    </button>
+                    <button
+                      type="submit"
+                      className="btn btn-primary composer-send-btn"
+                      disabled={!composerText.trim() || isSending}
+                      data-testid="composer-send-btn"
+                    >
+                      {isSending ? "Sending..." : "Send ↵"}
+                    </button>
+                  </div>
                 </form>
               )}
             </footer>
+
+            {/* WhatsApp Template Composer Modal */}
+            {showTemplateModal && (
+              <div
+                className="modal-backdrop"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="template-modal-title"
+                data-testid="template-modal"
+              >
+                <div className="modal-card">
+                  <header className="modal-header">
+                    <h3 id="template-modal-title">Send WhatsApp Template</h3>
+                    <button
+                      type="button"
+                      className="modal-close-btn"
+                      onClick={() => setShowTemplateModal(false)}
+                      aria-label="Close"
+                    >
+                      ×
+                    </button>
+                  </header>
+
+                  <div className="modal-body">
+                    {loadingTemplates ? (
+                      <div className="modal-loading" data-testid="modal-loading">
+                        Loading approved templates...
+                      </div>
+                    ) : channelTemplates.length === 0 ? (
+                      <div className="modal-empty" data-testid="modal-empty">
+                        No approved templates found for this channel.
+                      </div>
+                    ) : (
+                      <div className="template-form">
+                        <div className="form-group">
+                          <label htmlFor="template-select">Select Approved Template</label>
+                          <select
+                            id="template-select"
+                            className="form-control"
+                            value={selectedTemplateKey}
+                            onChange={(e) => {
+                              setSelectedTemplateKey(e.target.value);
+                              setTemplateVariables({});
+                            }}
+                            data-testid="template-select"
+                          >
+                            {channelTemplates.map((t) => (
+                              <option
+                                key={`${t.name}:${t.language}`}
+                                value={`${t.name}:${t.language}`}
+                              >
+                                {t.name} ({t.language}) - {t.category}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {activeTemplate && activeTemplate.variableCount > 0 && (
+                          <div className="template-variables-section">
+                            <h4>Template Variables</h4>
+                            {Array.from(
+                              { length: activeTemplate.variableCount },
+                              (_, i) => i + 1
+                            ).map((varNum) => (
+                              <div key={varNum} className="form-group">
+                                <label
+                                  htmlFor={`var-input-${varNum}`}
+                                >{`Variable {{${varNum}}}`}</label>
+                                <input
+                                  id={`var-input-${varNum}`}
+                                  type="text"
+                                  className="form-control"
+                                  placeholder={`Value for {{${varNum}}}`}
+                                  value={templateVariables[String(varNum)] ?? ""}
+                                  onChange={(e) =>
+                                    setTemplateVariables((prev) => ({
+                                      ...prev,
+                                      [String(varNum)]: e.target.value
+                                    }))
+                                  }
+                                  data-testid={`var-input-${varNum}`}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Preview card */}
+                        <div className="template-preview-card" data-testid="template-preview-card">
+                          <h4>Rendered Preview</h4>
+                          {templatePreview ? (
+                            <div className="preview-bubble">
+                              {templatePreview.renderedHeader && (
+                                <div className="preview-header">
+                                  {templatePreview.renderedHeader}
+                                </div>
+                              )}
+                              <div className="preview-body">{templatePreview.renderedBody}</div>
+                              <div className="preview-meta">
+                                <span className="badge badge-success">✓ Verified & Approved</span>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="preview-placeholder">
+                              {activeTemplate && activeTemplate.variableCount > 0
+                                ? "Fill in all variables above to generate preview."
+                                : "Generating preview..."}
+                            </div>
+                          )}
+                        </div>
+
+                        {previewError && (
+                          <div className="error-banner" data-testid="template-error-banner">
+                            {previewError}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <footer className="modal-footer">
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => setShowTemplateModal(false)}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      disabled={
+                        !templatePreview || !templatePreview.isEligible || isSendingTemplate
+                      }
+                      onClick={() => void handleSendTemplate()}
+                      data-testid="btn-submit-template-send"
+                    >
+                      {isSendingTemplate ? "Sending..." : "Send Template"}
+                    </button>
+                  </footer>
+                </div>
+              </div>
+            )}
           </>
         ) : (
           <div className="inbox-no-selection" data-testid="no-conv-selected">

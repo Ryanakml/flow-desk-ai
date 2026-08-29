@@ -2,11 +2,13 @@ import type { DbClient, ClaimedOutboxEvent } from "@flowdesk/db";
 import {
   getChannelById,
   getMessageById,
+  getTemplateByNameAndLanguage,
   markOutboxEventPublished,
   recordOutboxEventFailure,
   runInTenantTransaction,
   updateMessageStatus
 } from "@flowdesk/db";
+import { isTemplateApprovedForSending } from "@flowdesk/domain";
 import {
   type WhatsAppProvider,
   FakeWhatsAppProvider,
@@ -22,6 +24,15 @@ export interface OutboundMessagePayload {
   customerPhone: string;
   content: string;
   senderUserId?: string | undefined;
+  template?:
+    | {
+        name: string;
+        language: string;
+        versionId: string;
+        variables: Record<string, string>;
+        renderedPayloadHash: string;
+      }
+    | undefined;
 }
 
 export interface DispatchWorkerOptions {
@@ -129,12 +140,61 @@ export async function dispatchOutboundMessage(
   }
 
   try {
-    const sendResult = await provider.sendTextMessage({
-      phoneNumberId: channel.phoneNumberId,
-      to: event.payload.customerPhone,
-      text: message.content,
-      accessToken
-    });
+    let sendResult;
+    const templatePayload = event.payload.template;
+
+    if (templatePayload) {
+      // Re-verify provider status before dispatching template
+      const templateRecord = await getTemplateByNameAndLanguage(client, {
+        channelId: channel.id,
+        name: templatePayload.name,
+        language: templatePayload.language
+      });
+
+      if (templateRecord && !isTemplateApprovedForSending(templateRecord.version.status)) {
+        const errorMsg = `Template '${templatePayload.name}' is ${templateRecord.version.status}, not approved for sending.`;
+        await updateMessageStatus(client, orgId, message.id, "failed", {
+          errorDetail: errorMsg
+        });
+        await recordOutboxEventFailure(client, event.id, errorMsg, true);
+        return { messageId, status: "failed", error: errorMsg };
+      }
+
+      const variableEntries = Object.entries(templatePayload.variables ?? {}).sort(
+        ([a], [b]) => Number(a) - Number(b)
+      );
+
+      const templateComponents: Array<{
+        type: "body";
+        parameters: Array<{ type: "text"; text: string }>;
+      }> = [];
+
+      if (variableEntries.length > 0) {
+        templateComponents.push({
+          type: "body",
+          parameters: variableEntries.map(([, val]) => ({
+            type: "text" as const,
+            text: val
+          }))
+        });
+      }
+
+      sendResult = await provider.sendTemplateMessage({
+        phoneNumberId: channel.phoneNumberId,
+        to: event.payload.customerPhone,
+        templateName: templatePayload.name,
+        language: templatePayload.language,
+        components: templateComponents.length > 0 ? templateComponents : undefined,
+        accessToken
+      });
+    } else {
+      sendResult = await provider.sendTextMessage({
+        phoneNumberId: channel.phoneNumberId,
+        to: event.payload.customerPhone,
+        text: message.content,
+        accessToken
+      });
+    }
 
     // Successfully sent: update message to 'sent' and record providerMessageId
     await updateMessageStatus(client, orgId, message.id, "sent", {
