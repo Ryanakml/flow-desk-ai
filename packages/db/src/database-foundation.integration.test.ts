@@ -212,10 +212,12 @@ describe("database foundation", () => {
        WHERE schemaname = 'flowdesk' AND indexname = ANY($1::text[])
        ORDER BY indexname`,
       [
-        "conversations_inbox_queue_idx",
-        "conversations_inbox_team_idx",
-        "conversations_sla_due_idx",
-        "queue_memberships_user_active_idx"
+        [
+          "conversations_inbox_queue_idx",
+          "conversations_inbox_team_idx",
+          "conversations_sla_due_idx",
+          "queue_memberships_user_active_idx"
+        ]
       ]
     );
     expect(indexes.rows.map((row) => row.indexname)).toEqual([
