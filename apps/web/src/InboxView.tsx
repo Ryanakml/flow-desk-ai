@@ -4,7 +4,8 @@ import type {
   ConversationDetailResponse,
   InboxWorkspaceResourcesResponse,
   Message,
-  TemplatePreviewResponse
+  TemplatePreviewResponse,
+  GenerateBotDraftResponse
 } from "@flowdesk/contracts";
 import { type RoleKey, hasPermission } from "@flowdesk/domain";
 import {
@@ -22,7 +23,8 @@ import {
   listConversationTemplates,
   previewTemplate,
   type ConversationTemplateItem,
-  ApiError
+  ApiError,
+  generateBotDraft
 } from "./api.js";
 import { useRealtimeSync } from "./realtime.js";
 import { inboxMessages, type InboxLocale } from "./i18n.js";
@@ -104,6 +106,13 @@ export function InboxView({
   const [templatePreview, setTemplatePreview] = useState<TemplatePreviewResponse | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [isSendingTemplate, setIsSendingTemplate] = useState(false);
+
+  // M4-06: AI Copilot state
+  const [copilotDraft, setCopilotDraft] = useState<GenerateBotDraftResponse | null>(null);
+  const [copilotLoading, setCopilotLoading] = useState(false);
+  const [copilotError, setCopilotError] = useState<string | null>(null);
+  const [showCitations, setShowCitations] = useState(false);
+  const [isApprovingSend, setIsApprovingSend] = useState(false);
 
   // UI IDs
   const searchInputId = useId();
@@ -615,6 +624,94 @@ export function InboxView({
     organizationId,
     fetcher
   ]);
+
+  // M4-06: AI Copilot handlers
+  const handleGenerateDraft = useCallback(async () => {
+    if (!activeConversation || copilotLoading) return;
+    setCopilotLoading(true);
+    setCopilotError(null);
+    setCopilotDraft(null);
+    setShowCitations(false);
+    try {
+      const draft = await generateBotDraft(organizationId, activeConversation.id, fetcher);
+      setCopilotDraft(draft);
+    } catch (err: unknown) {
+      setCopilotError(err instanceof Error ? err.message : "draft_error");
+    } finally {
+      setCopilotLoading(false);
+    }
+  }, [activeConversation, organizationId, fetcher, copilotLoading]);
+
+  const handleCopilotApprove = async () => {
+    if (!copilotDraft?.suggestedContent || !activeConversation || isApprovingSend) return;
+    setIsApprovingSend(true);
+    const text = copilotDraft.suggestedContent;
+    const tempId = `copilot-${Date.now()}`;
+    const optimistic: Message = {
+      id: "00000000-0000-0000-0000-000000000000",
+      organizationId,
+      conversationId: activeConversation.id,
+      channelId: activeConversation.channelId,
+      direction: "outbound",
+      senderType: "agent",
+      senderUserId: sessionUserId,
+      providerMessageId: null,
+      content: text,
+      status: "queued",
+      errorDetail: null,
+      sentAt: new Date().toISOString(),
+      deliveredAt: null,
+      readAt: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    setMessages((prev) => [...prev, optimistic]);
+    setCopilotDraft(null);
+    setShowCitations(false);
+    try {
+      const sent = await sendOutboundMessage(
+        organizationId,
+        activeConversation.id,
+        { content: text },
+        `copilot-approve-${tempId}`,
+        fetcher
+      );
+      setMessages((prev) => prev.map((m) => (m === optimistic ? sent : m)));
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === activeConversation.id ? { ...c, lastMessageAt: sent.createdAt } : c
+        )
+      );
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to send";
+      setActionError(msg);
+      setMessages((prev) =>
+        prev.map((m) => (m === optimistic ? { ...m, status: "failed", errorDetail: msg } : m))
+      );
+    } finally {
+      setIsApprovingSend(false);
+    }
+  };
+
+  const handleCopilotEdit = () => {
+    if (!copilotDraft?.suggestedContent) return;
+    setComposerText(copilotDraft.suggestedContent);
+    setCopilotDraft(null);
+    setShowCitations(false);
+  };
+
+  const handleCopilotReject = () => {
+    setCopilotDraft(null);
+    setCopilotError(null);
+    setShowCitations(false);
+  };
+
+  // Clear draft on conversation switch
+  useEffect(() => {
+    setCopilotDraft(null);
+    setCopilotError(null);
+    setShowCitations(false);
+  }, [selectedConversationId]);
 
   // Send approved template
   const handleSendTemplate = async () => {
@@ -1180,6 +1277,22 @@ export function InboxView({
               <div ref={timelineEndRef} />
             </div>
 
+            {/* M4-06: AI Copilot Panel */}
+            <CopilotPanel
+              t={t}
+              draft={copilotDraft}
+              loading={copilotLoading}
+              error={copilotError}
+              showCitations={showCitations}
+              isApproving={isApprovingSend}
+              canSend={canSend}
+              onGenerate={() => void handleGenerateDraft()}
+              onApprove={() => void handleCopilotApprove()}
+              onEdit={handleCopilotEdit}
+              onReject={handleCopilotReject}
+              onToggleCitations={() => setShowCitations((prev) => !prev)}
+            />
+
             {/* Message Composer */}
             <footer className="thread-composer-wrapper">
               {connectionState === "offline" ? (
@@ -1437,5 +1550,212 @@ export function InboxView({
         )}
       </main>
     </div>
+  );
+}
+
+// ── M4-06: AI Copilot Panel ──────────────────────────────────────────────────
+
+type InboxT = ReturnType<typeof inboxMessages>;
+
+interface CopilotPanelProps {
+  t: InboxT;
+  draft: GenerateBotDraftResponse | null;
+  loading: boolean;
+  error: string | null;
+  showCitations: boolean;
+  isApproving: boolean;
+  canSend: boolean;
+  onGenerate: () => void;
+  onApprove: () => void;
+  onEdit: () => void;
+  onReject: () => void;
+  onToggleCitations: () => void;
+}
+
+function ConfidenceMeter({ value }: { value: number }) {
+  const pct = Math.round(value * 100);
+  const cls = pct >= 75 ? "high" : pct >= 50 ? "medium" : "low";
+  return (
+    <div className="copilot-confidence" aria-label={`Confidence ${pct}%`}>
+      <div className="copilot-confidence-bar-track">
+        <div
+          className={`copilot-confidence-bar-fill confidence-${cls}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <span className={`copilot-confidence-pct confidence-${cls}`}>{pct}%</span>
+    </div>
+  );
+}
+
+function CopilotPanel({
+  t,
+  draft,
+  loading,
+  error,
+  showCitations,
+  isApproving,
+  canSend,
+  onGenerate,
+  onApprove,
+  onEdit,
+  onReject,
+  onToggleCitations
+}: CopilotPanelProps) {
+  const hasDraft = draft !== null && draft.status !== "off";
+  const isOff = draft?.status === "off";
+  const isFallback = draft?.status === "escalated";
+
+  return (
+    <section className="copilot-panel" aria-label={t.copilotTitle} data-testid="copilot-panel">
+      <div className="copilot-header">
+        <span className="copilot-label">
+          <span className="copilot-icon" aria-hidden="true">
+            ✨
+          </span>
+          {t.copilotTitle}
+        </span>
+        {!loading && !hasDraft && !error && (
+          <button
+            type="button"
+            className="btn btn-sm btn-copilot-generate"
+            onClick={onGenerate}
+            disabled={loading}
+            data-testid="copilot-generate-btn"
+            aria-label={t.copilotGenerate}
+          >
+            {t.copilotGenerate}
+          </button>
+        )}
+        {hasDraft && (
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost copilot-refresh-btn"
+            onClick={onGenerate}
+            disabled={loading || isApproving}
+            title="Regenerate draft"
+            aria-label="Regenerate draft"
+            data-testid="copilot-refresh-btn"
+          >
+            🔄
+          </button>
+        )}
+      </div>
+
+      {loading && (
+        <div className="copilot-loading" data-testid="copilot-loading">
+          <span className="spinner" />
+          <span>{t.copilotGenerating}</span>
+        </div>
+      )}
+
+      {error && !loading && (
+        <div className="copilot-error" role="alert" data-testid="copilot-error">
+          <span>⚠️ {t.copilotError}</span>
+          <button type="button" className="btn btn-sm btn-ghost" onClick={onGenerate}>
+            {t.retry ?? "Retry"}
+          </button>
+        </div>
+      )}
+
+      {!loading && !error && isOff && (
+        <p className="copilot-off-msg" data-testid="copilot-off">
+          {t.copilotOff}
+        </p>
+      )}
+
+      {!loading && !error && isFallback && (
+        <p className="copilot-fallback-msg" data-testid="copilot-fallback">
+          {t.copilotFallback}
+        </p>
+      )}
+
+      {!loading && !error && hasDraft && !isFallback && !isOff && draft && (
+        <div className="copilot-draft-card" data-testid="copilot-draft-card">
+          <div className="copilot-draft-meta">
+            <span className="copilot-meta-label">{t.copilotConfidence}</span>
+            <ConfidenceMeter value={draft.confidence} />
+          </div>
+
+          <div className="copilot-draft-body">
+            <p className="copilot-draft-text" data-testid="copilot-draft-text">
+              {draft.suggestedContent}
+            </p>
+          </div>
+
+          {draft.reasoning && (
+            <details className="copilot-reasoning">
+              <summary className="copilot-reasoning-summary">{t.copilotReasoningLabel}</summary>
+              <p className="copilot-reasoning-text">{draft.reasoning}</p>
+            </details>
+          )}
+
+          {draft.citations.length > 0 && (
+            <div className="copilot-citations-section">
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost copilot-citations-toggle"
+                onClick={onToggleCitations}
+                aria-expanded={showCitations}
+                data-testid="copilot-citations-toggle"
+              >
+                📚 {t.copilotCitations} ({draft.citations.length})
+                <span aria-hidden="true">{showCitations ? " ▲" : " ▼"}</span>
+              </button>
+              {showCitations && (
+                <ul
+                  className="copilot-citations-list"
+                  aria-label={t.copilotCitations}
+                  data-testid="copilot-citations-list"
+                >
+                  {draft.citations.map((cit, idx) => (
+                    <li key={cit.chunkId} className="copilot-citation-item">
+                      <span className="citation-index">{idx + 1}</span>
+                      <div className="citation-content">
+                        <span className="citation-title">{cit.documentTitle}</span>
+                        <blockquote className="citation-snippet">{cit.snippet}</blockquote>
+                        <span className="citation-score">{Math.round(cit.score * 100)}% match</span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          <div className="copilot-actions" role="group" aria-label="Copilot draft actions">
+            {canSend && (
+              <button
+                type="button"
+                className="btn btn-sm btn-copilot-approve"
+                onClick={onApprove}
+                disabled={isApproving}
+                data-testid="copilot-approve-btn"
+              >
+                {isApproving ? "Sending…" : `✅ ${t.copilotApprove}`}
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn btn-sm btn-secondary"
+              onClick={onEdit}
+              disabled={isApproving}
+              data-testid="copilot-edit-btn"
+            >
+              ✏️ {t.copilotEdit}
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost copilot-reject-btn"
+              onClick={onReject}
+              disabled={isApproving}
+              data-testid="copilot-reject-btn"
+            >
+              ✕ {t.copilotReject}
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
