@@ -57,6 +57,45 @@ export function loadDependencyConfig(
   return dependencyConfigSchema.parse(environment);
 }
 
+const mediaConfigSchema = z
+  .object({
+    APP_ENV: z.enum(["local", "preview", "staging", "production"]).default("local"),
+    S3_BUCKET: z.string().min(3).optional(),
+    S3_REGION: z.string().min(1).optional(),
+    S3_ENDPOINT: z.url().optional(),
+    S3_FORCE_PATH_STYLE: booleanString.default(false),
+    S3_ACCESS_KEY_ID: z.string().min(1).optional(),
+    S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+    CLAMAV_HOST: z.string().min(1).optional(),
+    CLAMAV_PORT: z.coerce.number().int().min(1).max(65535).default(3310),
+    MEDIA_CLEAN_RETENTION_DAYS: z.coerce.number().int().positive().default(90),
+    MEDIA_REJECTED_RETENTION_DAYS: z.coerce.number().int().positive().default(7)
+  })
+  .superRefine((config, context) => {
+    if (config.APP_ENV !== "staging" && config.APP_ENV !== "production") return;
+    for (const field of [
+      "S3_BUCKET",
+      "S3_REGION",
+      "S3_ACCESS_KEY_ID",
+      "S3_SECRET_ACCESS_KEY",
+      "CLAMAV_HOST"
+    ] as const) {
+      if (!config[field]) {
+        context.addIssue({
+          code: "custom",
+          path: [field],
+          message: `${field} is required in staging and production`
+        });
+      }
+    }
+  });
+
+export type MediaConfig = z.infer<typeof mediaConfigSchema>;
+
+export function loadMediaConfig(environment: NodeJS.ProcessEnv = process.env): MediaConfig {
+  return mediaConfigSchema.parse(environment);
+}
+
 export const authConfigSchema = z.object({
   AUTH_OIDC_ISSUER: z.string().url().default("https://flowdesk.local.auth0.com/"),
   AUTH_OIDC_CLIENT_ID: z.string().min(1).default("flowdesk-local-client"),

@@ -97,3 +97,7 @@ The worker pipeline (`scanQuarantinedAttachment`) enforces four sequential secur
 - `POST /api/v1/organizations/:orgId/attachments/upload-session` (Requires `message:send`)
 - `POST /api/v1/organizations/:orgId/attachments/:id/complete` (Requires `message:send`)
 - `GET /api/v1/organizations/:orgId/attachments/:id` (Requires `conversation:read`)
+- `GET /api/v1/organizations/:orgId/attachments/:id/download-url` (Requires `conversation:read`; clean, non-deleted objects only; five-minute URL)
+- `POST /api/v1/organizations/:orgId/conversations/:id/messages` with `{ "type": "media", "attachmentId": "...", "caption": "..." }` (Requires `message:send`, idempotency key, clean tenant attachment, and an open 24-hour service window)
+
+The object bucket has no permanent public access. Provider upload and send happen in the outbound worker; uncertain provider outcomes enter reconciliation instead of automatic replay. Retention deletes object bytes before writing a tombstone and `attachment.deleted` audit event.

@@ -83,6 +83,111 @@ describe("WhatsApp Provider Adapter (M2-02)", () => {
   });
 
   describe("MetaWhatsAppProvider", () => {
+    it("uploads private object bytes before sending a provider media id", async () => {
+      const mockFetch = vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ id: "media-meta-1" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+          })
+        )
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              messages: [{ id: "wamid.media-1" }],
+              contacts: [{ wa_id: "628123456789" }]
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      const provider = new MetaWhatsAppProvider({ fetchFn: mockFetch as typeof fetch });
+
+      const upload = await provider.uploadMedia({
+        phoneNumberId: "phone-1",
+        fileName: "invoice.pdf",
+        contentType: "application/pdf",
+        data: Buffer.from("pdf"),
+        accessToken: "token"
+      });
+      const sent = await provider.sendMediaMessage({
+        phoneNumberId: "phone-1",
+        to: "+62 812 3456 789",
+        mediaType: "document",
+        mediaId: upload.mediaId,
+        fileName: "invoice.pdf",
+        accessToken: "token"
+      });
+
+      expect(upload.mediaId).toBe("media-meta-1");
+      expect(sent.messageId).toBe("wamid.media-1");
+      expect(mockFetch.mock.calls[0]?.[0]).toBe("https://graph.facebook.com/v21.0/phone-1/media");
+      const uploadRequest = mockFetch.mock.calls[0]?.[1] as RequestInit | undefined;
+      const sendRequest = mockFetch.mock.calls[1]?.[1] as RequestInit | undefined;
+      expect(uploadRequest?.body).toBeInstanceOf(FormData);
+      expect(sendRequest?.body).toContain('"id":"media-meta-1"');
+    });
+
+    it("rejects malformed media-send success responses so outcome is reconciled", async () => {
+      const provider = new MetaWhatsAppProvider({
+        fetchFn: vi.fn().mockResolvedValue(
+          new Response(JSON.stringify({ messages: [] }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+          })
+        ) as typeof fetch
+      });
+      await expect(
+        provider.sendMediaMessage({
+          phoneNumberId: "phone-1",
+          to: "628123456789",
+          mediaType: "image",
+          mediaId: "media-1",
+          accessToken: "token"
+        })
+      ).rejects.toThrow("missing message ID");
+    });
+
+    it("downloads inbound media only from Meta-owned HTTPS hosts", async () => {
+      const mockFetch = vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              url: "https://lookaside.fbsbx.com/whatsapp_business/attachments/1",
+              mime_type: "image/png",
+              file_size: 3
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        )
+        .mockResolvedValueOnce(new Response(Buffer.from("png"), { status: 200 }));
+      const provider = new MetaWhatsAppProvider({ fetchFn: mockFetch as typeof fetch });
+      const result = await provider.downloadMedia({
+        mediaId: "media-inbound-1",
+        accessToken: "token"
+      });
+      expect(result.data.toString()).toBe("png");
+      expect(result.contentType).toBe("image/png");
+    });
+
+    it("rejects provider media URLs that could target arbitrary infrastructure", async () => {
+      const provider = new MetaWhatsAppProvider({
+        fetchFn: vi.fn().mockResolvedValue(
+          new Response(
+            JSON.stringify({
+              url: "http://169.254.169.254/latest/meta-data",
+              mime_type: "image/png"
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        ) as typeof fetch
+      });
+      await expect(
+        provider.downloadMedia({ mediaId: "media-ssrf", accessToken: "token" })
+      ).rejects.toThrow("outside the Meta HTTPS allowlist");
+    });
+
     it("dispatches successfully to Meta Graph API endpoint", async () => {
       const mockFetch = vi.fn().mockImplementation(() =>
         Promise.resolve(

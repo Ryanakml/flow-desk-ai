@@ -20,6 +20,7 @@ const workerBatchFailuresTotal = new Map<string, CounterMetric>();
 const realtimeAuthorizationDenialsTotal = new Map<string, CounterMetric>();
 const realtimeReconnectGapsTotal = new Map<string, CounterMetric>();
 const realtimeDroppedHintsTotal = new Map<string, CounterMetric>();
+const mediaLifecycleTotal = new Map<string, CounterMetric>();
 let realtimeActiveConnections = 0;
 let outboxPendingEvents = 0;
 let outboxOldestEventAgeSeconds = 0;
@@ -150,6 +151,10 @@ export function recordRealtimeDroppedHint(reason: string): void {
   incrementCounter(realtimeDroppedHintsTotal, { reason });
 }
 
+export function recordMediaLifecycle(operation: "scan" | "retention", outcome: string): void {
+  incrementCounter(mediaLifecycleTotal, { operation, outcome });
+}
+
 export function resetMetrics(): void {
   httpRequestsTotal.clear();
   httpRequestDuration.clear();
@@ -162,6 +167,7 @@ export function resetMetrics(): void {
   realtimeAuthorizationDenialsTotal.clear();
   realtimeReconnectGapsTotal.clear();
   realtimeDroppedHintsTotal.clear();
+  mediaLifecycleTotal.clear();
   realtimeActiveConnections = 0;
   outboxPendingEvents = 0;
   outboxOldestEventAgeSeconds = 0;
@@ -258,6 +264,12 @@ export function getPrometheusMetrics(): string {
   lines.push("# TYPE realtime_dropped_hints_total counter");
   for (const item of realtimeDroppedHintsTotal.values()) {
     lines.push(`realtime_dropped_hints_total{${serializeLabels(item.labels)}} ${item.value}`);
+  }
+
+  lines.push("# HELP media_lifecycle_total Media scan and retention outcomes.");
+  lines.push("# TYPE media_lifecycle_total counter");
+  for (const item of mediaLifecycleTotal.values()) {
+    lines.push(`media_lifecycle_total{${serializeLabels(item.labels)}} ${item.value}`);
   }
 
   return lines.join("\n") + "\n";

@@ -15,6 +15,7 @@ import {
   createOutboundMessageWithOutbox,
   getConversationById,
   getTemplateByNameAndLanguage,
+  getAttachmentById,
   listConversations,
   listMessagesByConversation,
   OptimisticConcurrencyError,
@@ -514,6 +515,42 @@ export function createConversationsRouter(options: ConversationsRouterOptions): 
 
             const serviceWindow = calculateServiceWindow(conversation.lastInboundAt);
 
+            if (parseResult.data.type === "media") {
+              if (!serviceWindow.isOpen) {
+                const err = new Error(
+                  "Cannot send media outside the 24-hour service window. Please select an approved WhatsApp template."
+                );
+                err.name = "OutsideServiceWindowError";
+                throw err;
+              }
+              const attachment = await getAttachmentById(db, orgId, parseResult.data.attachmentId);
+              if (!attachment) {
+                const err = new Error(`Attachment '${parseResult.data.attachmentId}' not found.`);
+                err.name = "AttachmentNotFoundError";
+                throw err;
+              }
+              if (attachment.status !== "clean") {
+                const err = new Error(
+                  `Attachment '${attachment.id}' is ${attachment.status} and cannot be sent.`
+                );
+                err.name = "AttachmentNotCleanError";
+                throw err;
+              }
+              return createOutboundMessageWithOutbox(db, {
+                organizationId: orgId,
+                conversationId: id,
+                senderUserId: request.user!.id,
+                content: parseResult.data.caption ?? attachment.fileName,
+                correlationId: response.getHeader("x-request-id")?.toString(),
+                media: {
+                  attachmentId: attachment.id,
+                  fileName: attachment.fileName,
+                  contentType: attachment.detectedMimeType ?? attachment.contentType,
+                  ...(parseResult.data.caption ? { caption: parseResult.data.caption } : {})
+                }
+              });
+            }
+
             if (parseResult.data.type === "template") {
               const templateRecord = await getTemplateByNameAndLanguage(db, {
                 channelId: conversation.channelId,
@@ -630,6 +667,24 @@ export function createConversationsRouter(options: ConversationsRouterOptions): 
             422,
             "INVALID_TEMPLATE_VARIABLES",
             "Invalid Template Variables",
+            error.message
+          );
+        }
+        if (error instanceof Error && error.name === "AttachmentNotFoundError") {
+          return sendProblem(
+            response,
+            404,
+            "ATTACHMENT_NOT_FOUND",
+            "Attachment Not Found",
+            error.message
+          );
+        }
+        if (error instanceof Error && error.name === "AttachmentNotCleanError") {
+          return sendProblem(
+            response,
+            409,
+            "ATTACHMENT_NOT_CLEAN",
+            "Attachment Not Ready",
             error.message
           );
         }

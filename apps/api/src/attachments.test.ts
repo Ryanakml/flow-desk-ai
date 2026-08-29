@@ -144,6 +144,8 @@ function createAttachmentsMockDb() {
           scanMetadata: {},
           metadata: JSON.parse((values[7] as string) || "{}") as Record<string, unknown>,
           createdAt: new Date(),
+          deletedAt: null,
+          deletionReason: null,
           updatedAt: new Date()
         };
         attachments.set(id, record);
@@ -180,7 +182,7 @@ function createAttachmentsMockDb() {
       ) {
         const [targetOrgId, id] = values as [string, string];
         const record = attachments.get(id);
-        if (record && record.organizationId === targetOrgId) {
+        if (record && record.organizationId === targetOrgId && record.deletedAt === null) {
           return {
             rows: [{ ...record, byteSize: String(record.byteSize) }],
             rowCount: 1,
@@ -232,7 +234,7 @@ function createAttachmentsMockDb() {
     }
   } as unknown as DbClient;
 
-  return { db, attachments, uploadSessions, outboxEvents };
+  return { db, attachments, uploadSessions, outboxEvents, memberRoles };
 }
 
 function createTestApp() {
@@ -440,5 +442,168 @@ describe("Attachments & Presigned Upload API (M3-06)", () => {
 
     // Foreign org fails closed (user not member of foreign org or attachment not in foreign org)
     expect([403, 404]).toContain(getRes.status);
+  });
+});
+
+describe("Attachment download URL API (M3-07)", () => {
+  /**
+   * Helper: create an upload session, mark the attachment as clean in the mock DB,
+   * and return the attachment ID and mock DB handle.
+   */
+  async function createCleanAttachment(
+    app: ReturnType<typeof createTestApp>["app"],
+    bobCookie: string,
+    mockDb: ReturnType<typeof createTestApp>["mockDb"]
+  ) {
+    const createRes = await request(app)
+      .post(`/api/v1/organizations/${orgId}/attachments/upload-session`)
+      .set("Cookie", bobCookie)
+      .send({
+        fileName: "photo.png",
+        contentType: "image/png",
+        byteSize: 50000
+      });
+
+    expect(createRes.status).toBe(201);
+    const attachmentId = asRecord(createRes.body)["attachmentId"] as string;
+
+    // Manually flip status to 'clean' in the in-memory mock store
+    const att = mockDb.attachments.get(attachmentId);
+    if (att) att.status = "clean";
+
+    return attachmentId;
+  }
+
+  it("returns 200 with downloadUrl and expiresAt for a clean attachment", async () => {
+    const { app, mockDb, bobCookie } = createTestApp();
+    const attachmentId = await createCleanAttachment(app, bobCookie, mockDb);
+
+    const res = await request(app)
+      .get(`/api/v1/organizations/${orgId}/attachments/${attachmentId}/download-url`)
+      .set("Cookie", bobCookie);
+
+    expect(res.status).toBe(200);
+    const body = asRecord(res.body);
+    expect(typeof body["downloadUrl"]).toBe("string");
+    expect((body["downloadUrl"] as string).length).toBeGreaterThan(0);
+    expect(typeof body["expiresAt"]).toBe("string");
+  });
+
+  it("returns 403 ATTACHMENT_NOT_CLEAN for a quarantined attachment", async () => {
+    const { app, bobCookie } = createTestApp();
+
+    // Create an upload session (defaults to quarantine)
+    const createRes = await request(app)
+      .post(`/api/v1/organizations/${orgId}/attachments/upload-session`)
+      .set("Cookie", bobCookie)
+      .send({
+        fileName: "quarantined.pdf",
+        contentType: "application/pdf",
+        byteSize: 4096
+      });
+
+    const attachmentId = asRecord(createRes.body)["attachmentId"] as string;
+
+    const res = await request(app)
+      .get(`/api/v1/organizations/${orgId}/attachments/${attachmentId}/download-url`)
+      .set("Cookie", bobCookie);
+
+    expect(res.status).toBe(403);
+    expect(asRecord(res.body)["code"]).toBe("ATTACHMENT_NOT_CLEAN");
+  });
+
+  it("returns 403 ATTACHMENT_NOT_CLEAN for a rejected attachment", async () => {
+    const { app, mockDb, bobCookie } = createTestApp();
+
+    const createRes = await request(app)
+      .post(`/api/v1/organizations/${orgId}/attachments/upload-session`)
+      .set("Cookie", bobCookie)
+      .send({
+        fileName: "virus.pdf",
+        contentType: "application/pdf",
+        byteSize: 4096
+      });
+
+    const attachmentId = asRecord(createRes.body)["attachmentId"] as string;
+
+    // Flip to rejected
+    const att = mockDb.attachments.get(attachmentId);
+    if (att) att.status = "rejected";
+
+    const res = await request(app)
+      .get(`/api/v1/organizations/${orgId}/attachments/${attachmentId}/download-url`)
+      .set("Cookie", bobCookie);
+
+    expect(res.status).toBe(403);
+    expect(asRecord(res.body)["code"]).toBe("ATTACHMENT_NOT_CLEAN");
+  });
+
+  it("returns 404 for a non-existent attachment ID", async () => {
+    const { app, bobCookie } = createTestApp();
+    const fakeId = "00000000-0000-7000-8000-999999999999";
+
+    const res = await request(app)
+      .get(`/api/v1/organizations/${orgId}/attachments/${fakeId}/download-url`)
+      .set("Cookie", bobCookie);
+
+    expect(res.status).toBe(404);
+    expect(asRecord(res.body)["code"]).toBe("ATTACHMENT_NOT_FOUND");
+  });
+
+  it("never serves a tombstoned attachment", async () => {
+    const { app, mockDb, bobCookie } = createTestApp();
+    const attachmentId = await createCleanAttachment(app, bobCookie, mockDb);
+    const attachment = mockDb.attachments.get(attachmentId)!;
+    attachment.deletedAt = new Date();
+    attachment.deletionReason = "retention_expiry";
+
+    const response = await request(app)
+      .get(`/api/v1/organizations/${orgId}/attachments/${attachmentId}/download-url`)
+      .set("Cookie", bobCookie);
+    expect(response.status).toBe(404);
+  });
+
+  it("returns 401 for unauthenticated download-url request", async () => {
+    const { app } = createTestApp();
+    const fakeId = "00000000-0000-7000-8000-000000000123";
+
+    const res = await request(app).get(
+      `/api/v1/organizations/${orgId}/attachments/${fakeId}/download-url`
+    );
+
+    expect(res.status).toBe(401);
+  });
+
+  it("allows an analyst with conversation:read to download clean media", async () => {
+    const { app, mockDb, bobCookie, charlieCookie } = createTestApp();
+    const attachmentId = await createCleanAttachment(app, bobCookie, mockDb);
+
+    const res = await request(app)
+      .get(`/api/v1/organizations/${orgId}/attachments/${attachmentId}/download-url`)
+      .set("Cookie", charlieCookie);
+
+    expect(res.status).toBe(200);
+  });
+
+  it("denies download immediately after organization membership is removed", async () => {
+    const { app, mockDb, bobCookie } = createTestApp();
+    const attachmentId = await createCleanAttachment(app, bobCookie, mockDb);
+    mockDb.memberRoles.delete(`${orgId}:${bobId}`);
+
+    const response = await request(app)
+      .get(`/api/v1/organizations/${orgId}/attachments/${attachmentId}/download-url`)
+      .set("Cookie", bobCookie);
+    expect(response.status).toBe(403);
+    expect(asRecord(response.body)["code"]).toBe("NOT_A_MEMBER");
+  });
+
+  it("denies a foreign organization before generating any signed URL", async () => {
+    const { app, mockDb, bobCookie } = createTestApp();
+    const attachmentId = await createCleanAttachment(app, bobCookie, mockDb);
+    const response = await request(app)
+      .get(`/api/v1/organizations/${foreignOrgId}/attachments/${attachmentId}/download-url`)
+      .set("Cookie", bobCookie);
+    expect(response.status).toBe(403);
+    expect(asRecord(response.body)["downloadUrl"]).toBeUndefined();
   });
 });

@@ -69,6 +69,49 @@ export interface SendTemplateMessageResult {
   recipientId: string;
 }
 
+export interface SendMediaMessageInput {
+  phoneNumberId: string;
+  to: string;
+  mediaType: "image" | "video" | "document" | "audio";
+  /** Uploaded media ID from WhatsApp media upload endpoint */
+  mediaId: string;
+  /** Optional filename for document type */
+  fileName?: string | undefined;
+  /** Optional caption */
+  caption?: string | undefined;
+  accessToken: string;
+}
+
+export interface SendMediaMessageResult {
+  messageId: string;
+  recipientId: string;
+  mediaId: string;
+}
+
+export interface UploadMediaInput {
+  phoneNumberId: string;
+  fileName: string;
+  contentType: string;
+  data: Uint8Array;
+  accessToken: string;
+}
+
+export interface UploadMediaResult {
+  mediaId: string;
+}
+
+export interface DownloadMediaInput {
+  mediaId: string;
+  accessToken: string;
+  maxBytes?: number | undefined;
+}
+
+export interface DownloadMediaResult {
+  data: Buffer;
+  contentType: string;
+  sha256?: string | undefined;
+}
+
 export interface ProviderTemplateComponent {
   type: "HEADER" | "BODY" | "FOOTER" | "BUTTONS";
   format?: "TEXT" | "IMAGE" | "DOCUMENT" | "VIDEO" | "LOCATION";
@@ -119,6 +162,9 @@ export interface WhatsAppProvider {
   readonly name: string;
   sendTextMessage(input: SendTextMessageInput): Promise<SendTextMessageResult>;
   sendTemplateMessage(input: SendTemplateMessageInput): Promise<SendTemplateMessageResult>;
+  uploadMedia(input: UploadMediaInput): Promise<UploadMediaResult>;
+  downloadMedia(input: DownloadMediaInput): Promise<DownloadMediaResult>;
+  sendMediaMessage(input: SendMediaMessageInput): Promise<SendMediaMessageResult>;
   fetchMessageTemplates(input: FetchTemplatesInput): Promise<FetchTemplatesResult>;
 }
 
@@ -419,6 +465,180 @@ export class MetaWhatsAppProvider implements WhatsAppProvider {
       paging: body.paging
     };
   }
+
+  async sendMediaMessage(input: SendMediaMessageInput): Promise<SendMediaMessageResult> {
+    const cleanTo = input.to.replace(/[^\d]/g, "");
+    if (!cleanTo) {
+      throw new WhatsAppProviderError({
+        message: "Recipient phone number must contain valid digits",
+        classification: "INVALID_PAYLOAD",
+        statusCode: 400
+      });
+    }
+
+    const url = `${this.baseUrl}/${input.phoneNumberId}/messages`;
+
+    const mediaObject: Record<string, string> = { id: input.mediaId };
+    if (input.fileName) mediaObject["filename"] = input.fileName;
+    if (input.caption) mediaObject["caption"] = input.caption;
+
+    let res: Response;
+    try {
+      res = await this.fetcher(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${input.accessToken}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          messaging_product: "whatsapp",
+          to: cleanTo,
+          type: input.mediaType,
+          [input.mediaType]: mediaObject
+        })
+      });
+    } catch (error) {
+      throw new WhatsAppProviderError({
+        message: `Network error dispatching media to WhatsApp API: ${error instanceof Error ? error.message : String(error)}`,
+        classification: "TRANSIENT",
+        statusCode: 503
+      });
+    }
+
+    if (!res.ok) {
+      const errorBody = (await res.json().catch(() => ({}))) as {
+        error?: { code?: number; message?: string };
+      };
+      const code = errorBody.error?.code;
+      const classification = classifyMetaError(res.status, code);
+      throw new WhatsAppProviderError({
+        message: errorBody.error?.message ?? `HTTP ${res.status}`,
+        classification,
+        statusCode: res.status,
+        providerCode: code
+      });
+    }
+
+    const responseBody = (await res.json()) as {
+      messages?: Array<{ id: string }>;
+      contacts?: Array<{ wa_id: string }>;
+    };
+
+    const messageId = responseBody.messages?.[0]?.id;
+    const recipientId = responseBody.contacts?.[0]?.wa_id ?? cleanTo;
+
+    if (!messageId) {
+      throw new WhatsAppProviderError({
+        message: "Malformed response from WhatsApp API: missing message ID",
+        classification: "TRANSIENT",
+        statusCode: 502
+      });
+    }
+
+    return { messageId, recipientId, mediaId: input.mediaId };
+  }
+
+  async uploadMedia(input: UploadMediaInput): Promise<UploadMediaResult> {
+    const form = new FormData();
+    form.set("messaging_product", "whatsapp");
+    form.set("type", input.contentType);
+    form.set("file", new Blob([input.data], { type: input.contentType }), input.fileName);
+
+    let response: Response;
+    try {
+      response = await this.fetcher(`${this.baseUrl}/${input.phoneNumberId}/media`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${input.accessToken}` },
+        body: form
+      });
+    } catch (error) {
+      throw new WhatsAppProviderError({
+        message: `Network error uploading media to WhatsApp API: ${error instanceof Error ? error.message : String(error)}`,
+        classification: "TRANSIENT",
+        statusCode: 503
+      });
+    }
+
+    const body = (await response.json().catch(() => ({}))) as {
+      id?: string;
+      error?: { code?: number; message?: string };
+    };
+    if (!response.ok || !body.id) {
+      throw new WhatsAppProviderError({
+        message:
+          body.error?.message ?? "Malformed response from WhatsApp media upload: missing media ID",
+        classification: classifyMetaError(response.status, body.error?.code),
+        statusCode: response.status,
+        providerCode: body.error?.code
+      });
+    }
+    return { mediaId: body.id };
+  }
+
+  async downloadMedia(input: DownloadMediaInput): Promise<DownloadMediaResult> {
+    const metadataResponse = await this.fetcher(
+      `${this.baseUrl}/${encodeURIComponent(input.mediaId)}`,
+      { headers: { Authorization: `Bearer ${input.accessToken}` } }
+    );
+    const metadata = (await metadataResponse.json().catch(() => ({}))) as {
+      url?: string;
+      mime_type?: string;
+      sha256?: string;
+      file_size?: number;
+      error?: { code?: number; message?: string };
+    };
+    if (!metadataResponse.ok || !metadata.url || !metadata.mime_type) {
+      throw new WhatsAppProviderError({
+        message: metadata.error?.message ?? "Malformed WhatsApp media metadata response",
+        classification: classifyMetaError(metadataResponse.status, metadata.error?.code),
+        statusCode: metadataResponse.status,
+        providerCode: metadata.error?.code
+      });
+    }
+    const mediaUrl = new URL(metadata.url);
+    const allowedHost = ["facebook.com", "fbcdn.net", "fbsbx.com"].some(
+      (suffix) => mediaUrl.hostname === suffix || mediaUrl.hostname.endsWith(`.${suffix}`)
+    );
+    if (mediaUrl.protocol !== "https:" || !allowedHost) {
+      throw new WhatsAppProviderError({
+        message: "Provider returned a media URL outside the Meta HTTPS allowlist",
+        classification: "INVALID_PAYLOAD",
+        statusCode: 502
+      });
+    }
+    const maxBytes = input.maxBytes ?? 100 * 1024 * 1024;
+    if (metadata.file_size !== undefined && metadata.file_size > maxBytes) {
+      throw new WhatsAppProviderError({
+        message: "Provider media exceeds the configured download size limit",
+        classification: "INVALID_PAYLOAD",
+        statusCode: 413
+      });
+    }
+    const mediaResponse = await this.fetcher(mediaUrl, {
+      headers: { Authorization: `Bearer ${input.accessToken}` },
+      redirect: "error"
+    });
+    if (!mediaResponse.ok) {
+      throw new WhatsAppProviderError({
+        message: `WhatsApp media download returned HTTP ${mediaResponse.status}`,
+        classification: classifyMetaError(mediaResponse.status),
+        statusCode: mediaResponse.status
+      });
+    }
+    const data = Buffer.from(await mediaResponse.arrayBuffer());
+    if (data.length > maxBytes) {
+      throw new WhatsAppProviderError({
+        message: "Provider media exceeds the configured download size limit",
+        classification: "INVALID_PAYLOAD",
+        statusCode: 413
+      });
+    }
+    return {
+      data,
+      contentType: metadata.mime_type,
+      ...(metadata.sha256 ? { sha256: metadata.sha256 } : {})
+    };
+  }
 }
 
 export interface SentMessageLog extends SendTextMessageInput {
@@ -609,6 +829,67 @@ export class FakeWhatsAppProvider implements WhatsAppProvider {
     return {
       messageId,
       recipientId: cleanTo
+    };
+  }
+
+  async sendMediaMessage(input: SendMediaMessageInput): Promise<SendMediaMessageResult> {
+    await Promise.resolve();
+    if (this.simulateFailure) {
+      const err = this.simulateFailure({
+        phoneNumberId: input.phoneNumberId,
+        to: input.to,
+        text: `[Media: ${input.mediaType}:${input.mediaId}]`,
+        accessToken: input.accessToken
+      });
+      if (err) throw err;
+    }
+
+    const cleanTo = input.to.replace(/[^\d]/g, "");
+    if (!cleanTo) {
+      throw new WhatsAppProviderError({
+        message: "Recipient phone number must contain valid digits",
+        classification: "INVALID_PAYLOAD",
+        statusCode: 400
+      });
+    }
+
+    const messageId = `wamid.HBgL${Date.now()}fakeMedia${this.idCounter++}==`;
+    const record: SentMessageLog = {
+      phoneNumberId: input.phoneNumberId,
+      to: cleanTo,
+      text: `[Media: ${input.mediaType}:${input.mediaId}]`,
+      accessToken: input.accessToken,
+      messageId,
+      timestamp: new Date()
+    };
+    this.sent.push(record);
+
+    return {
+      messageId,
+      recipientId: cleanTo,
+      mediaId: input.mediaId
+    };
+  }
+
+  async uploadMedia(input: UploadMediaInput): Promise<UploadMediaResult> {
+    await Promise.resolve();
+    if (this.simulateFailure) {
+      const error = this.simulateFailure({
+        phoneNumberId: input.phoneNumberId,
+        to: "provider-media-upload",
+        text: `[Upload: ${input.contentType}:${input.fileName}]`,
+        accessToken: input.accessToken
+      });
+      if (error) throw error;
+    }
+    return { mediaId: `media-${this.idCounter++}` };
+  }
+
+  async downloadMedia(input: DownloadMediaInput): Promise<DownloadMediaResult> {
+    await Promise.resolve();
+    return {
+      data: Buffer.from(`fake-media:${input.mediaId}`),
+      contentType: "application/octet-stream"
     };
   }
 

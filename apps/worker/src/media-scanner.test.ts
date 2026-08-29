@@ -108,6 +108,8 @@ describe("Media Quarantine Scanner Worker (M3-06)", () => {
       scanMetadata: {},
       metadata: {},
       createdAt: new Date(),
+      deletedAt: null,
+      deletionReason: null,
       updatedAt: new Date()
     };
 
@@ -149,6 +151,8 @@ describe("Media Quarantine Scanner Worker (M3-06)", () => {
       scanMetadata: {},
       metadata: {},
       createdAt: new Date(),
+      deletedAt: null,
+      deletionReason: null,
       updatedAt: new Date()
     };
 
@@ -184,6 +188,8 @@ describe("Media Quarantine Scanner Worker (M3-06)", () => {
       scanMetadata: {},
       metadata: {},
       createdAt: new Date(),
+      deletedAt: null,
+      deletionReason: null,
       updatedAt: new Date()
     };
 
@@ -220,6 +226,8 @@ describe("Media Quarantine Scanner Worker (M3-06)", () => {
       scanMetadata: {},
       metadata: {},
       createdAt: new Date(),
+      deletedAt: null,
+      deletionReason: null,
       updatedAt: new Date()
     };
 
@@ -257,6 +265,8 @@ describe("Media Quarantine Scanner Worker (M3-06)", () => {
       scanMetadata: {},
       metadata: {},
       createdAt: new Date(),
+      deletedAt: null,
+      deletionReason: null,
       updatedAt: new Date()
     };
 
@@ -300,6 +310,8 @@ describe("Media Quarantine Scanner Worker (M3-06)", () => {
       scanMetadata: {},
       metadata: {},
       createdAt: new Date(),
+      deletedAt: null,
+      deletionReason: null,
       updatedAt: new Date()
     };
 
@@ -337,6 +349,8 @@ describe("Media Quarantine Scanner Worker (M3-06)", () => {
       scanMetadata: {},
       metadata: {},
       createdAt: new Date(),
+      deletedAt: null,
+      deletionReason: null,
       updatedAt: new Date()
     };
 

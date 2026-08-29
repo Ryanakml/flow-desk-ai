@@ -3,13 +3,15 @@ import {
   type Problem,
   CreateUploadSessionRequestSchema,
   CompleteUploadRequestSchema,
-  AttachmentDetailResponseSchema
+  AttachmentDetailResponseSchema,
+  GenerateDownloadUrlResponseSchema
 } from "@flowdesk/contracts";
 import {
   type DbClient,
   createAttachmentUploadSession,
   getAttachmentById,
   completeAttachmentUploadSession,
+  runInTenantTransaction,
   type AttachmentRecord
 } from "@flowdesk/db";
 import { ALLOWED_MIME_TYPES, getMediaSizeLimit } from "@flowdesk/domain";
@@ -55,6 +57,8 @@ function serializeAttachment(attachment: AttachmentRecord) {
     quarantineReason: attachment.quarantineReason,
     scannedAt: attachment.scannedAt?.toISOString() ?? null,
     scannerName: attachment.scannerName,
+    deletedAt: attachment.deletedAt?.toISOString() ?? null,
+    deletionReason: attachment.deletionReason,
     createdAt: attachment.createdAt.toISOString(),
     updatedAt: attachment.updatedAt.toISOString()
   });
@@ -132,17 +136,19 @@ export function createAttachmentsRouter(options: AttachmentsRouterOptions): Rout
 
         const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
 
-        const result = await createAttachmentUploadSession(db, {
-          organizationId: orgId,
-          uploaderUserId: request.user?.id ?? null,
-          fileName,
-          contentType: normMime,
-          byteSize,
-          sha256Checksum: sha256Checksum ?? null,
-          storageKey,
-          uploadUrl: presigned.uploadUrl,
-          expiresAt
-        });
+        const result = await runInTenantTransaction(db, { organizationId: orgId }, (tenantDb) =>
+          createAttachmentUploadSession(tenantDb, {
+            organizationId: orgId,
+            uploaderUserId: request.user?.id ?? null,
+            fileName,
+            contentType: normMime,
+            byteSize,
+            sha256Checksum: sha256Checksum ?? null,
+            storageKey,
+            uploadUrl: presigned.uploadUrl,
+            expiresAt
+          })
+        );
 
         response.status(201).json({
           attachmentId: result.attachment.id,
@@ -179,11 +185,13 @@ export function createAttachmentsRouter(options: AttachmentsRouterOptions): Rout
         return;
       }
 
-      const updated = await completeAttachmentUploadSession(
-        db,
-        orgId,
-        attachmentId,
-        parsedBody.data.sha256Checksum ?? null
+      const updated = await runInTenantTransaction(db, { organizationId: orgId }, (tenantDb) =>
+        completeAttachmentUploadSession(
+          tenantDb,
+          orgId,
+          attachmentId,
+          parsedBody.data.sha256Checksum ?? null
+        )
       );
 
       if (!updated) {
@@ -210,7 +218,9 @@ export function createAttachmentsRouter(options: AttachmentsRouterOptions): Rout
       const orgId = request.params["orgId"] as string;
       const attachmentId = request.params["id"] as string;
 
-      const attachment = await getAttachmentById(db, orgId, attachmentId);
+      const attachment = await runInTenantTransaction(db, { organizationId: orgId }, (tenantDb) =>
+        getAttachmentById(tenantDb, orgId, attachmentId)
+      );
       if (!attachment) {
         sendProblem(
           response,
@@ -223,6 +233,63 @@ export function createAttachmentsRouter(options: AttachmentsRouterOptions): Rout
       }
 
       response.status(200).json(serializeAttachment(attachment));
+    }
+  );
+
+  // 4. GET /:id/download-url — presigned authorized download (clean only)
+  router.get(
+    "/:id/download-url",
+    requireAuth,
+    requireReadConversation,
+    async (request: Request, response: Response): Promise<void> => {
+      const orgId = request.params["orgId"] as string;
+      const attachmentId = request.params["id"] as string;
+
+      const attachment = await runInTenantTransaction(db, { organizationId: orgId }, (tenantDb) =>
+        getAttachmentById(tenantDb, orgId, attachmentId)
+      );
+      if (!attachment) {
+        sendProblem(
+          response,
+          404,
+          "ATTACHMENT_NOT_FOUND",
+          "Attachment not found",
+          `Attachment '${attachmentId}' was not found in organization '${orgId}'.`
+        );
+        return;
+      }
+
+      if (attachment.status !== "clean") {
+        sendProblem(
+          response,
+          403,
+          "ATTACHMENT_NOT_CLEAN",
+          "Attachment is not available for download",
+          `Attachment '${attachmentId}' has status '${attachment.status}' and cannot be served. Only clean attachments may be downloaded.`
+        );
+        return;
+      }
+
+      try {
+        const expiresInSeconds = 300; // 5 minutes
+        const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
+
+        const { downloadUrl } = await storage.createPresignedDownloadUrl({
+          key: attachment.storageKey,
+          expiresInSeconds,
+          fileName: attachment.fileName
+        });
+
+        response.status(200).json(
+          GenerateDownloadUrlResponseSchema.parse({
+            downloadUrl,
+            expiresAt: expiresAt.toISOString()
+          })
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Internal error";
+        sendProblem(response, 500, "STORAGE_ERROR", "Download URL generation failed", message);
+      }
     }
   );
 

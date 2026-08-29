@@ -21,6 +21,12 @@ export {
   type SendTextMessageResult,
   type SendTemplateMessageInput,
   type SendTemplateMessageResult,
+  type SendMediaMessageInput,
+  type SendMediaMessageResult,
+  type UploadMediaInput,
+  type UploadMediaResult,
+  type DownloadMediaInput,
+  type DownloadMediaResult,
   type WhatsAppErrorClassification,
   type MetaWhatsAppProviderOptions,
   type SentMessageLog,
@@ -36,6 +42,8 @@ export {
 export {
   type PresignedUploadInput,
   type PresignedUploadResult,
+  type PresignedDownloadInput,
+  type PresignedDownloadResult,
   type GetObjectResult,
   type HeadObjectResult,
   type ObjectStore,
@@ -47,5 +55,7 @@ export {
   type MalwareScanResult,
   type MalwareScanner,
   EICAR_TEST_SIGNATURE,
-  FakeMalwareScanner
+  FakeMalwareScanner,
+  ClamAvScanner,
+  type ClamAvScannerOptions
 } from "./scanner.js";

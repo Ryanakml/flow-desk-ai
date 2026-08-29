@@ -228,7 +228,7 @@ describe("Contracts & Primitives (M1-06)", () => {
       expect(WhatsAppTemplateVersionSchema.parse(template.versions[0])).toBeDefined();
     });
 
-    it("validates outbound message request union (text vs template)", () => {
+    it("validates outbound message request union (text, template, and media)", () => {
       // Text outbound message
       const textMsg = CreateOutboundMessageRequestSchema.parse({
         content: "Halo dari customer support!"
@@ -255,6 +255,13 @@ describe("Contracts & Primitives (M1-06)", () => {
         language: "id",
         variables: { "1": "ORD-12345" }
       });
+
+      const mediaMsg = CreateOutboundMessageRequestSchema.parse({
+        type: "media",
+        attachmentId: "00000000-0000-7000-8000-000000000030",
+        caption: "Invoice Anda"
+      });
+      expect(mediaMsg.type).toBe("media");
     });
 
     it("validates service window status and template preview schemas", () => {
@@ -348,6 +355,8 @@ describe("Contracts & Primitives (M1-06)", () => {
         quarantineReason: null,
         scannedAt: null,
         scannerName: null,
+        deletedAt: null,
+        deletionReason: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       });

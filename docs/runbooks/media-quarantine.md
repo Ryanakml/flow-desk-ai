@@ -53,7 +53,30 @@ LIMIT 10;
 
 ---
 
-## 4. Emergency Quarantine Purge
+## 4. Authorized download and outbound delivery
+
+- The API checks the live session, organization membership, and `conversation:read` permission before issuing a five-minute signed GET URL.
+- Only `clean` and non-tombstoned records can receive a signed URL. Quarantine, rejected, deleted, foreign-tenant, and removed-member requests fail closed.
+- The object bucket remains private. Never copy a signed URL into tickets or logs; revoke the operator membership and rotate object-store credentials if a URL is exposed.
+- Media replies use the normal idempotent outbound intent. The worker reads private bytes, uploads them to the WhatsApp media endpoint, then sends the returned provider media ID. An uncertain send is moved to `reconcile_required`; do not blindly replay it.
+
+## 5. Automated retention and deletion
+
+The worker runs retention hourly. Defaults are 90 days for clean/quarantine objects and 7 days for rejected objects, configured with `MEDIA_CLEAN_RETENTION_DAYS` and `MEDIA_REJECTED_RETENTION_DAYS`.
+
+Deletion order is deliberate: object bytes are deleted first, then the tenant record is tombstoned with `deleted_at`, `deletion_reason=retention_expiry`, and an `attachment.deleted` outbox audit event. A storage failure leaves the record intact and increments `media_lifecycle_total{operation="retention",outcome="failed"}` for alerting.
+
+To verify one deletion without exposing customer data:
+
+```sql
+SELECT id, organization_id, status, deleted_at, deletion_reason
+FROM flowdesk.attachments
+WHERE id = '<attachment-id>' AND organization_id = '<organization-id>';
+```
+
+Confirm the object key no longer exists with a tenant-scoped storage credential. Do not restore or manually purge bytes without an approved support/security ticket.
+
+## 6. Emergency Quarantine Purge
 
 To purge quarantined objects older than retention window:
 
@@ -64,3 +87,5 @@ mc ls local/flowdesk-local/
 # Delete rejected objects from storage key
 mc rm --recursive --force local/flowdesk-local/org-<orgId>/quarantine/<attachmentId>/
 ```
+
+After an approved manual object deletion, invoke the tenant-scoped tombstone path or record equivalent audited evidence. Deleting only the database row is prohibited because it can orphan private bytes.

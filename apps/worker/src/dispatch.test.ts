@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { DbClient, ClaimedOutboxEvent } from "@flowdesk/db";
-import { FakeWhatsAppProvider, WhatsAppProviderError } from "@flowdesk/providers";
+import {
+  FakeWhatsAppProvider,
+  InMemoryObjectStore,
+  WhatsAppProviderError
+} from "@flowdesk/providers";
 import {
   dispatchOutboundMessage,
   processOutboxOutboundBatch,
@@ -93,6 +97,7 @@ function createDispatchMockDb() {
       components: unknown[];
     }
   >();
+  const attachments = new Map<string, Record<string, unknown>>();
 
   // Default active channel
   channels.set(channelId, {
@@ -143,6 +148,17 @@ function createDispatchMockDb() {
       }
 
       // Get message by ID
+      if (sql.includes("FROM flowdesk.attachments")) {
+        const attachment = attachments.get(values[1] as string);
+        return {
+          rows: attachment ? [attachment] : [],
+          rowCount: attachment ? 1 : 0,
+          command: "SELECT",
+          oid: 0,
+          fields: []
+        };
+      }
+
       if (
         sql.includes("FROM flowdesk.messages WHERE id = $1 AND organization_id = $2") ||
         sql.includes("FROM flowdesk.messages WHERE organization_id = $1 AND id = $2")
@@ -288,7 +304,7 @@ function createDispatchMockDb() {
     }
   } as unknown as DbClient;
 
-  return { db, channels, messages, outboxEvents, templates };
+  return { db, channels, messages, outboxEvents, templates, attachments };
 }
 
 describe("Outbound Dispatch Worker (M2-08)", () => {
@@ -863,6 +879,84 @@ describe("Outbound Dispatch Worker (M2-08)", () => {
     // Verify provider sent records
     expect(provider.getSentMessages()).toHaveLength(1);
     expect(provider.getSentMessages()[0]?.text).toContain("shipping_update");
+  });
+
+  it("uploads clean object bytes and sends media once through the outbound state machine", async () => {
+    const { db, messages, outboxEvents, attachments } = createDispatchMockDb();
+    const provider = new FakeWhatsAppProvider();
+    const storage = new InMemoryObjectStore();
+    const attachmentId = "00000000-0000-7000-8000-000000000088";
+    const storageKey = `org-${orgId}/clean/${attachmentId}`;
+    attachments.set(attachmentId, {
+      id: attachmentId,
+      organizationId: orgId,
+      uploaderUserId: "user-123",
+      fileName: "receipt.pdf",
+      contentType: "application/pdf",
+      detectedMimeType: "application/pdf",
+      byteSize: "8",
+      sha256Checksum: "a".repeat(64),
+      storageKey,
+      status: "clean",
+      quarantineReason: null,
+      scannedAt: new Date(),
+      scannerName: "test",
+      scanMetadata: {},
+      metadata: {},
+      deletedAt: null,
+      deletionReason: null,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    });
+    await storage.putObject(storageKey, Buffer.from("pdf-data"), "application/pdf");
+
+    const msgId = "00000000-0000-7000-8000-000000000089";
+    messages.set(msgId, {
+      id: msgId,
+      organizationId: orgId,
+      conversationId: convId,
+      channelId,
+      direction: "outbound",
+      senderType: "agent",
+      senderUserId: "user-123",
+      providerMessageId: null,
+      content: "Receipt",
+      status: "queued",
+      errorDetail: null,
+      sentAt: null,
+      deliveredAt: null,
+      readAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    });
+    const event: ClaimedOutboxEvent<OutboundMessagePayload> = {
+      id: "00000000-0000-7000-8000-000000000090",
+      organizationId: orgId,
+      aggregateType: "message",
+      aggregateId: msgId,
+      eventType: "message.outbound.created",
+      payload: {
+        messageId: msgId,
+        conversationId: convId,
+        channelId,
+        customerPhone: "6281234567890",
+        content: "Receipt",
+        media: { attachmentId, fileName: "receipt.pdf", contentType: "application/pdf" }
+      },
+      correlationId: null,
+      causationId: null,
+      occurredAt: new Date(),
+      attempts: 0
+    };
+    outboxEvents.set(event.id, toMockOutboxEvent(event));
+
+    const first = await dispatchOutboundMessage(db, event, { provider, storage });
+    expect(first.status).toBe("sent");
+    expect(provider.getSentMessages()).toHaveLength(1);
+
+    const retry = await dispatchOutboundMessage(db, event, { provider, storage });
+    expect(retry.status).toBe("skipped");
+    expect(provider.getSentMessages()).toHaveLength(1);
   });
 
   it("fails terminal if template status is not approved at dispatch time", async () => {

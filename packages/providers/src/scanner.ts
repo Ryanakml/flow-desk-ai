@@ -53,3 +53,60 @@ export class FakeMalwareScanner implements MalwareScanner {
     };
   }
 }
+
+export interface ClamAvScannerOptions {
+  host: string;
+  port?: number | undefined;
+  timeoutMs?: number | undefined;
+}
+
+export class ClamAvScanner implements MalwareScanner {
+  private readonly options: { host: string; port: number; timeoutMs: number };
+
+  constructor(options: ClamAvScannerOptions) {
+    this.options = {
+      host: options.host,
+      port: options.port ?? 3310,
+      timeoutMs: options.timeoutMs ?? 30_000
+    };
+  }
+
+  async scan(content: Buffer): Promise<MalwareScanResult> {
+    const { createConnection } = await import("node:net");
+    return new Promise((resolve, reject) => {
+      const socket = createConnection({ host: this.options.host, port: this.options.port });
+      const response: Buffer[] = [];
+      const fail = (error: Error) => {
+        socket.destroy();
+        reject(error);
+      };
+      socket.setTimeout(this.options.timeoutMs, () => fail(new Error("ClamAV scan timed out")));
+      socket.on("error", fail);
+      socket.on("data", (chunk: Buffer) => response.push(chunk));
+      socket.on("connect", () => {
+        socket.write("zINSTREAM\0");
+        for (let offset = 0; offset < content.length; offset += 64 * 1024) {
+          const chunk = content.subarray(offset, Math.min(offset + 64 * 1024, content.length));
+          const size = Buffer.allocUnsafe(4);
+          size.writeUInt32BE(chunk.length);
+          socket.write(size);
+          socket.write(chunk);
+        }
+        socket.end(Buffer.alloc(4));
+      });
+      socket.on("end", () => {
+        const result = Buffer.concat(response).toString("utf8").replace(/\0/g, "").trim();
+        if (result.endsWith("OK")) {
+          resolve({ isClean: true, scannerVersion: "clamav-instream" });
+          return;
+        }
+        const match = result.match(/: (.+) FOUND$/);
+        if (match?.[1]) {
+          resolve({ isClean: false, threatName: match[1], scannerVersion: "clamav-instream" });
+          return;
+        }
+        reject(new Error(`Unexpected ClamAV response: ${result || "empty response"}`));
+      });
+    });
+  }
+}

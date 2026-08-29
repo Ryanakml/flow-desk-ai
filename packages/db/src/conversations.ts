@@ -608,6 +608,13 @@ export interface OutboundTemplateMetadata {
   renderedPayloadHash: string;
 }
 
+export interface OutboundMediaMetadata {
+  attachmentId: string;
+  fileName: string;
+  contentType: string;
+  caption?: string | undefined;
+}
+
 export interface CreateOutboundMessageWithOutboxInput {
   organizationId: string;
   conversationId: string;
@@ -615,6 +622,7 @@ export interface CreateOutboundMessageWithOutboxInput {
   content: string;
   correlationId?: string | undefined;
   template?: OutboundTemplateMetadata | undefined;
+  media?: OutboundMediaMetadata | undefined;
 }
 
 /**
@@ -643,7 +651,11 @@ export async function createOutboundMessageWithOutbox(
     senderUserId: input.senderUserId,
     content: input.content,
     status: "queued",
-    ...(input.template ? { metadata: { template: input.template } } : {})
+    ...(input.template
+      ? { metadata: { template: input.template } }
+      : input.media
+        ? { metadata: { media: input.media } }
+        : {})
   });
 
   const outboxPayload = {
@@ -653,7 +665,8 @@ export async function createOutboundMessageWithOutbox(
     customerPhone: conversation.customerPhone,
     content: input.content,
     senderUserId: input.senderUserId,
-    ...(input.template ? { template: input.template } : {})
+    ...(input.template ? { template: input.template } : {}),
+    ...(input.media ? { media: input.media } : {})
   };
 
   await client.query(

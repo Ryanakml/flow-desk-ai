@@ -41,6 +41,8 @@ function createMockAttachmentsDb() {
           scannerName: null,
           scanMetadata: {},
           metadata: JSON.parse((values[7] as string) || "{}") as Record<string, unknown>,
+          deletedAt: null,
+          deletionReason: null,
           createdAt: new Date(),
           updatedAt: new Date()
         };
@@ -118,12 +120,14 @@ function createMockAttachmentsDb() {
       // UPDATE attachment_upload_sessions
       if (sql.includes("UPDATE flowdesk.attachment_upload_sessions")) {
         const [now, orgId, attId] = values as [Date, string, string];
+        let updated = 0;
         for (const s of sessions.values()) {
           if (s.organizationId === orgId && s.attachmentId === attId && !s.completedAt) {
             s.completedAt = now;
+            updated += 1;
           }
         }
-        return { rows: [], rowCount: 1, command: "UPDATE", oid: 0, fields: [] };
+        return { rows: [], rowCount: updated, command: "UPDATE", oid: 0, fields: [] };
       }
 
       // UPDATE attachments SET sha256_checksum
@@ -265,6 +269,9 @@ describe("Attachments & Quarantine Storage DB (M3-06)", () => {
     expect(outboxEvents).toHaveLength(1);
     expect(outboxEvents[0]?.eventType).toBe("attachment.uploaded");
     expect(outboxEvents[0]?.aggregateId).toBe("att-1");
+
+    await completeAttachmentUploadSession(db, orgId, "att-1");
+    expect(outboxEvents).toHaveLength(1);
   });
 
   it("updates scan result to clean when verified", async () => {
