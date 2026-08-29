@@ -19,6 +19,8 @@ import type { IdentityProvider } from "@flowdesk/providers";
 import { createAuthRouter } from "./auth.js";
 import { createOrganizationsRouter, createInvitationsRouter } from "./organizations.js";
 import { createConversationsRouter } from "./conversations.js";
+import { createAttachmentsRouter } from "./attachments.js";
+import type { ObjectStore } from "@flowdesk/providers";
 export { createAuthRouter, createRequireAuthMiddleware, type AuthenticatedUser } from "./auth.js";
 export {
   createOrganizationsRouter,
@@ -26,6 +28,7 @@ export {
   createRequireOrgPermissionMiddleware
 } from "./organizations.js";
 export { createConversationsRouter } from "./conversations.js";
+export { createAttachmentsRouter } from "./attachments.js";
 
 export interface ApiAppAuthOptions {
   db: DbClient;
@@ -38,7 +41,8 @@ export interface ApiAppOptions {
   version: string;
   gitSha: string;
   environment: "local" | "preview" | "staging" | "production";
-  auth?: ApiAppAuthOptions;
+  auth?: ApiAppAuthOptions | undefined;
+  storage?: ObjectStore | undefined;
   logRequest?: (event: {
     requestId: string;
     correlationId: string;
@@ -166,6 +170,13 @@ export function createApiApp(options: ApiAppOptions) {
       "/api/v1/organizations/:orgId/conversations",
       createConversationsRouter({
         db: options.auth.db
+      })
+    );
+    app.use(
+      "/api/v1/organizations/:orgId/attachments",
+      createAttachmentsRouter({
+        db: options.auth.db,
+        storage: options.storage
       })
     );
   }

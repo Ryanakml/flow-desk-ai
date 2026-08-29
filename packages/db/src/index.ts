@@ -133,6 +133,18 @@ export {
   type WhatsAppTemplateRecord,
   type WhatsAppTemplateVersionRecord
 } from "./whatsapp-templates.js";
+export {
+  createAttachmentUploadSession,
+  getAttachmentById,
+  getUploadSessionById,
+  completeAttachmentUploadSession,
+  updateAttachmentScanResult,
+  type AttachmentStatus,
+  type AttachmentRecord,
+  type AttachmentUploadSessionRecord,
+  type CreateAttachmentUploadSessionInput,
+  type UpdateAttachmentScanResultInput
+} from "./attachments.js";
 
 export const DATABASE_PACKAGE_STATE = "m1-foundation-ready" as const;
 

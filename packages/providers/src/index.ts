@@ -33,3 +33,19 @@ export {
   type FetchTemplatesInput,
   type FetchTemplatesResult
 } from "./whatsapp.js";
+export {
+  type PresignedUploadInput,
+  type PresignedUploadResult,
+  type GetObjectResult,
+  type HeadObjectResult,
+  type ObjectStore,
+  type S3ObjectStoreConfig,
+  S3ObjectStore,
+  InMemoryObjectStore
+} from "./storage.js";
+export {
+  type MalwareScanResult,
+  type MalwareScanner,
+  EICAR_TEST_SIGNATURE,
+  FakeMalwareScanner
+} from "./scanner.js";
