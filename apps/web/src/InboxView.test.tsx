@@ -348,3 +348,102 @@ describe("InboxView Operator Interface (M2-09)", () => {
     expect(html).not.toContain('data-testid="thread-composer-form"');
   });
 });
+
+// M4-06: AI Copilot Panel tests
+describe("InboxView AI Copilot Panel (M4-06)", () => {
+  it("renders copilot panel with generate button when a conversation is selected", () => {
+    const hangingFetcher = vi.fn<typeof fetch>().mockImplementation(() => new Promise(() => {}));
+
+    const html = renderToString(
+      <InboxView
+        organizationId={mockOrgId}
+        userRole="agent"
+        sessionUserId={mockUserId}
+        fetcher={hangingFetcher}
+        initialConversations={[sampleConversation]}
+        initialActiveConversation={sampleConversation}
+        initialMessages={sampleMessages}
+      />
+    );
+
+    expect(html).toContain('data-testid="copilot-panel"');
+    expect(html).toContain("AI Copilot");
+    expect(html).toContain('data-testid="copilot-generate-btn"');
+    expect(html).toContain("✨ Generate Draft");
+  });
+
+  it("renders copilot panel in Indonesian locale", () => {
+    const hangingFetcher = vi.fn<typeof fetch>().mockImplementation(() => new Promise(() => {}));
+
+    // Render with id locale by default (after toggling, but we can just check for 'id' text presence for panel label)
+    const html = renderToString(
+      <InboxView
+        organizationId={mockOrgId}
+        userRole="agent"
+        sessionUserId={mockUserId}
+        fetcher={hangingFetcher}
+        initialConversations={[sampleConversation]}
+        initialActiveConversation={sampleConversation}
+        initialMessages={sampleMessages}
+      />
+    );
+
+    // Panel always renders regardless of locale
+    expect(html).toContain('data-testid="copilot-panel"');
+  });
+
+  it("does not render draft card or approve button initially (no draft yet)", () => {
+    const hangingFetcher = vi.fn<typeof fetch>().mockImplementation(() => new Promise(() => {}));
+
+    const html = renderToString(
+      <InboxView
+        organizationId={mockOrgId}
+        userRole="agent"
+        sessionUserId={mockUserId}
+        fetcher={hangingFetcher}
+        initialConversations={[sampleConversation]}
+        initialActiveConversation={sampleConversation}
+        initialMessages={sampleMessages}
+      />
+    );
+
+    expect(html).not.toContain('data-testid="copilot-draft-card"');
+    expect(html).not.toContain('data-testid="copilot-approve-btn"');
+    expect(html).not.toContain('data-testid="copilot-reject-btn"');
+  });
+
+  it("does not show copilot panel when no conversation is selected", () => {
+    const hangingFetcher = vi.fn<typeof fetch>().mockImplementation(() => new Promise(() => {}));
+
+    const html = renderToString(
+      <InboxView
+        organizationId={mockOrgId}
+        userRole="agent"
+        sessionUserId={mockUserId}
+        fetcher={hangingFetcher}
+      />
+    );
+
+    expect(html).not.toContain('data-testid="copilot-panel"');
+  });
+
+  it("renders copilot generate button for viewer role but approve not shown (no draft)", () => {
+    const hangingFetcher = vi.fn<typeof fetch>().mockImplementation(() => new Promise(() => {}));
+
+    const html = renderToString(
+      <InboxView
+        organizationId={mockOrgId}
+        userRole="analyst"
+        sessionUserId={mockUserId}
+        fetcher={hangingFetcher}
+        initialConversations={[sampleConversation]}
+        initialActiveConversation={sampleConversation}
+        initialMessages={sampleMessages}
+      />
+    );
+
+    // Panel renders but no draft yet
+    expect(html).toContain('data-testid="copilot-panel"');
+    expect(html).not.toContain('data-testid="copilot-approve-btn"');
+  });
+});

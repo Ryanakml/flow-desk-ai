@@ -37,7 +37,12 @@ import {
   type TemplatePreviewRequest,
   type TemplatePreviewResponse,
   TemplatePreviewResponseSchema,
-  type Problem
+  type Problem,
+  BotConfigSchema,
+  type BotConfigResponse,
+  type UpdateBotConfigRequest,
+  GenerateBotDraftResponseSchema,
+  type GenerateBotDraftResponse
 } from "@flowdesk/contracts";
 import type { RoleKey } from "@flowdesk/domain";
 
@@ -449,4 +454,39 @@ export async function previewTemplate(
   });
   const data = await handleResponse<unknown>(res);
   return TemplatePreviewResponseSchema.parse(data);
+}
+
+// M4-06: Bot configuration and AI Copilot draft API
+export async function getBotConfig(
+  orgId: string,
+  fetcher: typeof fetch = fetch
+): Promise<BotConfigResponse> {
+  const res = await fetcher(`/api/v1/organizations/${orgId}/bot/config`);
+  return BotConfigSchema.parse(await handleResponse<unknown>(res));
+}
+
+export async function updateBotConfig(
+  orgId: string,
+  body: UpdateBotConfigRequest,
+  fetcher: typeof fetch = fetch
+): Promise<BotConfigResponse> {
+  const res = await fetcher(`/api/v1/organizations/${orgId}/bot/config`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  return BotConfigSchema.parse(await handleResponse<unknown>(res));
+}
+
+export async function generateBotDraft(
+  orgId: string,
+  conversationId: string,
+  fetcher: typeof fetch = fetch
+): Promise<GenerateBotDraftResponse> {
+  const res = await fetcher(`/api/v1/organizations/${orgId}/bot/draft/${conversationId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}"
+  });
+  return GenerateBotDraftResponseSchema.parse(await handleResponse<unknown>(res));
 }

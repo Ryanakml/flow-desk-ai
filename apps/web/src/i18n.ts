@@ -29,7 +29,23 @@ const messages = {
     sending: "Sending...",
     retry: "Retry",
     remove: "Remove",
-    language: "Bahasa Indonesia"
+    language: "Bahasa Indonesia",
+    // M4-06: AI Copilot
+    copilotTitle: "AI Copilot",
+    copilotGenerating: "Generating AI draft…",
+    copilotGenerate: "✨ Generate Draft",
+    copilotDraftLabel: "Suggested Reply",
+    copilotConfidence: "Confidence",
+    copilotCitations: "Sources",
+    copilotCitationsClose: "Close sources",
+    copilotCitationsOpen: "View sources",
+    copilotApprove: "Approve & Send",
+    copilotEdit: "Edit in Composer",
+    copilotReject: "Dismiss",
+    copilotFallback: "No relevant knowledge found. The AI cannot generate a grounded reply.",
+    copilotOff: "AI Copilot is currently disabled by your administrator.",
+    copilotError: "Failed to generate draft. Please try again.",
+    copilotReasoningLabel: "Reasoning"
   },
   id: {
     inbox: "Kotak Masuk",
@@ -59,7 +75,24 @@ const messages = {
     sending: "Mengirim...",
     retry: "Coba lagi",
     remove: "Hapus",
-    language: "English"
+    language: "English",
+    // M4-06: AI Copilot
+    copilotTitle: "AI Kopilot",
+    copilotGenerating: "Membuat draf AI…",
+    copilotGenerate: "✨ Buat Draf",
+    copilotDraftLabel: "Saran Balasan",
+    copilotConfidence: "Keyakinan",
+    copilotCitations: "Sumber",
+    copilotCitationsClose: "Tutup sumber",
+    copilotCitationsOpen: "Lihat sumber",
+    copilotApprove: "Setujui & Kirim",
+    copilotEdit: "Edit di Komposer",
+    copilotReject: "Abaikan",
+    copilotFallback:
+      "Tidak ada pengetahuan relevan. AI tidak dapat membuat balasan yang terverifikasi.",
+    copilotOff: "AI Kopilot saat ini dinonaktifkan oleh administrator.",
+    copilotError: "Gagal membuat draf. Silakan coba lagi.",
+    copilotReasoningLabel: "Alasan"
   }
 } as const;
 
