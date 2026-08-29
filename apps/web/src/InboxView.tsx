@@ -8,6 +8,7 @@ import {
   sendOutboundMessage,
   ApiError
 } from "./api.js";
+import { useRealtimeSync } from "./realtime.js";
 
 export interface InboxViewProps {
   organizationId: string;
@@ -137,28 +138,28 @@ export function InboxView({
     }
   }, [selectedConversationId, loadThread]);
 
-  // Receive tenant-scoped invalidations and reload through the authorized REST
-  // API. EventSource automatically sends the HttpOnly session cookie.
-  useEffect(() => {
-    if (typeof EventSource === "undefined") return;
-    const source = new EventSource(`/api/v1/organizations/${organizationId}/conversations/events`, {
-      withCredentials: true
-    });
-    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
-    const refresh = () => {
-      if (refreshTimer) clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(() => {
+  // Receive tenant-scoped invalidation hints via authenticated Socket.IO and
+  // reload authoritative state through the REST API.
+  useRealtimeSync({
+    organizationId,
+    activeConversationId: selectedConversationId,
+    enabled: typeof window !== "undefined",
+    onReconcile: () => {
+      void loadConversations(true);
+      if (selectedConversationId) void loadThread(selectedConversationId);
+    },
+    onHint: (hint) => {
+      if (hint.resourceType === "conversation" || hint.resourceType === "organization") {
         void loadConversations(true);
+      }
+      if (hint.resourceType === "message" || hint.resourceId === selectedConversationId) {
         if (selectedConversationId) void loadThread(selectedConversationId);
-      }, 100);
-    };
-    source.addEventListener("conversation.changed", refresh);
-    return () => {
-      if (refreshTimer) clearTimeout(refreshTimer);
-      source.removeEventListener("conversation.changed", refresh);
-      source.close();
-    };
-  }, [organizationId, selectedConversationId, loadConversations, loadThread]);
+      }
+    },
+    onAccessRevoked: (reason) => {
+      setActionError(`Realtime access revoked (${reason.code})`);
+    }
+  });
 
   // Auto-scroll timeline to bottom
   useEffect(() => {

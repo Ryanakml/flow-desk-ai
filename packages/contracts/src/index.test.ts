@@ -3,6 +3,8 @@ import {
   AuditLogEntrySchema,
   BuildInfoSchema,
   ConversationOperationRequestSchema,
+  RealtimeConnectAuthSchema,
+  RealtimeHintSchema,
   CursorPageQuerySchema,
   decodeCursor,
   encodeCursor,
@@ -26,6 +28,26 @@ describe("Contracts & Primitives (M1-06)", () => {
       expect(() =>
         ConversationOperationRequestSchema.parse({ version: 1, action: "note", body: " " })
       ).toThrow();
+    });
+  });
+
+  describe("M3 realtime envelopes", () => {
+    it("keeps connect state and hints versioned and free of payload content", () => {
+      expect(
+        RealtimeConnectAuthSchema.parse({
+          organizationId: "00000000-0000-7000-8000-000000000001",
+          lastVersion: 4
+        }).lastVersion
+      ).toBe(4);
+      const hint = RealtimeHintSchema.parse({
+        schemaVersion: 1,
+        organizationId: "00000000-0000-7000-8000-000000000001",
+        resourceType: "conversation",
+        resourceId: "00000000-0000-7000-8000-000000000002",
+        version: 5,
+        content: "must be stripped"
+      });
+      expect(hint).not.toHaveProperty("content");
     });
   });
 

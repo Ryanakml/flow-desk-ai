@@ -49,7 +49,8 @@ describe("database foundation", () => {
       "0008_conversations_and_messages.sql",
       "0009_m2_completion_hardening.sql",
       "0010_m3_operational_inbox.sql",
-      "0011_m3_conversation_operations.sql"
+      "0011_m3_conversation_operations.sql",
+      "0012_m3_realtime_versions.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -147,6 +148,7 @@ describe("database foundation", () => {
       "outbox_events",
       "queue_memberships",
       "queues",
+      "realtime_versions",
       "roles",
       "saved_filters",
       "sla_policies",
@@ -176,6 +178,7 @@ describe("database foundation", () => {
       "outbox_events",
       "queue_memberships",
       "queues",
+      "realtime_versions",
       "roles",
       "saved_filters",
       "sla_policies",
@@ -193,6 +196,7 @@ describe("database foundation", () => {
       "conversation_tags",
       "queue_memberships",
       "queues",
+      "realtime_versions",
       "saved_filters",
       "sla_policies",
       "tags",

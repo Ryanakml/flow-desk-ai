@@ -446,6 +446,44 @@ export const ConversationOperationRequestSchema = z.intersection(
 );
 export type ConversationOperationRequest = z.infer<typeof ConversationOperationRequestSchema>;
 
+export const RealtimeConnectAuthSchema = z.object({
+  organizationId: z.string().uuid(),
+  lastVersion: z.number().int().min(0).optional()
+});
+export type RealtimeConnectAuth = z.infer<typeof RealtimeConnectAuthSchema>;
+
+export const RealtimeRoomRequestSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("organization") }),
+  z.object({ type: z.literal("team"), id: z.string().uuid() }),
+  z.object({ type: z.literal("conversation"), id: z.string().uuid() })
+]);
+export type RealtimeRoomRequest = z.infer<typeof RealtimeRoomRequestSchema>;
+
+export const RealtimeReadySchema = z.object({
+  schemaVersion: z.literal(1),
+  organizationId: z.string().uuid(),
+  currentVersion: z.number().int().min(0),
+  reconcileRequired: z.boolean()
+});
+export type RealtimeReady = z.infer<typeof RealtimeReadySchema>;
+
+export const RealtimeHintSchema = z.object({
+  schemaVersion: z.literal(1),
+  organizationId: z.string().uuid(),
+  resourceType: z.enum([
+    "organization",
+    "conversation",
+    "message",
+    "queue",
+    "team",
+    "template",
+    "media"
+  ]),
+  resourceId: z.string().uuid(),
+  version: z.number().int().min(0)
+});
+export type RealtimeHint = z.infer<typeof RealtimeHintSchema>;
+
 export const CreateOutboundMessageRequestSchema = z.object({
   content: z.string().trim().min(1).max(4096)
 });

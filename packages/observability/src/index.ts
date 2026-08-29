@@ -115,6 +115,10 @@ export {
   recordWhatsAppOutboundDispatch,
   recordWorkerBatchFailure,
   recordOutboxSnapshot,
+  recordRealtimeConnection,
+  recordRealtimeAuthorizationDenial,
+  recordRealtimeReconnectGap,
+  recordRealtimeDroppedHint,
   getPrometheusMetrics,
   resetMetrics
 } from "./metrics.js";

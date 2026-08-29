@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import pg from "pg";
 
 const { Client } = pg;
-const migrationDirectory = new URL("../migrations/", import.meta.url);
+const migrationDirectory = fileURLToPath(new URL("../migrations/", import.meta.url));
 const connectionString = process.env.DATABASE_MIGRATOR_URL;
 
 if (!connectionString) {
@@ -31,7 +32,7 @@ try {
   `);
 
   for (const version of migrations) {
-    const sql = await readFile(join(migrationDirectory.pathname, version), "utf8");
+    const sql = await readFile(join(migrationDirectory, version), "utf8");
     const checksum = createHash("sha256").update(sql).digest("hex");
     const result = await client.query(
       "SELECT checksum FROM flowdesk_meta.schema_migrations WHERE version = $1",

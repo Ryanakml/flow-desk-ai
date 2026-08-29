@@ -17,6 +17,10 @@ const rateLimitExceededTotal = new Map<string, CounterMetric>();
 const whatsappWebhookProcessedTotal = new Map<string, CounterMetric>();
 const whatsappOutboundDispatchTotal = new Map<string, CounterMetric>();
 const workerBatchFailuresTotal = new Map<string, CounterMetric>();
+const realtimeAuthorizationDenialsTotal = new Map<string, CounterMetric>();
+const realtimeReconnectGapsTotal = new Map<string, CounterMetric>();
+const realtimeDroppedHintsTotal = new Map<string, CounterMetric>();
+let realtimeActiveConnections = 0;
 let outboxPendingEvents = 0;
 let outboxOldestEventAgeSeconds = 0;
 let outboxDeadLetterEvents = 0;
@@ -130,6 +134,22 @@ export function recordOutboxSnapshot(input: {
   outboxDeadLetterEvents = Math.max(0, input.deadLetterEvents);
 }
 
+export function recordRealtimeConnection(delta: 1 | -1): void {
+  realtimeActiveConnections = Math.max(0, realtimeActiveConnections + delta);
+}
+
+export function recordRealtimeAuthorizationDenial(roomType: string): void {
+  incrementCounter(realtimeAuthorizationDenialsTotal, { room_type: roomType });
+}
+
+export function recordRealtimeReconnectGap(): void {
+  incrementCounter(realtimeReconnectGapsTotal, { result: "reconcile_required" });
+}
+
+export function recordRealtimeDroppedHint(reason: string): void {
+  incrementCounter(realtimeDroppedHintsTotal, { reason });
+}
+
 export function resetMetrics(): void {
   httpRequestsTotal.clear();
   httpRequestDuration.clear();
@@ -139,6 +159,10 @@ export function resetMetrics(): void {
   whatsappWebhookProcessedTotal.clear();
   whatsappOutboundDispatchTotal.clear();
   workerBatchFailuresTotal.clear();
+  realtimeAuthorizationDenialsTotal.clear();
+  realtimeReconnectGapsTotal.clear();
+  realtimeDroppedHintsTotal.clear();
+  realtimeActiveConnections = 0;
   outboxPendingEvents = 0;
   outboxOldestEventAgeSeconds = 0;
   outboxDeadLetterEvents = 0;
@@ -214,6 +238,27 @@ export function getPrometheusMetrics(): string {
   lines.push("# HELP outbox_dead_letter_events Current failed outbound intent count.");
   lines.push("# TYPE outbox_dead_letter_events gauge");
   lines.push(`outbox_dead_letter_events ${outboxDeadLetterEvents}`);
+
+  lines.push("# HELP realtime_active_connections Current authenticated realtime connections.");
+  lines.push("# TYPE realtime_active_connections gauge");
+  lines.push(`realtime_active_connections ${realtimeActiveConnections}`);
+  lines.push("# HELP realtime_authorization_denials_total Realtime room authorization denials.");
+  lines.push("# TYPE realtime_authorization_denials_total counter");
+  for (const item of realtimeAuthorizationDenialsTotal.values()) {
+    lines.push(
+      `realtime_authorization_denials_total{${serializeLabels(item.labels)}} ${item.value}`
+    );
+  }
+  lines.push("# HELP realtime_reconnect_gaps_total Reconnects requiring REST reconciliation.");
+  lines.push("# TYPE realtime_reconnect_gaps_total counter");
+  for (const item of realtimeReconnectGapsTotal.values()) {
+    lines.push(`realtime_reconnect_gaps_total{${serializeLabels(item.labels)}} ${item.value}`);
+  }
+  lines.push("# HELP realtime_dropped_hints_total Hints dropped by backpressure protection.");
+  lines.push("# TYPE realtime_dropped_hints_total counter");
+  for (const item of realtimeDroppedHintsTotal.values()) {
+    lines.push(`realtime_dropped_hints_total{${serializeLabels(item.labels)}} ${item.value}`);
+  }
 
   return lines.join("\n") + "\n";
 }

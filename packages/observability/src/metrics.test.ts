@@ -8,6 +8,10 @@ import {
   recordWhatsAppOutboundDispatch,
   recordWorkerBatchFailure,
   recordOutboxSnapshot,
+  recordRealtimeConnection,
+  recordRealtimeAuthorizationDenial,
+  recordRealtimeReconnectGap,
+  recordRealtimeDroppedHint,
   getPrometheusMetrics,
   resetMetrics
 } from "./metrics.js";
@@ -76,5 +80,18 @@ describe("Prometheus Metrics (M1-08)", () => {
     expect(output).toContain("outbox_pending_events 12");
     expect(output).toContain("outbox_oldest_event_age_seconds 4.5");
     expect(output).toContain("outbox_dead_letter_events 2");
+  });
+
+  it("exports realtime connection, denial, gap, and backpressure signals", () => {
+    recordRealtimeConnection(1);
+    recordRealtimeAuthorizationDenial("conversation");
+    recordRealtimeReconnectGap();
+    recordRealtimeDroppedHint("backpressure");
+    const output = getPrometheusMetrics();
+    expect(output).toContain("realtime_active_connections 1");
+    expect(output).toContain('realtime_authorization_denials_total{room_type="conversation"} 1');
+    expect(output).toContain('realtime_reconnect_gaps_total{result="reconcile_required"} 1');
+    expect(output).toContain('realtime_dropped_hints_total{reason="backpressure"} 1');
+    recordRealtimeConnection(-1);
   });
 });
