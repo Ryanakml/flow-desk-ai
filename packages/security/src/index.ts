@@ -22,6 +22,15 @@ export {
 } from "./rate-limit.js";
 export { encryptSecret, decryptSecret, type EncryptedEnvelope } from "./encryption.js";
 export { computeMetaSignature, verifyMetaSignature, computeSha256 } from "./signature.js";
+export {
+  SsrfProtectionError,
+  isPrivateIpAddress,
+  isBlockedHostname,
+  validateUrlForIngestion,
+  fetchWithAntiSsrf,
+  type AntiSsrfFetchOptions,
+  type AntiSsrfFetchResult
+} from "./ssrf.js";
 
 export function redactRecord(input: Readonly<Record<string, unknown>>): Record<string, unknown> {
   return Object.fromEntries(

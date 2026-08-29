@@ -59,3 +59,8 @@ export {
   ClamAvScanner,
   type ClamAvScannerOptions
 } from "./scanner.js";
+export {
+  extractKnowledgeContent,
+  type ExtractedKnowledgeDocument,
+  type ExtractKnowledgeOptions
+} from "./knowledge-extractor.js";
