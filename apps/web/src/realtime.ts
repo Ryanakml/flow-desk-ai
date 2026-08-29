@@ -10,6 +10,7 @@ export interface RealtimeSyncOptions {
   onReconcile?: () => void;
   onHint?: (hint: RealtimeHint) => void;
   onAccessRevoked?: (reason: { code: string; roomType?: string }) => void;
+  onConnectionState?: (state: "connecting" | "connected" | "reconnecting" | "offline") => void;
 }
 
 export interface RealtimeClient {
@@ -45,9 +46,19 @@ export function createRealtimeClient(options: RealtimeSyncOptions): RealtimeClie
     });
 
     socket.on("projection.changed", (hint: RealtimeHint) => {
+      if (lastVersion > 0 && hint.version > lastVersion + 1) {
+        lastVersion = hint.version;
+        options.onReconcile?.();
+        return;
+      }
       lastVersion = Math.max(lastVersion, hint.version);
       options.onHint?.(hint);
     });
+
+    options.onConnectionState?.("connecting");
+    socket.on("connect", () => options.onConnectionState?.("connected"));
+    socket.on("disconnect", () => options.onConnectionState?.("reconnecting"));
+    socket.on("connect_error", () => options.onConnectionState?.("offline"));
 
     socket.on("access.revoked", (data: { code: string; roomType?: string }) => {
       options.onAccessRevoked?.(data);
@@ -99,7 +110,8 @@ export function useRealtimeSync(options: RealtimeSyncOptions) {
       ...options,
       onReconcile: () => optionsRef.current.onReconcile?.(),
       onHint: (hint) => optionsRef.current.onHint?.(hint),
-      onAccessRevoked: (data) => optionsRef.current.onAccessRevoked?.(data)
+      onAccessRevoked: (data) => optionsRef.current.onAccessRevoked?.(data),
+      onConnectionState: (state) => optionsRef.current.onConnectionState?.(state)
     });
 
     clientRef.current = client;

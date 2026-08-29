@@ -1,22 +1,31 @@
 import { useState, useEffect, useCallback, useRef, useId } from "react";
 import type {
   Conversation,
+  ConversationDetailResponse,
+  InboxWorkspaceResourcesResponse,
   Message,
-  TemplatePreviewResponse,
-  UpdateConversationRequest
+  TemplatePreviewResponse
 } from "@flowdesk/contracts";
 import { type RoleKey, hasPermission } from "@flowdesk/domain";
 import {
   listConversations,
   getConversation,
-  updateConversation,
   sendOutboundMessage,
+  performConversationOperation,
+  getInboxWorkspaceResources,
+  saveInboxFilter,
+  deleteInboxFilter,
+  createAttachmentUploadSession,
+  uploadAttachmentBytes,
+  completeAttachmentUpload,
+  getAttachment,
   listConversationTemplates,
   previewTemplate,
   type ConversationTemplateItem,
   ApiError
 } from "./api.js";
 import { useRealtimeSync } from "./realtime.js";
+import { inboxMessages, type InboxLocale } from "./i18n.js";
 
 export interface InboxViewProps {
   organizationId: string;
@@ -28,8 +37,9 @@ export interface InboxViewProps {
   initialMessages?: Message[] | undefined;
 }
 
-type StatusFilter = "all" | "open" | "pending" | "resolved" | "closed";
+type StatusFilter = "all" | "new" | "open" | "pending" | "resolved" | "closed";
 type AssigneeFilter = "all" | "me" | "unassigned";
+type ConnectionState = "connecting" | "connected" | "reconnecting" | "offline";
 
 export function InboxView({
   organizationId,
@@ -53,12 +63,25 @@ export function InboxView({
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [queueFilter, setQueueFilter] = useState("all");
+  const [locale, setLocale] = useState<InboxLocale>("en");
+  const t = inboxMessages(locale);
+  const [resources, setResources] = useState<InboxWorkspaceResourcesResponse>({
+    queues: [],
+    tags: [],
+    savedFilters: []
+  });
+  const [filterName, setFilterName] = useState("");
+  const [selectedSavedFilterId, setSelectedSavedFilterId] = useState("");
 
   // Thread detail state
   const [activeConversation, setActiveConversation] = useState<Conversation | null>(
     initialActiveConversation ?? null
   );
   const [messages, setMessages] = useState<Message[]>(initialMessages ?? []);
+  const [notes, setNotes] = useState<ConversationDetailResponse["notes"]>([]);
+  const [conversationTags, setConversationTags] = useState<ConversationDetailResponse["tags"]>([]);
+  const [noteBody, setNoteBody] = useState("");
   const [loadingThread, setLoadingThread] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
@@ -66,6 +89,11 @@ export function InboxView({
   // Composer state
   const [composerText, setComposerText] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [connectionState, setConnectionState] = useState<ConnectionState>(
+    typeof navigator !== "undefined" && navigator.onLine === false ? "offline" : "connecting"
+  );
+  const [hasConflict, setHasConflict] = useState(false);
+  const [mediaState, setMediaState] = useState<string | null>(null);
 
   // Template modal & composer state (M3-05)
   const [showTemplateModal, setShowTemplateModal] = useState(false);
@@ -81,6 +109,10 @@ export function InboxView({
   const searchInputId = useId();
   const composerTextareaId = useId();
   const timelineEndRef = useRef<HTMLDivElement>(null);
+  const conversationButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const templateDialogRef = useRef<HTMLDivElement>(null);
+  const templateTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const mediaInputRef = useRef<HTMLInputElement>(null);
 
   // Permissions
   const canSend = hasPermission(userRole, "message:send");
@@ -94,9 +126,10 @@ export function InboxView({
         setLoadingConversations(true);
         setActionError(null);
 
-        const query: { status?: string; assignedTo?: string } = {};
+        const query: { status?: string; assignedTo?: string; queueId?: string } = {};
         if (statusFilter !== "all") query.status = statusFilter;
         if (assigneeFilter !== "all") query.assignedTo = assigneeFilter;
+        if (queueFilter !== "all") query.queueId = queueFilter;
 
         const res = await listConversations(organizationId, query, fetcher);
         setConversations(res.items);
@@ -122,7 +155,7 @@ export function InboxView({
         setLoadingConversations(false);
       }
     },
-    [organizationId, statusFilter, assigneeFilter, selectedConversationId, fetcher]
+    [organizationId, statusFilter, assigneeFilter, queueFilter, selectedConversationId, fetcher]
   );
 
   // Fetch thread detail when selected conversation changes
@@ -134,6 +167,8 @@ export function InboxView({
         const detail = await getConversation(organizationId, conversationId, fetcher);
         setActiveConversation(detail.conversation);
         setMessages(detail.messages);
+        setNotes(detail.notes);
+        setConversationTags(detail.tags);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : "Failed to load thread";
         setActionError(msg);
@@ -147,7 +182,19 @@ export function InboxView({
   // Initial load and filter change trigger
   useEffect(() => {
     void loadConversations(false);
-  }, [organizationId, statusFilter, assigneeFilter]);
+  }, [organizationId, statusFilter, assigneeFilter, queueFilter]);
+
+  const loadResources = useCallback(async () => {
+    try {
+      setResources(await getInboxWorkspaceResources(organizationId, fetcher));
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Failed to load workspace filters");
+    }
+  }, [organizationId, fetcher]);
+
+  useEffect(() => {
+    void loadResources();
+  }, [loadResources]);
 
   // Load thread on selection change
   useEffect(() => {
@@ -163,6 +210,7 @@ export function InboxView({
     activeConversationId: selectedConversationId,
     enabled: typeof window !== "undefined",
     onReconcile: () => {
+      setHasConflict(false);
       void loadConversations(true);
       if (selectedConversationId) void loadThread(selectedConversationId);
     },
@@ -176,8 +224,57 @@ export function InboxView({
     },
     onAccessRevoked: (reason) => {
       setActionError(`Realtime access revoked (${reason.code})`);
-    }
+    },
+    onConnectionState: setConnectionState
   });
+
+  useEffect(() => {
+    const online = () => {
+      setConnectionState("reconnecting");
+      void loadConversations(true);
+      if (selectedConversationId) void loadThread(selectedConversationId);
+    };
+    const offline = () => setConnectionState("offline");
+    window.addEventListener("online", online);
+    window.addEventListener("offline", offline);
+    return () => {
+      window.removeEventListener("online", online);
+      window.removeEventListener("offline", offline);
+    };
+  }, [loadConversations, loadThread, selectedConversationId]);
+
+  useEffect(() => {
+    if (!showTemplateModal) return;
+    const dialog = templateDialogRef.current;
+    const focusable = () =>
+      Array.from(
+        dialog?.querySelectorAll<HTMLElement>(
+          "button:not([disabled]), select:not([disabled]), input:not([disabled]), textarea:not([disabled])"
+        ) ?? []
+      );
+    focusable()[0]?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setShowTemplateModal(false);
+        templateTriggerRef.current?.focus();
+      }
+      if (event.key === "Tab") {
+        const items = focusable();
+        const first = items[0];
+        const last = items.at(-1);
+        if (!first || !last) return;
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    dialog?.addEventListener("keydown", onKeyDown);
+    return () => dialog?.removeEventListener("keydown", onKeyDown);
+  }, [showTemplateModal]);
 
   // Auto-scroll timeline to bottom
   useEffect(() => {
@@ -198,16 +295,13 @@ export function InboxView({
     if (!activeConversation) return;
     try {
       setActionError(null);
-      const updateBody: UpdateConversationRequest = {
-        status: newStatus,
-        version: activeConversation.version
-      };
-
-      const updated = await updateConversation(
+      const updated = await performConversationOperation(
         organizationId,
         activeConversation.id,
-        updateBody,
-        undefined,
+        {
+          version: activeConversation.version,
+          action: newStatus === "resolved" ? "resolve" : "reopen"
+        },
         fetcher
       );
 
@@ -217,9 +311,7 @@ export function InboxView({
       setTimeout(() => setActionSuccess(null), 3000);
     } catch (err: unknown) {
       if (err instanceof ApiError && err.status === 409) {
-        setActionError("Concurrency conflict: Conversation was modified elsewhere. Refreshed.");
-        await loadThread(activeConversation.id);
-        await loadConversations(true);
+        setHasConflict(true);
       } else {
         const msg = err instanceof Error ? err.message : "Failed to update conversation";
         setActionError(msg);
@@ -232,16 +324,10 @@ export function InboxView({
     if (!activeConversation) return;
     try {
       setActionError(null);
-      const updateBody: UpdateConversationRequest = {
-        assignedToUserId: sessionUserId,
-        version: activeConversation.version
-      };
-
-      const updated = await updateConversation(
+      const updated = await performConversationOperation(
         organizationId,
         activeConversation.id,
-        updateBody,
-        undefined,
+        { version: activeConversation.version, action: "claim" },
         fetcher
       );
 
@@ -251,9 +337,7 @@ export function InboxView({
       setTimeout(() => setActionSuccess(null), 3000);
     } catch (err: unknown) {
       if (err instanceof ApiError && err.status === 409) {
-        setActionError("Concurrency conflict: Conversation was modified elsewhere. Refreshed.");
-        await loadThread(activeConversation.id);
-        await loadConversations(true);
+        setHasConflict(true);
       } else {
         const msg = err instanceof Error ? err.message : "Failed to assign conversation";
         setActionError(msg);
@@ -261,10 +345,88 @@ export function InboxView({
     }
   };
 
+  const handleConflictReload = async () => {
+    if (!activeConversation) return;
+    await Promise.all([loadThread(activeConversation.id), loadConversations(true)]);
+    setHasConflict(false);
+  };
+
+  const handleAddNote = async () => {
+    if (!activeConversation || !noteBody.trim()) return;
+    try {
+      const updated = await performConversationOperation(
+        organizationId,
+        activeConversation.id,
+        { version: activeConversation.version, action: "note", body: noteBody.trim() },
+        fetcher
+      );
+      setActiveConversation(updated);
+      setNoteBody("");
+      await loadThread(updated.id);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) setHasConflict(true);
+      else setActionError(error instanceof Error ? error.message : "Failed to add note");
+    }
+  };
+
+  const handleToggleTag = async (tagId: string, applied: boolean) => {
+    if (!activeConversation) return;
+    try {
+      const updated = await performConversationOperation(
+        organizationId,
+        activeConversation.id,
+        { version: activeConversation.version, action: applied ? "tag.remove" : "tag.add", tagId },
+        fetcher
+      );
+      setActiveConversation(updated);
+      await loadThread(updated.id);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) setHasConflict(true);
+      else setActionError(error instanceof Error ? error.message : "Failed to update tag");
+    }
+  };
+
+  const handleSaveFilter = async () => {
+    if (!filterName.trim()) return;
+    await saveInboxFilter(
+      organizationId,
+      {
+        name: filterName.trim(),
+        definition: {
+          ...(statusFilter === "all" ? {} : { status: statusFilter }),
+          ...(assigneeFilter === "all" ? {} : { assignedTo: assigneeFilter }),
+          ...(queueFilter === "all" ? {} : { queueId: queueFilter }),
+          ...(searchQuery.trim() ? { search: searchQuery.trim() } : {})
+        },
+        isDefault: false
+      },
+      fetcher
+    );
+    setFilterName("");
+    await loadResources();
+  };
+
+  const applySavedFilter = (
+    definition: InboxWorkspaceResourcesResponse["savedFilters"][number]["definition"]
+  ) => {
+    setStatusFilter(definition.status ?? "all");
+    const assigned = definition.assignedTo;
+    setAssigneeFilter(assigned === "me" || assigned === "unassigned" ? assigned : "all");
+    setQueueFilter(definition.queueId ?? "all");
+    setSearchQuery(definition.search ?? "");
+  };
+
+  const handleDeleteFilter = async () => {
+    if (!selectedSavedFilterId) return;
+    await deleteInboxFilter(organizationId, selectedSavedFilterId, fetcher);
+    setSelectedSavedFilterId("");
+    await loadResources();
+  };
+
   // Handle message sending
   const handleSendMessage = async () => {
     const text = composerText.trim();
-    if (!text || !activeConversation || isSending) return;
+    if (!text || !activeConversation || isSending || connectionState === "offline") return;
 
     // Optimistic message
     const tempId = `temp-${Date.now()}`;
@@ -322,6 +484,53 @@ export function InboxView({
       );
     } finally {
       setIsSending(false);
+    }
+  };
+
+  const handleMediaSelected = async (file: File | undefined) => {
+    if (!file || !activeConversation || connectionState === "offline") return;
+    try {
+      setMediaState("uploading");
+      const session = await createAttachmentUploadSession(
+        organizationId,
+        { fileName: file.name, contentType: file.type, byteSize: file.size },
+        fetcher
+      );
+      await uploadAttachmentBytes(session, file, fetcher);
+      await completeAttachmentUpload(organizationId, session.attachmentId, fetcher);
+      setMediaState("scanning");
+      let attachment = await getAttachment(organizationId, session.attachmentId, fetcher);
+      for (let attempt = 0; attachment.status === "quarantine" && attempt < 20; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 750));
+        attachment = await getAttachment(organizationId, session.attachmentId, fetcher);
+      }
+      if (attachment.status !== "clean") {
+        throw new Error(
+          attachment.status === "rejected"
+            ? "Attachment rejected by malware scanning"
+            : "Attachment scan is still pending; try again shortly"
+        );
+      }
+      setMediaState("sending");
+      const sent = await sendOutboundMessage(
+        organizationId,
+        activeConversation.id,
+        {
+          type: "media",
+          attachmentId: attachment.id,
+          ...(composerText.trim() ? { caption: composerText.trim() } : {})
+        },
+        `media-${attachment.id}`,
+        fetcher
+      );
+      setMessages((current) => [...current, sent]);
+      setComposerText("");
+      setMediaState(null);
+    } catch (error) {
+      setMediaState(null);
+      setActionError(error instanceof Error ? error.message : "Failed to send attachment");
+    } finally {
+      if (mediaInputRef.current) mediaInputRef.current.value = "";
     }
   };
 
@@ -494,6 +703,28 @@ export function InboxView({
 
   return (
     <div className="inbox-container" data-testid="inbox-container">
+      {connectionState !== "connected" && (
+        <div
+          className={`connection-banner ${connectionState}`}
+          role="status"
+          aria-live="polite"
+          data-testid="connection-state"
+        >
+          {connectionState === "offline" ? t.offline : t.reconnecting}
+        </div>
+      )}
+      {hasConflict && (
+        <div className="conflict-banner" role="alert" data-testid="conflict-state">
+          <span>{t.conflict}</span>
+          <button
+            type="button"
+            className="btn btn-sm btn-secondary"
+            onClick={() => void handleConflictReload()}
+          >
+            {t.reload}
+          </button>
+        </div>
+      )}
       {/* Toast banners */}
       {actionError && (
         <div className="inbox-toast error" role="alert" data-testid="inbox-error">
@@ -516,16 +747,27 @@ export function InboxView({
       <aside className="inbox-sidebar" role="region" aria-label="Conversation list">
         <div className="inbox-sidebar-header">
           <div className="inbox-title-row">
-            <h2>Inbox</h2>
-            <button
-              type="button"
-              className="btn btn-sm btn-ghost"
-              onClick={() => void loadConversations(true)}
-              title="Refresh inbox"
-              aria-label="Refresh conversations"
-            >
-              🔄
-            </button>
+            <h2>{t.inbox}</h2>
+            <div className="inbox-title-actions">
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                onClick={() => setLocale((current) => (current === "en" ? "id" : "en"))}
+                aria-label={`Switch language: ${t.language}`}
+                data-testid="locale-toggle"
+              >
+                {locale.toUpperCase()}
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                onClick={() => void loadConversations(true)}
+                title="Refresh inbox"
+                aria-label="Refresh conversations"
+              >
+                🔄
+              </button>
+            </div>
           </div>
 
           {/* Search bar */}
@@ -537,7 +779,7 @@ export function InboxView({
               id={searchInputId}
               type="text"
               className="form-input"
-              placeholder="Search phone or name..."
+              placeholder={t.search}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               aria-label="Search conversations"
@@ -546,61 +788,156 @@ export function InboxView({
 
           {/* Status Filter Tabs */}
           <div className="inbox-tabs" role="tablist" aria-label="Status filters">
-            {(["all", "open", "pending", "resolved", "closed"] as StatusFilter[]).map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                role="tab"
-                aria-selected={statusFilter === tab}
-                className={`inbox-tab ${statusFilter === tab ? "active" : ""}`}
-                onClick={() => setStatusFilter(tab)}
-              >
-                {tab.charAt(0).toUpperCase() + tab.slice(1)}
-              </button>
-            ))}
+            {(["all", "new", "open", "pending", "resolved", "closed"] as StatusFilter[]).map(
+              (tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  role="tab"
+                  aria-selected={statusFilter === tab}
+                  className={`inbox-tab ${statusFilter === tab ? "active" : ""}`}
+                  onClick={() => setStatusFilter(tab)}
+                >
+                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                </button>
+              )
+            )}
           </div>
 
           {/* Assignee Filter */}
           <div className="inbox-assignee-filter">
-            <span>Assignee:</span>
+            <span>{t.assignee}:</span>
             <select
               className="form-select"
               value={assigneeFilter}
               onChange={(e) => setAssigneeFilter(e.target.value as AssigneeFilter)}
               aria-label="Filter by assignee"
             >
-              <option value="all">All Assignees</option>
-              <option value="me">Assigned to Me</option>
-              <option value="unassigned">Unassigned</option>
+              <option value="all">{t.allAssignees}</option>
+              <option value="me">{t.mine}</option>
+              <option value="unassigned">{t.unassigned}</option>
             </select>
+          </div>
+          <div className="inbox-assignee-filter">
+            <span>{t.queue}:</span>
+            <select
+              className="form-select"
+              value={queueFilter}
+              onChange={(event) => setQueueFilter(event.target.value)}
+              aria-label="Filter by queue"
+              data-testid="queue-filter"
+            >
+              <option value="all">{t.allQueues}</option>
+              {resources.queues.map((queue) => (
+                <option key={queue.id} value={queue.id}>
+                  {queue.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="saved-filter-controls">
+            <label htmlFor="saved-filter-select" className="sr-only">
+              {t.filters}
+            </label>
+            <select
+              id="saved-filter-select"
+              className="form-select"
+              value={selectedSavedFilterId}
+              onChange={(event) => {
+                setSelectedSavedFilterId(event.target.value);
+                const filter = resources.savedFilters.find(
+                  (item) => item.id === event.target.value
+                );
+                if (filter) applySavedFilter(filter.definition);
+              }}
+            >
+              <option value="">{t.filters}</option>
+              {resources.savedFilters.map((filter) => (
+                <option key={filter.id} value={filter.id}>
+                  {filter.name}
+                </option>
+              ))}
+            </select>
+            {selectedSavedFilterId && (
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                onClick={() => void handleDeleteFilter()}
+              >
+                {t.remove}
+              </button>
+            )}
+            <div className="saved-filter-create">
+              <input
+                className="form-input"
+                value={filterName}
+                onChange={(event) => setFilterName(event.target.value)}
+                placeholder={t.filterName}
+                aria-label={t.filterName}
+              />
+              <button
+                type="button"
+                className="btn btn-sm btn-secondary"
+                disabled={!filterName.trim()}
+                onClick={() => void handleSaveFilter()}
+              >
+                +
+              </button>
+            </div>
           </div>
         </div>
 
         {/* Conversation List */}
-        <div className="inbox-conversation-list" role="list">
-          {loadingConversations ? (
+        <div className="inbox-conversation-list" role="listbox" aria-label="Conversations">
+          {loadingConversations && conversations.length === 0 ? (
             <div className="inbox-empty-state" data-testid="inbox-loading">
               <span className="spinner" />
-              <p>Loading conversations...</p>
+              <p>{t.loading}</p>
             </div>
           ) : filteredConversations.length === 0 ? (
             <div className="inbox-empty-state" data-testid="inbox-empty">
-              <p>No conversations found</p>
+              <p>{t.empty}</p>
             </div>
           ) : (
             filteredConversations.map((conv) => {
               const isSelected = conv.id === selectedConversationId;
               return (
-                <div
+                <button
                   key={conv.id}
-                  role="listitem"
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
                   data-testid={`conv-item-${conv.id}`}
                   className={`inbox-conv-item ${isSelected ? "selected" : ""}`}
                   onClick={() => setSelectedConversationId(conv.id)}
-                  tabIndex={0}
+                  tabIndex={
+                    isSelected || (!selectedConversationId && conv === filteredConversations[0])
+                      ? 0
+                      : -1
+                  }
+                  ref={(element) => {
+                    conversationButtonRefs.current[filteredConversations.indexOf(conv)] = element;
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
                       setSelectedConversationId(conv.id);
+                    }
+                    const index = filteredConversations.indexOf(conv);
+                    const target =
+                      e.key === "ArrowDown"
+                        ? index + 1
+                        : e.key === "ArrowUp"
+                          ? index - 1
+                          : e.key === "Home"
+                            ? 0
+                            : e.key === "End"
+                              ? filteredConversations.length - 1
+                              : null;
+                    if (target !== null) {
+                      e.preventDefault();
+                      const next = Math.max(0, Math.min(filteredConversations.length - 1, target));
+                      conversationButtonRefs.current[next]?.focus();
                     }
                   }}
                 >
@@ -633,7 +970,7 @@ export function InboxView({
                       <span className="badge badge-mine">Me</span>
                     )}
                   </div>
-                </div>
+                </button>
               );
             })
           )}
@@ -717,6 +1054,70 @@ export function InboxView({
               </div>
             </header>
 
+            <section className="thread-operations-panel" aria-label="Internal collaboration">
+              <div className="thread-tags">
+                <span className="operations-label">{t.tags}</span>
+                <div className="tag-picker" role="group" aria-label={t.tags}>
+                  {resources.tags.length === 0 ? (
+                    <span className="operations-empty">—</span>
+                  ) : (
+                    resources.tags.map((tag) => {
+                      const applied = conversationTags.some((item) => item.id === tag.id);
+                      return (
+                        <button
+                          type="button"
+                          key={tag.id}
+                          className={`tag-chip ${applied ? "applied" : ""}`}
+                          style={{ "--tag-color": tag.color } as React.CSSProperties}
+                          aria-pressed={applied}
+                          onClick={() => void handleToggleTag(tag.id, applied)}
+                        >
+                          {tag.name}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+              <form
+                className="private-note-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void handleAddNote();
+                }}
+              >
+                <label htmlFor="private-note-input" className="operations-label">
+                  {t.note}
+                </label>
+                <input
+                  id="private-note-input"
+                  className="form-input"
+                  value={noteBody}
+                  onChange={(event) => setNoteBody(event.target.value)}
+                  placeholder={t.notePlaceholder}
+                />
+                <button
+                  type="submit"
+                  className="btn btn-sm btn-secondary"
+                  disabled={!noteBody.trim()}
+                >
+                  {t.addNote}
+                </button>
+              </form>
+              {notes.length > 0 && (
+                <details className="private-notes-history">
+                  <summary>
+                    {t.note} ({notes.length})
+                  </summary>
+                  <ol>
+                    {notes.map((note) => (
+                      <li key={note.id}>{note.body}</li>
+                    ))}
+                  </ol>
+                </details>
+              )}
+            </section>
+
             {/* Message Timeline */}
             <div
               className="thread-timeline"
@@ -750,6 +1151,27 @@ export function InboxView({
                           <span className="message-time">{formatTime(msg.createdAt)}</span>
                           {renderStatusCheckmark(msg)}
                         </div>
+                        {msg.status === "failed" && (
+                          <div className="failed-message-actions">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setComposerText(msg.content);
+                                setMessages((current) => current.filter((item) => item !== msg));
+                              }}
+                            >
+                              {t.retry}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setMessages((current) => current.filter((item) => item !== msg))
+                              }
+                            >
+                              {t.remove}
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
@@ -760,7 +1182,11 @@ export function InboxView({
 
             {/* Message Composer */}
             <footer className="thread-composer-wrapper">
-              {!canSend ? (
+              {connectionState === "offline" ? (
+                <div className="composer-disabled-banner" data-testid="composer-offline">
+                  {t.offline}
+                </div>
+              ) : !canSend ? (
                 <div className="composer-disabled-banner" data-testid="composer-disabled">
                   You need the Agent or Administrator role to send WhatsApp messages.
                 </div>
@@ -811,10 +1237,34 @@ export function InboxView({
                     data-testid="composer-input"
                   />
                   <div className="composer-actions">
+                    <input
+                      ref={mediaInputRef}
+                      type="file"
+                      className="sr-only"
+                      accept="image/jpeg,image/png,image/webp,application/pdf,audio/ogg,audio/mpeg,video/mp4"
+                      onChange={(event) => void handleMediaSelected(event.target.files?.[0])}
+                      data-testid="media-input"
+                      aria-label={t.attach}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-secondary composer-tpl-btn"
+                      onClick={() => mediaInputRef.current?.click()}
+                      disabled={mediaState !== null}
+                      aria-label={t.attach}
+                      data-testid="btn-attach-media"
+                    >
+                      {mediaState
+                        ? mediaState === "scanning"
+                          ? t.scanning
+                          : t.sending
+                        : `📎 ${t.attach}`}
+                    </button>
                     <button
                       type="button"
                       className="btn btn-secondary composer-tpl-btn"
                       onClick={() => void handleOpenTemplateModal()}
+                      ref={templateTriggerRef}
                       data-testid="btn-open-template-composer"
                       title="Send WhatsApp Template"
                     >
@@ -826,7 +1276,7 @@ export function InboxView({
                       disabled={!composerText.trim() || isSending}
                       data-testid="composer-send-btn"
                     >
-                      {isSending ? "Sending..." : "Send ↵"}
+                      {isSending ? t.sending : t.send}
                     </button>
                   </div>
                 </form>
@@ -842,7 +1292,7 @@ export function InboxView({
                 aria-labelledby="template-modal-title"
                 data-testid="template-modal"
               >
-                <div className="modal-card">
+                <div className="modal-card" ref={templateDialogRef}>
                   <header className="modal-header">
                     <h3 id="template-modal-title">Send WhatsApp Template</h3>
                     <button

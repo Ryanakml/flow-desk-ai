@@ -1,11 +1,13 @@
 import {
   type Problem,
   ConversationOperationRequestSchema,
+  CreateSavedFilterRequestSchema,
   ConversationDetailResponseSchema,
   ConversationSchema,
   CreateOutboundMessageRequestSchema,
   ListConversationsQuerySchema,
   ListConversationsResponseSchema,
+  InboxWorkspaceResourcesResponseSchema,
   MessageSchema,
   TemplatePreviewRequestSchema,
   UpdateConversationRequestSchema
@@ -16,7 +18,14 @@ import {
   getConversationById,
   getTemplateByNameAndLanguage,
   getAttachmentById,
+  createSavedFilter,
+  deleteSavedFilter,
+  listConversationNotes,
+  listConversationTags,
   listConversations,
+  listSavedFilters,
+  listTags,
+  listVisibleQueues,
   listMessagesByConversation,
   OptimisticConcurrencyError,
   ClosedConversationError,
@@ -181,7 +190,7 @@ export function createConversationsRouter(options: ConversationsRouterOptions): 
         );
       }
 
-      const { status, assignedTo, cursor, limit } = parseResult.data;
+      const { status, assignedTo, queueId, cursor, limit } = parseResult.data;
 
       let assignedToUserId: string | null | undefined;
       if (assignedTo === "me") {
@@ -197,6 +206,7 @@ export function createConversationsRouter(options: ConversationsRouterOptions): 
           organizationId: orgId,
           status,
           assignedToUserId,
+          queueId,
           cursor,
           limit
         })
@@ -208,6 +218,91 @@ export function createConversationsRouter(options: ConversationsRouterOptions): 
       });
 
       return response.status(200).json(payload);
+    }
+  );
+
+  router.get(
+    "/workspace-resources",
+    createRequireOrgPermissionMiddleware(options.db, "conversation:read"),
+    async (request: Request, response: Response) => {
+      const organizationId = request.params["orgId"] as string;
+      const userId = request.user!.id;
+      const canManageAllQueues = ["owner", "admin", "supervisor"].includes(request.member!.roleKey);
+      const resources = await runInTenantTransaction(options.db, { organizationId }, async (db) => {
+        const [queues, tags, savedFilters] = await Promise.all([
+          listVisibleQueues(db, { organizationId, userId, canManageAllQueues }),
+          listTags(db, organizationId),
+          listSavedFilters(db, organizationId, userId)
+        ]);
+        return { queues, tags, savedFilters };
+      });
+      return response.json(
+        InboxWorkspaceResourcesResponseSchema.parse({
+          queues: resources.queues.map(({ id, name, slug }) => ({ id, name, slug })),
+          tags: resources.tags.map(({ id, name, color }) => ({ id, name, color })),
+          savedFilters: resources.savedFilters.map((filter) => ({
+            ...filter,
+            createdAt: filter.createdAt.toISOString(),
+            updatedAt: filter.updatedAt.toISOString()
+          }))
+        })
+      );
+    }
+  );
+
+  router.post(
+    "/saved-filters",
+    createRequireOrgPermissionMiddleware(options.db, "conversation:read"),
+    async (request: Request, response: Response) => {
+      const parsed = CreateSavedFilterRequestSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return sendProblem(
+          response,
+          400,
+          "VALIDATION_ERROR",
+          "Invalid saved filter",
+          parsed.error.issues.map((issue) => issue.message).join(", ")
+        );
+      }
+      const organizationId = request.params["orgId"] as string;
+      const filter = await runInTenantTransaction(options.db, { organizationId }, (db) =>
+        createSavedFilter(db, {
+          organizationId,
+          userId: request.user!.id,
+          ...parsed.data
+        })
+      );
+      return response.status(201).json({
+        ...filter,
+        createdAt: filter.createdAt.toISOString(),
+        updatedAt: filter.updatedAt.toISOString()
+      });
+    }
+  );
+
+  router.delete(
+    "/saved-filters/:filterId",
+    createRequireOrgPermissionMiddleware(options.db, "conversation:read"),
+    async (request: Request, response: Response) => {
+      const organizationId = request.params["orgId"] as string;
+      const removed = await runInTenantTransaction(options.db, { organizationId }, (db) =>
+        deleteSavedFilter(
+          db,
+          organizationId,
+          request.user!.id,
+          request.params["filterId"] as string
+        )
+      );
+      if (!removed) {
+        return sendProblem(
+          response,
+          404,
+          "SAVED_FILTER_NOT_FOUND",
+          "Saved filter not found",
+          "The saved filter does not exist or belongs to another user."
+        );
+      }
+      return response.status(204).send();
     }
   );
 
@@ -365,8 +460,12 @@ export function createConversationsRouter(options: ConversationsRouterOptions): 
         async (db) => {
           const conversation = await getConversationById(db, orgId, id);
           if (!conversation) return null;
-          const messages = await listMessagesByConversation(db, orgId, id, 100);
-          return { conversation, messages };
+          const [messages, notes, tags] = await Promise.all([
+            listMessagesByConversation(db, orgId, id, 100),
+            listConversationNotes(db, orgId, id),
+            listConversationTags(db, orgId, id)
+          ]);
+          return { conversation, messages, notes, tags };
         }
       );
       const conversation = detail?.conversation;
@@ -382,7 +481,12 @@ export function createConversationsRouter(options: ConversationsRouterOptions): 
 
       const payload = ConversationDetailResponseSchema.parse({
         conversation: serializeConversation(conversation),
-        messages: detail.messages.map(serializeMessage)
+        messages: detail.messages.map(serializeMessage),
+        notes: detail.notes.map((note) => ({
+          ...note,
+          createdAt: note.createdAt.toISOString()
+        })),
+        tags: detail.tags.map(({ id: tagId, name, color }) => ({ id: tagId, name, color }))
       });
 
       return response.status(200).json(payload);

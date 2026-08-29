@@ -401,6 +401,7 @@ export type Message = z.infer<typeof MessageSchema>;
 export const ListConversationsQuerySchema = z.object({
   status: ConversationStatusSchema.optional(),
   assignedTo: z.string().optional(),
+  queueId: z.string().uuid().optional(),
   cursor: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(20)
 });
@@ -414,9 +415,53 @@ export type ListConversationsResponse = z.infer<typeof ListConversationsResponse
 
 export const ConversationDetailResponseSchema = z.object({
   conversation: ConversationSchema,
-  messages: z.array(MessageSchema)
+  messages: z.array(MessageSchema),
+  notes: z
+    .array(
+      z.object({
+        id: z.string().uuid(),
+        authorUserId: z.string().uuid(),
+        body: z.string(),
+        createdAt: z.string().datetime()
+      })
+    )
+    .default([]),
+  tags: z
+    .array(z.object({ id: z.string().uuid(), name: z.string(), color: z.string() }))
+    .default([])
 });
 export type ConversationDetailResponse = z.infer<typeof ConversationDetailResponseSchema>;
+
+export const SavedFilterDefinitionSchema = z.object({
+  status: ConversationStatusSchema.optional(),
+  assignedTo: z.string().optional(),
+  queueId: z.string().uuid().optional(),
+  search: z.string().max(200).optional()
+});
+export type SavedFilterDefinition = z.infer<typeof SavedFilterDefinitionSchema>;
+
+export const InboxWorkspaceResourcesResponseSchema = z.object({
+  queues: z.array(z.object({ id: z.string().uuid(), name: z.string(), slug: z.string() })),
+  tags: z.array(z.object({ id: z.string().uuid(), name: z.string(), color: z.string() })),
+  savedFilters: z.array(
+    z.object({
+      id: z.string().uuid(),
+      name: z.string(),
+      definition: SavedFilterDefinitionSchema,
+      isDefault: z.boolean(),
+      createdAt: z.string().datetime(),
+      updatedAt: z.string().datetime()
+    })
+  )
+});
+export type InboxWorkspaceResourcesResponse = z.infer<typeof InboxWorkspaceResourcesResponseSchema>;
+
+export const CreateSavedFilterRequestSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  definition: SavedFilterDefinitionSchema,
+  isDefault: z.boolean().default(false)
+});
+export type CreateSavedFilterRequest = z.infer<typeof CreateSavedFilterRequestSchema>;
 
 export const UpdateConversationRequestSchema = z
   .object({

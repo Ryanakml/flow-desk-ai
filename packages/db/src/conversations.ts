@@ -441,6 +441,7 @@ export interface ListConversationsOptions {
   organizationId: string;
   status?: ConversationStatus | undefined;
   assignedToUserId?: string | null | undefined;
+  queueId?: string | undefined;
   cursor?: string | undefined;
   limit?: number | undefined;
 }
@@ -472,6 +473,11 @@ export async function listConversations(
   } else if (options.assignedToUserId !== undefined) {
     values.push(options.assignedToUserId);
     conditions.push(`assigned_to_user_id = $${values.length}`);
+  }
+
+  if (options.queueId) {
+    values.push(options.queueId);
+    conditions.push(`queue_id = $${values.length}`);
   }
 
   if (options.cursor) {

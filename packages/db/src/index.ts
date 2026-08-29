@@ -107,12 +107,21 @@ export {
   addQueueMember,
   removeQueueMember,
   listVisibleQueues,
+  listTags,
+  listConversationNotes,
+  listConversationTags,
+  listSavedFilters,
+  createSavedFilter,
+  deleteSavedFilter,
   type TeamRecord,
   type QueueRecord,
   type QueueRoutingStrategy,
   type QueueStatus,
   type CreateTeamInput,
-  type CreateQueueInput
+  type CreateQueueInput,
+  type TagRecord,
+  type ConversationNoteRecord,
+  type SavedFilterRecord
 } from "./operational-inbox.js";
 export {
   performConversationOperation,

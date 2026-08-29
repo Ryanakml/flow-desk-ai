@@ -25,6 +25,14 @@ import {
   MessageSchema,
   type UpdateConversationRequest,
   type ConversationOperationRequest,
+  type InboxWorkspaceResourcesResponse,
+  InboxWorkspaceResourcesResponseSchema,
+  type CreateSavedFilterRequest,
+  type CreateUploadSessionRequest,
+  type CreateUploadSessionResponse,
+  CreateUploadSessionResponseSchema,
+  type AttachmentDetailResponse,
+  AttachmentDetailResponseSchema,
   type CreateOutboundMessageRequest,
   type TemplatePreviewRequest,
   type TemplatePreviewResponse,
@@ -220,6 +228,7 @@ export async function listConversations(
   query?: {
     status?: string | undefined;
     assignedTo?: string | undefined;
+    queueId?: string | undefined;
     cursor?: string | undefined;
     limit?: number | undefined;
   },
@@ -228,6 +237,7 @@ export async function listConversations(
   const params = new URLSearchParams();
   if (query?.status) params.set("status", query.status);
   if (query?.assignedTo) params.set("assignedTo", query.assignedTo);
+  if (query?.queueId) params.set("queueId", query.queueId);
   if (query?.cursor) params.set("cursor", query.cursor);
   if (query?.limit) params.set("limit", String(query.limit));
 
@@ -310,6 +320,92 @@ export async function performConversationOperation(
     body: JSON.stringify(body)
   });
   return ConversationSchema.parse(await handleResponse<unknown>(res));
+}
+
+export async function getInboxWorkspaceResources(
+  orgId: string,
+  fetcher: typeof fetch = fetch
+): Promise<InboxWorkspaceResourcesResponse> {
+  const response = await fetcher(
+    `/api/v1/organizations/${orgId}/conversations/workspace-resources`
+  );
+  return InboxWorkspaceResourcesResponseSchema.parse(await handleResponse<unknown>(response));
+}
+
+export async function saveInboxFilter(
+  orgId: string,
+  body: CreateSavedFilterRequest,
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const response = await fetcher(`/api/v1/organizations/${orgId}/conversations/saved-filters`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  await handleResponse(response);
+}
+
+export async function deleteInboxFilter(
+  orgId: string,
+  filterId: string,
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const response = await fetcher(
+    `/api/v1/organizations/${orgId}/conversations/saved-filters/${filterId}`,
+    { method: "DELETE" }
+  );
+  if (!response.ok) await handleResponse(response);
+}
+
+export async function createAttachmentUploadSession(
+  orgId: string,
+  body: CreateUploadSessionRequest,
+  fetcher: typeof fetch = fetch
+): Promise<CreateUploadSessionResponse> {
+  const response = await fetcher(`/api/v1/organizations/${orgId}/attachments/upload-session`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  return CreateUploadSessionResponseSchema.parse(await handleResponse<unknown>(response));
+}
+
+export async function uploadAttachmentBytes(
+  session: CreateUploadSessionResponse,
+  file: File,
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const response = await fetcher(session.uploadUrl, {
+    method: "PUT",
+    headers: session.headers,
+    body: file
+  });
+  if (!response.ok) throw new ApiError("Attachment upload failed", response.status);
+}
+
+export async function completeAttachmentUpload(
+  orgId: string,
+  attachmentId: string,
+  fetcher: typeof fetch = fetch
+): Promise<AttachmentDetailResponse> {
+  const response = await fetcher(
+    `/api/v1/organizations/${orgId}/attachments/${attachmentId}/complete`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}"
+    }
+  );
+  return AttachmentDetailResponseSchema.parse(await handleResponse<unknown>(response));
+}
+
+export async function getAttachment(
+  orgId: string,
+  attachmentId: string,
+  fetcher: typeof fetch = fetch
+): Promise<AttachmentDetailResponse> {
+  const response = await fetcher(`/api/v1/organizations/${orgId}/attachments/${attachmentId}`);
+  return AttachmentDetailResponseSchema.parse(await handleResponse<unknown>(response));
 }
 
 export interface ConversationTemplateItem {

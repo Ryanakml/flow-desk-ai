@@ -6,6 +6,12 @@ import {
   createQueue,
   createTeam,
   listVisibleQueues,
+  listTags,
+  listConversationNotes,
+  listConversationTags,
+  listSavedFilters,
+  createSavedFilter,
+  deleteSavedFilter,
   removeQueueMember,
   type QueueRecord,
   type TeamRecord
@@ -138,5 +144,52 @@ describe("operational inbox persistence", () => {
     expect(calls[0]!.values).toEqual(["org-1", "user-1", false]);
     expect(calls[0]!.sql).toContain("queue_member.status = 'active'");
     expect(calls[1]!.values).toEqual(["org-1", "supervisor-1", true]);
+  });
+
+  it("reads private collaboration resources inside tenant-scoped queries", async () => {
+    const tag = { id: "tag-1", organizationId: "org-1", name: "VIP", color: "#FF0000" };
+    const note = { id: "note-1", authorUserId: "user-1", body: "Internal", createdAt: new Date() };
+    const filter = {
+      id: "filter-1",
+      name: "Mine",
+      definition: { assignedTo: "me" },
+      isDefault: false,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    const { db, calls } = recordingDb([
+      result([tag]),
+      result([note]),
+      result([tag]),
+      result([filter])
+    ]);
+    expect(await listTags(db, "org-1")).toEqual([tag]);
+    expect(await listConversationNotes(db, "org-1", "conv-1")).toEqual([note]);
+    expect(await listConversationTags(db, "org-1", "conv-1")).toEqual([tag]);
+    expect(await listSavedFilters(db, "org-1", "user-1")).toEqual([filter]);
+    expect(calls.every((call) => call.values[0] === "org-1")).toBe(true);
+  });
+
+  it("upserts and deletes only the active user's saved filters", async () => {
+    const filter = {
+      id: "filter-1",
+      name: "Urgent",
+      definition: { status: "open" },
+      isDefault: true,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    const { db, calls } = recordingDb([result([]), result([filter]), result([], 1)]);
+    expect(
+      await createSavedFilter(db, {
+        organizationId: "org-1",
+        userId: "user-1",
+        name: "Urgent",
+        definition: { status: "open" },
+        isDefault: true
+      })
+    ).toBe(filter);
+    expect(await deleteSavedFilter(db, "org-1", "user-1", "filter-1")).toBe(true);
+    expect(calls[2]!.values).toEqual(["org-1", "user-1", "filter-1"]);
   });
 });
