@@ -5,13 +5,35 @@ import { fileURLToPath } from "node:url";
 import pg from "pg";
 
 const { Client } = pg;
-const migrationDirectory = fileURLToPath(new URL("../migrations/", import.meta.url));
+if (!process.env.DATABASE_MIGRATOR_URL) {
+  try {
+    const envPath = fileURLToPath(new URL("../../../.env", import.meta.url));
+    const envContent = await readFile(envPath, "utf8");
+    for (const line of envContent.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const idx = trimmed.indexOf("=");
+      if (idx > 0) {
+        const key = trimmed.slice(0, idx).trim();
+        let val = trimmed.slice(idx + 1).trim();
+        if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
+        if (!process.env[key]) {
+          process.env[key] = val;
+        }
+      }
+    }
+  } catch {
+    // ignore if .env does not exist
+  }
+}
+
 const connectionString = process.env.DATABASE_MIGRATOR_URL;
 
 if (!connectionString) {
   throw new Error("DATABASE_MIGRATOR_URL is required; migrations never fall back to DATABASE_URL.");
 }
 
+const migrationDirectory = fileURLToPath(new URL("../migrations/", import.meta.url));
 const migrations = (await readdir(migrationDirectory))
   .filter((file) => /^\d+_[a-z0-9_]+\.sql$/.test(file))
   .sort();
