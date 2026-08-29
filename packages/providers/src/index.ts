@@ -72,3 +72,10 @@ export {
   OpenAiEmbeddingProvider,
   type OpenAiEmbeddingProviderConfig
 } from "./embedding.js";
+export {
+  type AiChatResponse,
+  type AiChatProvider,
+  FakeAiChatProvider,
+  OpenAiChatProvider,
+  type OpenAiChatProviderConfig
+} from "./chat.js";

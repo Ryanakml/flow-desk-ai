@@ -75,6 +75,7 @@ export {
 export {
   findOrCreateConversation,
   getConversationById,
+  getConversationWithMessages,
   getMessageById,
   updateConversationStatus,
   assignConversation,
@@ -91,6 +92,7 @@ export {
   ClosedConversationError,
   type ConversationRecord,
   type MessageRecord,
+  type ConversationWithMessagesRecord,
   type FindOrCreateConversationInput,
   type CreateMessageInput,
   type ListConversationsOptions,
