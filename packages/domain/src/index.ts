@@ -69,3 +69,13 @@ export {
   MEDIA_SIZE_LIMITS,
   type MediaValidationResult
 } from "./media.js";
+export {
+  buildCitations,
+  formatKnowledgeContext,
+  assemblePromptContext,
+  type Citation,
+  type RagRetrievalResult,
+  type ConversationMessageContext,
+  type AssembledPromptContext,
+  type FormatPromptParams
+} from "./rag.js";
