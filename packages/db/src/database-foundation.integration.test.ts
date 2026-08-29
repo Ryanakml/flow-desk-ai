@@ -52,7 +52,8 @@ describe("database foundation", () => {
       "0011_m3_conversation_operations.sql",
       "0012_m3_realtime_versions.sql",
       "0013_m3_whatsapp_templates.sql",
-      "0014_m3_service_window.sql"
+      "0014_m3_service_window.sql",
+      "0015_m3_media_quarantine.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -127,6 +128,8 @@ describe("database foundation", () => {
        WHERE table_schema = 'flowdesk' AND column_name = 'organization_id' AND is_nullable = 'NO'`
     );
     expect(tables.rows.map((row) => row.table_name)).toEqual([
+      "attachment_upload_sessions",
+      "attachments",
       "audit_logs",
       "auth_sessions",
       "business_hours_policies",
@@ -165,6 +168,8 @@ describe("database foundation", () => {
       "whatsapp_templates"
     ]);
     expect(tenantColumns.rows.map((row) => row.table_name).sort()).toEqual([
+      "attachment_upload_sessions",
+      "attachments",
       "audit_logs",
       "business_hours_policies",
       "channels",
@@ -200,6 +205,8 @@ describe("database foundation", () => {
 
   it("forces RLS and installs the inbox access-path indexes on every M3 tenant table", async () => {
     const m3Tables = [
+      "attachment_upload_sessions",
+      "attachments",
       "business_hours_policies",
       "conversation_notes",
       "conversation_read_markers",

@@ -61,3 +61,11 @@ export {
   type TemplateVariableValidationResult,
   type RenderTemplateResult
 } from "./templates.js";
+export {
+  detectMimeType,
+  getMediaSizeLimit,
+  validateMediaAttachment,
+  ALLOWED_MIME_TYPES,
+  MEDIA_SIZE_LIMITS,
+  type MediaValidationResult
+} from "./media.js";

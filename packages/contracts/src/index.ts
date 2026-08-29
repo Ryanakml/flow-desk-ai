@@ -621,3 +621,57 @@ export const TemplatePreviewResponseSchema = z.object({
   renderedPayloadHash: z.string()
 });
 export type TemplatePreviewResponse = z.infer<typeof TemplatePreviewResponseSchema>;
+
+// Attachments and Media Quarantine (M3-06)
+export const AttachmentStatusSchema = z.enum(["quarantine", "clean", "rejected"]);
+export type AttachmentStatus = z.infer<typeof AttachmentStatusSchema>;
+
+export const CreateUploadSessionRequestSchema = z.object({
+  fileName: z.string().trim().min(1).max(255),
+  contentType: z.string().trim().min(1).max(100),
+  byteSize: z
+    .number()
+    .int()
+    .positive()
+    .max(100 * 1024 * 1024),
+  sha256Checksum: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional()
+});
+export type CreateUploadSessionRequest = z.infer<typeof CreateUploadSessionRequestSchema>;
+
+export const CreateUploadSessionResponseSchema = z.object({
+  attachmentId: z.string().uuid(),
+  uploadSessionId: z.string().uuid(),
+  uploadUrl: z.string().url(),
+  headers: z.record(z.string(), z.string()),
+  expiresAt: z.string().datetime({ offset: true })
+});
+export type CreateUploadSessionResponse = z.infer<typeof CreateUploadSessionResponseSchema>;
+
+export const CompleteUploadRequestSchema = z.object({
+  sha256Checksum: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional()
+});
+export type CompleteUploadRequest = z.infer<typeof CompleteUploadRequestSchema>;
+
+export const AttachmentDetailResponseSchema = z.object({
+  id: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  uploaderUserId: z.string().uuid().nullable(),
+  fileName: z.string(),
+  contentType: z.string(),
+  detectedMimeType: z.string().nullable(),
+  byteSize: z.number().int().positive(),
+  sha256Checksum: z.string().nullable(),
+  status: AttachmentStatusSchema,
+  quarantineReason: z.string().nullable(),
+  scannedAt: z.string().datetime({ offset: true }).nullable(),
+  scannerName: z.string().nullable(),
+  createdAt: z.string().datetime({ offset: true }),
+  updatedAt: z.string().datetime({ offset: true })
+});
+export type AttachmentDetailResponse = z.infer<typeof AttachmentDetailResponseSchema>;

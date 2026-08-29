@@ -15,7 +15,11 @@ import {
   CreateOutboundMessageRequestSchema,
   ServiceWindowStatusSchema,
   TemplatePreviewRequestSchema,
-  TemplatePreviewResponseSchema
+  TemplatePreviewResponseSchema,
+  CreateUploadSessionRequestSchema,
+  CreateUploadSessionResponseSchema,
+  CompleteUploadRequestSchema,
+  AttachmentDetailResponseSchema
 } from "./index.js";
 
 describe("Contracts & Primitives (M1-06)", () => {
@@ -287,6 +291,78 @@ describe("Contracts & Primitives (M1-06)", () => {
       });
       expect(previewRes.isEligible).toBe(true);
       expect(previewRes.renderedBody).toContain("Budi");
+    });
+  });
+
+  describe("Attachment & Media Quarantine Schemas (M3-06)", () => {
+    it("validates valid upload session request and enforces 100MB size limit", () => {
+      const valid = CreateUploadSessionRequestSchema.parse({
+        fileName: "report.pdf",
+        contentType: "application/pdf",
+        byteSize: 10 * 1024 * 1024,
+        sha256Checksum: "a".repeat(64)
+      });
+      expect(valid.fileName).toBe("report.pdf");
+      expect(valid.byteSize).toBe(10485760);
+
+      // Rejects oversized file (> 100MB)
+      expect(() =>
+        CreateUploadSessionRequestSchema.parse({
+          fileName: "huge.mp4",
+          contentType: "video/mp4",
+          byteSize: 100 * 1024 * 1024 + 1
+        })
+      ).toThrow();
+
+      // Rejects invalid checksum format
+      expect(() =>
+        CreateUploadSessionRequestSchema.parse({
+          fileName: "file.jpg",
+          contentType: "image/jpeg",
+          byteSize: 1000,
+          sha256Checksum: "invalid-not-64-hex"
+        })
+      ).toThrow();
+    });
+
+    it("validates upload session response and attachment detail", () => {
+      const sessionRes = CreateUploadSessionResponseSchema.parse({
+        attachmentId: "00000000-0000-7000-8000-000000000001",
+        uploadSessionId: "00000000-0000-7000-8000-000000000002",
+        uploadUrl: "https://s3.local/bucket/key?signed=true",
+        headers: { "x-amz-acl": "private" },
+        expiresAt: new Date().toISOString()
+      });
+      expect(sessionRes.attachmentId).toBe("00000000-0000-7000-8000-000000000001");
+
+      const attachment = AttachmentDetailResponseSchema.parse({
+        id: "00000000-0000-7000-8000-000000000001",
+        organizationId: "00000000-0000-7000-8000-000000000003",
+        uploaderUserId: "00000000-0000-7000-8000-000000000004",
+        fileName: "scan.png",
+        contentType: "image/png",
+        detectedMimeType: "image/png",
+        byteSize: 50000,
+        sha256Checksum: "b".repeat(64),
+        status: "quarantine",
+        quarantineReason: null,
+        scannedAt: null,
+        scannerName: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+      expect(attachment.status).toBe("quarantine");
+      expect(attachment.byteSize).toBe(50000);
+    });
+
+    it("validates CompleteUploadRequestSchema", () => {
+      const valid = CompleteUploadRequestSchema.parse({
+        sha256Checksum: "c".repeat(64)
+      });
+      expect(valid.sha256Checksum).toBe("c".repeat(64));
+
+      const empty = CompleteUploadRequestSchema.parse({});
+      expect(empty.sha256Checksum).toBeUndefined();
     });
   });
 });
