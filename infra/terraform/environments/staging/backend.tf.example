@@ -1,0 +1,6 @@
+terraform {
+  backend "s3" {
+    # Backend settings configured via backend.hcl or command line:
+    # terraform init -backend-config=backend.hcl
+  }
+}
