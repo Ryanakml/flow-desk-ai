@@ -35,8 +35,8 @@ export function App() {
   const [organizations, setOrganizations] = useState<UserOrganization[]>([]);
   const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
 
-  // Active tab
-  const [activeTab, setActiveTab] = useState<Tab>("workspace");
+  // Active tab (defaults to WhatsApp Inbox)
+  const [activeTab, setActiveTab] = useState<Tab>("conversations");
 
   // Invitation token from URL
   const [inviteToken, setInviteToken] = useState<string | null>(null);
@@ -315,7 +315,7 @@ export function App() {
           <h1 className="login-title">FlowDesk</h1>
           <p className="login-subtitle">AI-first customer operations platform</p>
           <a
-            href="/api/v1/auth/authorize"
+            href="/api/v1/auth/login"
             className="btn btn-primary"
             style={{ width: "100%", justifyContent: "center" }}
             id="login-button"
