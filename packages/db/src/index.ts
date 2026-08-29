@@ -120,6 +120,7 @@ export {
   type ConversationOperation,
   type PerformConversationOperationInput
 } from "./conversation-operations.js";
+export { getRealtimeVersion, canAccessRealtimeRoom, type RealtimeRoom } from "./realtime.js";
 
 export const DATABASE_PACKAGE_STATE = "m1-foundation-ready" as const;
 
