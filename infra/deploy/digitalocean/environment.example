@@ -1,0 +1,19 @@
+# This file documents keys only. Generate unique values on the host; never commit secrets.
+IMAGE_REGISTRY=ghcr.io/ryanakml
+SITE_ADDRESS=:80
+PUBLIC_BASE_URL=http://206.189.89.33
+POSTGRES_DB=flowdesk_staging
+POSTGRES_USER=flowdesk_bootstrap
+POSTGRES_PASSWORD=replace-with-random-value
+POSTGRES_RUNTIME_PASSWORD=replace-with-different-random-value
+REDIS_PASSWORD=replace-with-random-value
+MINIO_ROOT_USER=flowdesk_staging
+MINIO_ROOT_PASSWORD=replace-with-random-value
+WEBHOOK_VERIFY_TOKEN=replace-with-random-value
+WEBHOOK_APP_SECRET=replace-with-random-value
+AUTH_OIDC_ISSUER=https://flowdesk.local.auth0.com/
+AUTH_OIDC_CLIENT_ID=flowdesk-staging-client
+AUTH_OIDC_CLIENT_SECRET=replace-after-auth0-is-configured
+AUTH_MOCK_ENABLED=true
+AUTH_COOKIE_SECURE=false
+LOG_LEVEL=info

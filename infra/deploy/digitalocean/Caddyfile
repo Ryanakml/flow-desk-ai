@@ -1,0 +1,18 @@
+{$SITE_ADDRESS:80} {
+	encode zstd gzip
+
+	@api path /api/* /metrics /realtime*
+	reverse_proxy @api api:4000
+
+	@webhooks path /webhooks/*
+	reverse_proxy @webhooks ingress:4001
+
+	reverse_proxy web:3000
+
+	header {
+		-Server
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+}

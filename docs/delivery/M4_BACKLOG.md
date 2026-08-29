@@ -110,3 +110,19 @@
 - **Delivery:** evaluation runner, safety filters, runbooks, and `M4_EVIDENCE.md`.
 - **Evidence:** evaluation benchmark report, prompt injection test results, staging evidence packet.
 - **Owners:** engineering `@Ryanakml`.
+
+---
+
+## Epic M4-E6 — Continuously Inspectable Staging Delivery
+
+### M4-08 — Add repeatable DigitalOcean staging deployment
+
+- **Outcome:** every accepted `main` commit is available for real-time inspection on a hardened staging host without building or editing application code on that host.
+- **Depends on:** M4-07.
+- **Scope:** BuildKit/GitHub Actions caching; immutable SHA-tagged GHCR images for all five process roles and the migration runner; single-host Compose dependencies; dedicated SSH deploy identity; migration lock; public smoke test; automatic application rollback; operator runbook.
+- **Acceptance:** pull requests build and test without mutating staging; a green `main` run publishes all images, deploys the exact SHA, verifies public web/API health, and retains deployment evidence; PostgreSQL, Redis, MinIO, and ClamAV are not publicly bound.
+- **Design:** Caddy is the only public application edge; GitHub Environment secrets and a pinned host key authorize deploys; stateful volumes survive application rollback; database recovery remains roll-forward.
+- **Cross-cutting:** CI/CD, Docker/infra, security, data, observability, docs, and support `update`.
+- **Delivery:** DigitalOcean manifests/scripts, cached CI image publication, gated staging deployment, and `digitalocean-staging.md`.
+- **Evidence:** PR checks, main deployment job, public build-info response, host firewall/container inspection, and linked issue #90.
+- **Owners:** engineering `@Ryanakml`; staging cost/backup owner `@Ryanakml`.
