@@ -306,20 +306,42 @@ export const CreateChannelRequestSchema = z.object({
   name: z.string().trim().min(1).max(100),
   phoneNumberId: z.string().trim().min(1),
   wabaId: z.string().trim().min(1),
-  credentials: z.object({
-    accessToken: z.string().trim().min(1),
-    verifyToken: z.string().trim().min(1),
-    appSecret: z.string().trim().min(1).optional()
-  }),
+  accessToken: z.string().trim().min(1).max(8192),
   metadata: z.record(z.string(), z.unknown()).optional()
 });
 export type CreateChannelRequest = z.infer<typeof CreateChannelRequestSchema>;
 
 export const UpdateChannelStatusRequestSchema = z.object({
   status: ChannelStatusSchema,
-  reason: z.string().trim().max(500).optional()
+  statusReason: z.string().trim().max(500).optional()
 });
 export type UpdateChannelStatusRequest = z.infer<typeof UpdateChannelStatusRequestSchema>;
+
+export const RotateChannelCredentialsRequestSchema = z.object({
+  accessToken: z.string().trim().min(1).max(8192)
+});
+export type RotateChannelCredentialsRequest = z.infer<typeof RotateChannelCredentialsRequestSchema>;
+
+export const ChannelVerificationStateSchema = z.enum([
+  "valid",
+  "revoked_or_expired",
+  "permission_failure",
+  "identifier_mismatch",
+  "meta_unavailable",
+  "credential_error"
+]);
+export type ChannelVerificationState = z.infer<typeof ChannelVerificationStateSchema>;
+
+export const VerifyChannelResponseSchema = z.object({
+  channelId: z.string().uuid(),
+  verified: z.boolean(),
+  state: ChannelVerificationStateSchema,
+  status: ChannelStatusSchema,
+  message: z.string(),
+  displayPhoneNumber: z.string().nullable().optional(),
+  verifiedName: z.string().nullable().optional()
+});
+export type VerifyChannelResponse = z.infer<typeof VerifyChannelResponseSchema>;
 
 export const ListChannelsResponseSchema = z.object({
   channels: z.array(ChannelSchema)

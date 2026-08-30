@@ -553,6 +553,24 @@ export async function deleteChannelApi(
   await handleResponse(res);
 }
 
+export async function rotateChannelCredentialsApi(
+  orgId: string,
+  channelId: string,
+  accessToken: string,
+  fetcher: typeof fetch = fetch
+): Promise<{ channelId: string; organizationId: string; updatedAt: string }> {
+  const res = await fetcher(`/api/v1/organizations/${orgId}/channels/${channelId}/credentials`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accessToken })
+  });
+  return (await handleResponse<unknown>(res)) as {
+    channelId: string;
+    organizationId: string;
+    updatedAt: string;
+  };
+}
+
 export interface DeveloperApiKeyRecord {
   id: string;
   organizationId: string;

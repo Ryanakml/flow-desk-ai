@@ -1,8 +1,9 @@
 import request from "supertest";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { loadAuthConfig } from "@flowdesk/config";
 import type { DbClient } from "@flowdesk/db";
 import { hashSessionToken, serializeSessionCookie, encryptSecret } from "@flowdesk/security";
+import { FakeWhatsAppProvider } from "@flowdesk/providers";
 import { createApiApp } from "./app.js";
 
 const orgId = "a0000000-0000-4000-8000-000000000001";
@@ -182,6 +183,18 @@ function createMockDb(): DbClient {
         return { rows: [row], rowCount: 1, command: "INSERT", oid: 0, fields: [] };
       }
 
+      if (sql.includes("SET encrypted_credentials = $3")) {
+        const idParam = params[0] as string;
+        const orgIdParam = params[1] as string;
+        const channel = channels.get(idParam);
+        if (!channel || channel.organization_id !== orgIdParam) {
+          return { rows: [], rowCount: 0, command: "UPDATE", oid: 0, fields: [] };
+        }
+        channel.encrypted_credentials = params[2] as string;
+        channel.updated_at = new Date();
+        return { rows: [channel], rowCount: 1, command: "UPDATE", oid: 0, fields: [] };
+      }
+
       if (sql.includes("UPDATE flowdesk.channels")) {
         const idParam = params[0] as string;
         const statusParam = params[1] as string;
@@ -220,12 +233,19 @@ function createMockDb(): DbClient {
 describe("Self-Service Channels REST API (M6-01)", () => {
   const config = loadAuthConfig({ NODE_ENV: "test" });
   const db = createMockDb();
+  const provider = new FakeWhatsAppProvider();
+  const verifyPhoneNumber = vi.spyOn(provider, "verifyPhoneNumber");
   const app = createApiApp({
     service: "api",
     version: "dev",
     gitSha: "dev",
     environment: "local",
-    auth: { db, config }
+    auth: {
+      db,
+      config,
+      encryptionKey: "dev-encryption-key-32-bytes-long!!",
+      whatsappProvider: provider
+    }
   });
 
   const adminCookie = serializeSessionCookie("admin-token-12345", false);
@@ -269,6 +289,32 @@ describe("Self-Service Channels REST API (M6-01)", () => {
     const body = res.body as { verified: boolean; status: string };
     expect(body.verified).toBe(true);
     expect(body.status).toBe("active");
+    expect(verifyPhoneNumber).toHaveBeenCalledWith({
+      phoneNumberId: "10987654321",
+      wabaId: "9876543210",
+      accessToken: "EAAG123456789"
+    });
+  });
+
+  it("PATCH /api/v1/organizations/:orgId/channels/:channelId/credentials rotates without replacing the channel", async () => {
+    const res = (await request(app)
+      .patch(`/api/v1/organizations/${orgId}/channels/c1/credentials`)
+      .set("Cookie", adminCookie)
+      .send({ accessToken: "EAAG_NEW_PERMANENT_TOKEN" })) as unknown as {
+      status: number;
+      body: unknown;
+    };
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ channelId: "c1", organizationId: orgId });
+
+    verifyPhoneNumber.mockClear();
+    await request(app)
+      .post(`/api/v1/organizations/${orgId}/channels/c1/verify`)
+      .set("Cookie", adminCookie);
+    expect(verifyPhoneNumber).toHaveBeenCalledWith(
+      expect.objectContaining({ accessToken: "EAAG_NEW_PERMANENT_TOKEN" })
+    );
   });
 
   it("DELETE /api/v1/organizations/:orgId/channels/:channelId deletes channel", async () => {

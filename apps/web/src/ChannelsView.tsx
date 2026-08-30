@@ -4,6 +4,7 @@ import {
   createChannelApi,
   verifyChannelApi,
   deleteChannelApi,
+  rotateChannelCredentialsApi,
   type ChannelClientRecord
 } from "./api.js";
 
@@ -18,6 +19,9 @@ export function ChannelsView({ orgId, canManage, showToast }: ChannelsViewProps)
   const [loading, setLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
+  const [rotatingChannelId, setRotatingChannelId] = useState<string | null>(null);
+  const [rotatedAccessToken, setRotatedAccessToken] = useState("");
+  const [rotating, setRotating] = useState(false);
 
   // Form State
   const [name, setName] = useState("");
@@ -30,6 +34,7 @@ export function ChannelsView({ orgId, canManage, showToast }: ChannelsViewProps)
   const phoneId = useId();
   const wabaInputId = useId();
   const tokenInputId = useId();
+  const rotatedTokenInputId = useId();
 
   const loadChannels = useCallback(async () => {
     try {
@@ -96,6 +101,26 @@ export function ChannelsView({ orgId, canManage, showToast }: ChannelsViewProps)
       await loadChannels();
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Failed to disconnect channel", true);
+    }
+  };
+
+  const handleRotateCredentials = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!rotatingChannelId || !rotatedAccessToken.trim()) {
+      showToast("A new permanent System User access token is required", true);
+      return;
+    }
+    try {
+      setRotating(true);
+      await rotateChannelCredentialsApi(orgId, rotatingChannelId, rotatedAccessToken.trim());
+      showToast("WhatsApp access token updated successfully");
+      setRotatedAccessToken("");
+      setRotatingChannelId(null);
+      await loadChannels();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to update access token", true);
+    } finally {
+      setRotating(false);
     }
   };
 
@@ -166,6 +191,16 @@ export function ChannelsView({ orgId, canManage, showToast }: ChannelsViewProps)
 
               {canManage && (
                 <div className="flex gap-2 border-t pt-3 mt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRotatedAccessToken("");
+                      setRotatingChannelId(channel.id);
+                    }}
+                    className="btn btn-secondary btn-sm"
+                  >
+                    Rotate token
+                  </button>
                   <button
                     type="button"
                     onClick={() => void handleVerify(channel.id)}
@@ -270,6 +305,54 @@ export function ChannelsView({ orgId, canManage, showToast }: ChannelsViewProps)
                 </button>
                 <button type="submit" className="btn btn-primary" disabled={submitting}>
                   {submitting ? "Connecting..." : "Connect Channel"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {rotatingChannelId && (
+        <div className="modal-overlay fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="modal-content bg-white rounded-lg p-6 max-w-md w-full shadow-xl">
+            <h3 className="text-lg font-bold mb-2">Update WhatsApp access token</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              This keeps the existing channel, conversations, messages, and templates linked. The
+              current token is never displayed.
+            </p>
+            <form onSubmit={(e) => void handleRotateCredentials(e)} className="space-y-4">
+              <div>
+                <label
+                  htmlFor={rotatedTokenInputId}
+                  className="block text-sm font-medium text-gray-700 mb-1"
+                >
+                  New permanent System User access token
+                </label>
+                <input
+                  id={rotatedTokenInputId}
+                  type="password"
+                  value={rotatedAccessToken}
+                  onChange={(e) => setRotatedAccessToken(e.target.value)}
+                  placeholder="EAAG..."
+                  className="input w-full"
+                  autoComplete="new-password"
+                  required
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRotatedAccessToken("");
+                    setRotatingChannelId(null);
+                  }}
+                  className="btn btn-secondary"
+                  disabled={rotating}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={rotating}>
+                  {rotating ? "Updating..." : "Update access token"}
                 </button>
               </div>
             </form>

@@ -21,6 +21,13 @@ export {
   type RateLimiter
 } from "./rate-limit.js";
 export { encryptSecret, decryptSecret, type EncryptedEnvelope } from "./encryption.js";
+export {
+  encryptWhatsAppChannelCredentials,
+  decryptWhatsAppChannelCredentials,
+  WhatsAppCredentialError,
+  type WhatsAppChannelCredentials,
+  type WhatsAppCredentialErrorCode
+} from "./whatsapp-credentials.js";
 export { computeMetaSignature, verifyMetaSignature, computeSha256 } from "./signature.js";
 export {
   generateApiKey,

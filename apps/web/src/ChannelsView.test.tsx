@@ -123,4 +123,66 @@ describe("ChannelsView component (M6-01)", () => {
       expect(fetchMock).toHaveBeenCalled();
     });
   });
+
+  it("rotates the token in place without displaying the stored credential", async () => {
+    const channel = {
+      id: "c1",
+      organizationId: orgId,
+      type: "whatsapp",
+      name: "Support Line",
+      phoneNumberId: "10987654321",
+      wabaId: "9876543210",
+      status: "active",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const urlStr = getUrlString(input);
+      if (urlStr.endsWith(`/channels/${channel.id}/credentials`) && init?.method === "PATCH") {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              channelId: channel.id,
+              organizationId: orgId,
+              updatedAt: new Date().toISOString()
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        );
+      }
+      if (urlStr.includes(`/api/v1/organizations/${orgId}/channels`)) {
+        return Promise.resolve(
+          new Response(JSON.stringify([channel]), {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+          })
+        );
+      }
+      return Promise.reject(new Error(`Unhandled URL: ${urlStr}`));
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    render(<ChannelsView orgId={orgId} canManage={true} showToast={showToast} />);
+    await screen.findByText("Support Line");
+
+    fireEvent.click(screen.getByText("Rotate token"));
+    expect(screen.getByText("Update WhatsApp access token")).toBeTruthy();
+    expect(screen.queryByDisplayValue(/EAAG/)).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("New permanent System User access token"), {
+      target: { value: "EAAG_NEW_PERMANENT_TOKEN" }
+    });
+    fireEvent.click(screen.getByText("Update access token"));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        `/api/v1/organizations/${orgId}/channels/${channel.id}/credentials`,
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({ accessToken: "EAAG_NEW_PERMANENT_TOKEN" })
+        })
+      );
+      expect(showToast).toHaveBeenCalledWith("WhatsApp access token updated successfully");
+    });
+  });
 });

@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { DbClient, ClaimedOutboxEvent } from "@flowdesk/db";
 import { FakeWhatsAppProvider, WhatsAppProviderError } from "@flowdesk/providers";
 import {
-  encryptSecret,
-  decryptSecret,
+  decryptWhatsAppChannelCredentials,
+  encryptWhatsAppChannelCredentials,
   computeMetaSignature,
   verifyMetaSignature
 } from "@flowdesk/security";
@@ -342,14 +342,19 @@ describe("Milestone M2: WhatsApp Inbound-to-Agent Vertical Slice End-to-End (M2-
     // 1. Channel Setup & Credential Encryption (M2-01, M2-02)
     // =========================================================================
     const rawAccessToken = "EAAGmockAccessTokenForMetaCloudAPI123456";
-    const encryptedCredentials = encryptSecret(rawAccessToken, encryptionKey);
-    expect(encryptedCredentials).toHaveProperty("ciphertext");
-    expect(encryptedCredentials).toHaveProperty("iv");
-    expect(encryptedCredentials).toHaveProperty("tag");
+    const encryptedCredentials = encryptWhatsAppChannelCredentials(
+      {
+        accessToken: rawAccessToken,
+        phoneNumberId,
+        wabaId: "waba_account_9988"
+      },
+      encryptionKey
+    );
+    expect(JSON.parse(encryptedCredentials)).toHaveProperty("ciphertext");
 
     // Verify round-trip decryption
-    const decryptedToken = decryptSecret(encryptedCredentials, encryptionKey);
-    expect(decryptedToken).toBe(rawAccessToken);
+    const decrypted = decryptWhatsAppChannelCredentials(encryptedCredentials, encryptionKey);
+    expect(decrypted.accessToken).toBe(rawAccessToken);
 
     channels.set(channelId, {
       id: channelId,
@@ -358,7 +363,7 @@ describe("Milestone M2: WhatsApp Inbound-to-Agent Vertical Slice End-to-End (M2-
       name: "Customer Support WhatsApp",
       phone_number_id: phoneNumberId,
       waba_id: "waba_account_9988",
-      encrypted_credentials: JSON.stringify(encryptedCredentials),
+      encrypted_credentials: encryptedCredentials,
       status: "active",
       status_reason: null,
       metadata: {},

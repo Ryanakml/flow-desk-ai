@@ -83,6 +83,89 @@ describe("WhatsApp Provider Adapter (M2-02)", () => {
   });
 
   describe("MetaWhatsAppProvider", () => {
+    it("verifies phone metadata with the raw token and enforces the WABA relationship", async () => {
+      const requests: Array<{ url: string; authorization: string | null }> = [];
+      const fetchFn: typeof fetch = (input, init) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        requests.push({
+          url,
+          authorization: new Headers(init?.headers).get("Authorization")
+        });
+        const responseBody = url.includes("/waba_456/phone_numbers")
+          ? { data: [{ id: "phone_123" }] }
+          : {
+              id: "phone_123",
+              display_phone_number: "+62 812 3456 7890",
+              verified_name: "FlowDesk"
+            };
+        return Promise.resolve(
+          new Response(JSON.stringify(responseBody), {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+          })
+        );
+      };
+      const provider = new MetaWhatsAppProvider({
+        fetchFn
+      });
+
+      await expect(
+        provider.verifyPhoneNumber({
+          phoneNumberId: "phone_123",
+          wabaId: "waba_456",
+          accessToken: "EAAG_raw_token"
+        })
+      ).resolves.toMatchObject({ phoneNumberId: "phone_123", wabaId: "waba_456" });
+      expect(requests).toHaveLength(2);
+      expect(requests.every((item) => item.authorization === "Bearer EAAG_raw_token")).toBe(true);
+      expect(requests.every((item) => !item.url.includes("EAAG_raw_token"))).toBe(true);
+      expect(requests[1]?.url).toContain("/waba_456/phone_numbers");
+    });
+
+    it("classifies revoked credentials without exposing the token", async () => {
+      const fetchFn: typeof fetch = () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: { code: 190, message: "expired" } }), {
+            status: 401,
+            headers: { "Content-Type": "application/json" }
+          })
+        );
+      const provider = new MetaWhatsAppProvider({
+        fetchFn
+      });
+      await expect(
+        provider.verifyPhoneNumber({
+          phoneNumberId: "phone_123",
+          wabaId: "waba_456",
+          accessToken: "EAAG_secret_token"
+        })
+      ).rejects.toMatchObject({ classification: "AUTH_FAILED", providerCode: 190 });
+    });
+
+    it("rejects a phone number that is not listed under the configured WABA", async () => {
+      let requestCount = 0;
+      const fetchFn: typeof fetch = () => {
+        requestCount += 1;
+        const body = requestCount === 1 ? { id: "phone_123" } : { data: [{ id: "another_phone" }] };
+        return Promise.resolve(
+          new Response(JSON.stringify(body), {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+          })
+        );
+      };
+      const provider = new MetaWhatsAppProvider({ fetchFn });
+
+      await expect(
+        provider.verifyPhoneNumber({
+          phoneNumberId: "phone_123",
+          wabaId: "waba_456",
+          accessToken: "EAAG_secret_token"
+        })
+      ).rejects.toMatchObject({ classification: "RESOURCE_MISMATCH", statusCode: 409 });
+    });
+
     it("uploads private object bytes before sending a provider media id", async () => {
       const mockFetch = vi
         .fn()

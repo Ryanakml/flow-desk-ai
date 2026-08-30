@@ -180,25 +180,24 @@ COMMIT;
 If messages fail with `OAuthException` (Code `190`):
 
 1. Generate a new System User Permanent Access Token in the Meta Business Manager.
-2. Encrypt the new access token with the environment's master `CHANNEL_ENCRYPTION_KEY`:
+2. Confirm the API and worker deployments use the same canonical `ENCRYPTION_KEY`. Staging and
+   production refuse to start when it is missing.
+3. Rotate the credential through the authenticated tenant API with an organization member who has
+   `automation:publish` permission:
    ```bash
-   node -e "
-     import { encryptSecret } from '@flowdesk/security';
-     const token = process.argv[1];
-     const key = process.env.CHANNEL_ENCRYPTION_KEY;
-     console.log(JSON.stringify(encryptSecret(token, key)));
-   " "EAAG..."
+   curl --fail-with-body \
+     --request PATCH \
+     --header 'Content-Type: application/json' \
+     --header 'Cookie: flowdesk_session=<session>' \
+     --data '{"accessToken":"<new-permanent-system-user-token>"}' \
+     'https://<api-host>/api/v1/organizations/<organization_id>/channels/<channel_id>/credentials'
    ```
-3. Update the channel record:
-   ```sql
-   UPDATE flowdesk.channels
-   SET encrypted_credentials = '<encrypted_json_envelope>',
-       status = 'active',
-       status_reason = NULL,
-       updated_at = clock_timestamp()
-   WHERE id = '<channel_id>';
-   ```
-4. Follow **Procedure 4.1** to replay failed messages for that channel.
+   The endpoint preserves the channel ID and linked data, updates only `encrypted_credentials` and
+   `updated_at`, and writes a secret-free `channel.credentials_rotated` audit event. Never put the
+   real token in a ticket, shell history, logs, or screenshots; use the Channels UI when possible.
+4. Use **Verify Connection**. It performs a live, low-impact Meta phone-number metadata request and
+   validates both the Phone Number ID and WABA ID relationship.
+5. Follow **Procedure 4.1** to replay failed messages for that channel.
 
 ---
 

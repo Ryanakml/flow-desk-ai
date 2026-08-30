@@ -37,7 +37,9 @@ export {
   type ProviderTemplateComponent,
   type ProviderMessageTemplate,
   type FetchTemplatesInput,
-  type FetchTemplatesResult
+  type FetchTemplatesResult,
+  type VerifyPhoneNumberInput,
+  type VerifyPhoneNumberResult
 } from "./whatsapp.js";
 export {
   type PresignedUploadInput,

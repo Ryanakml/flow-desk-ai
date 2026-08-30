@@ -1,7 +1,12 @@
-import { loadAuthConfig, loadHttpConfig, loadMediaConfig } from "@flowdesk/config";
+import {
+  loadAuthConfig,
+  loadChannelEncryptionConfig,
+  loadHttpConfig,
+  loadMediaConfig
+} from "@flowdesk/config";
 import { createLogger, initializeTelemetry } from "@flowdesk/observability";
 import { Pool } from "pg";
-import { S3ObjectStore } from "@flowdesk/providers";
+import { MetaWhatsAppProvider, S3ObjectStore } from "@flowdesk/providers";
 import { createApiApp } from "./app.js";
 
 const config = loadHttpConfig("api", Number(process.env["API_PORT"] ?? 4000));
@@ -19,6 +24,7 @@ const logger = createLogger({
 const databaseUrl = process.env["DATABASE_URL"];
 const dbPool = databaseUrl ? new Pool({ connectionString: databaseUrl }) : undefined;
 const authConfig = loadAuthConfig();
+const channelEncryptionConfig = loadChannelEncryptionConfig();
 const mediaConfig = loadMediaConfig();
 const hasStorageConfig = Boolean(
   mediaConfig.S3_BUCKET &&
@@ -42,7 +48,16 @@ const app = createApiApp({
   version: config.SERVICE_VERSION,
   gitSha: config.GIT_SHA,
   environment: config.APP_ENV,
-  ...(dbPool ? { auth: { db: dbPool, config: authConfig } } : {}),
+  ...(dbPool
+    ? {
+        auth: {
+          db: dbPool,
+          config: authConfig,
+          encryptionKey: channelEncryptionConfig.ENCRYPTION_KEY,
+          whatsappProvider: new MetaWhatsAppProvider()
+        }
+      }
+    : {}),
   ...(storage ? { storage } : {}),
   logRequest: (event) => logger.info(event, "http.request.completed"),
   logError: (event) => logger.error(event, "http.request.failed")
