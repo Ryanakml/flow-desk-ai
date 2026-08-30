@@ -26,6 +26,38 @@ import { DeveloperSettingsView } from "./DeveloperSettingsView.js";
 import { AnalyticsView } from "./AnalyticsView.js";
 import "./styles.css";
 
+function FlowDeskIcon({ size = 20 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 32 32"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <defs>
+        <linearGradient
+          id="fdGradIcon"
+          x1="4"
+          y1="4"
+          x2="28"
+          y2="28"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop offset="0%" stopColor="#10B981" />
+          <stop offset="100%" stopColor="#0EA5E9" />
+        </linearGradient>
+      </defs>
+      <path
+        fillRule="evenodd"
+        clipRule="evenodd"
+        d="M16 3C8.8203 3 3 8.8203 3 16C3 18.73 3.84 21.26 5.28 23.36L3.25 28.75L8.79 26.89C10.82 28.24 13.31 29 16 29C23.1797 29 29 23.1797 29 16C29 8.8203 23.1797 3 16 3ZM10.5 9.5C10.5 8.67157 11.1716 8 12 8H21C21.8284 8 22.5 8.67157 22.5 9.5C22.5 10.3284 21.8284 11 21 11H14.5V13.5H19.5C20.3284 13.5 21 14.1716 21 15C21 15.8284 20.3284 16.5 19.5 16.5H14.5V22.5C14.5 23.3284 13.8284 24 13 24C12.1716 24 11.5 23.3284 11.5 22.5V16.5H12C11.1716 16.5 10.5 15.8284 10.5 15V9.5Z"
+        fill="url(#fdGradIcon)"
+      />
+    </svg>
+  );
+}
+
 type Tab =
   "conversations" | "analytics" | "workspace" | "channels" | "developer" | "team" | "audit";
 
@@ -316,17 +348,8 @@ export function App() {
     return (
       <div className="login-wrap">
         <div className="glass-card login-card">
-          <div className="login-icon">
-            <svg
-              width="28"
-              height="28"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="#fff"
-              strokeWidth="2"
-            >
-              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
-            </svg>
+          <div className="login-icon" style={{ background: "transparent", border: "none" }}>
+            <FlowDeskIcon size={40} />
           </div>
           <h1 className="login-title">FlowDesk</h1>
           <p className="login-subtitle">AI-first customer operations platform</p>
@@ -350,17 +373,8 @@ export function App() {
         <header className="top-nav">
           <div className="brand-section">
             <span className="logo-badge">
-              <span className="logo-icon">
-                <svg
-                  width="18"
-                  height="18"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="#fff"
-                  strokeWidth="2"
-                >
-                  <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
-                </svg>
+              <span className="logo-icon" style={{ display: "inline-flex", alignItems: "center" }}>
+                <FlowDeskIcon size={20} />
               </span>
               FlowDesk
             </span>
@@ -429,17 +443,8 @@ export function App() {
         <header className="top-nav">
           <div className="brand-section">
             <span className="logo-badge">
-              <span className="logo-icon">
-                <svg
-                  width="18"
-                  height="18"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="#fff"
-                  strokeWidth="2"
-                >
-                  <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
-                </svg>
+              <span className="logo-icon" style={{ display: "inline-flex", alignItems: "center" }}>
+                <FlowDeskIcon size={20} />
               </span>
               FlowDesk
             </span>
@@ -550,17 +555,8 @@ export function App() {
       <header className="top-nav">
         <div className="brand-section">
           <span className="logo-badge">
-            <span className="logo-icon">
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="#fff"
-                strokeWidth="2"
-              >
-                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
-              </svg>
+            <span className="logo-icon" style={{ display: "inline-flex", alignItems: "center" }}>
+              <FlowDeskIcon size={20} />
             </span>
             FlowDesk
           </span>

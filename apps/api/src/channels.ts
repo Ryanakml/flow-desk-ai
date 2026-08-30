@@ -7,6 +7,7 @@ import {
   updateChannelStatus,
   deleteChannel,
   recordAuditEvent,
+  runInTenantTransaction,
   type DbClient
 } from "@flowdesk/db";
 import { encryptSecret, decryptSecret } from "@flowdesk/security";
@@ -132,25 +133,37 @@ export function createChannelsRouter(options: ChannelsRouterOptions): Router {
           encryptionKey
         );
 
-        const channel = await createChannel(options.db, {
-          organizationId: orgId,
-          type: "whatsapp",
-          name,
-          phoneNumberId,
-          wabaId,
-          encryptedCredentials: JSON.stringify(encrypted),
-          status: "active"
-        });
+        // Authentication and organization permission middleware have completed
+        // before this handler runs. Establish a fresh transaction-scoped tenant
+        // context for the write itself so pooled connections cannot leak or omit
+        // app.organization_id and the runtime role remains subject to RLS.
+        const channel = await runInTenantTransaction(
+          options.db,
+          { organizationId: orgId },
+          async (db) => {
+            const created = await createChannel(db, {
+              organizationId: orgId,
+              type: "whatsapp",
+              name,
+              phoneNumberId,
+              wabaId,
+              encryptedCredentials: JSON.stringify(encrypted),
+              status: "active"
+            });
 
-        await recordAuditEvent(options.db, {
-          organizationId: orgId,
-          actorUserId: request.user?.id ?? "unknown",
-          action: "channel.created",
-          targetType: "channel",
-          targetId: channel.id,
-          result: "allowed",
-          metadata: { name, phoneNumberId, wabaId }
-        });
+            await recordAuditEvent(db, {
+              organizationId: orgId,
+              actorUserId: request.user?.id ?? "unknown",
+              action: "channel.created",
+              targetType: "channel",
+              targetId: created.id,
+              result: "allowed",
+              metadata: { name, phoneNumberId, wabaId }
+            });
+
+            return created;
+          }
+        );
 
         return response.status(201).json({
           id: channel.id,

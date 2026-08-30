@@ -1,0 +1,9 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="flowdeskGrad64" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#10B981" />
+      <stop offset="100%" stop-color="#0EA5E9" />
+    </linearGradient>
+  </defs>
+  <path fill-rule="evenodd" clip-rule="evenodd" d="M32 6C17.6406 6 6 17.6406 6 32C6 37.46 7.68 42.52 10.56 46.72L6.5 57.5L17.58 53.78C21.64 56.48 26.62 58 32 58C46.3594 58 58 46.3594 58 32C58 17.6406 46.3594 6 32 6ZM21 19C21 17.3431 22.3431 16 24 16H42C43.6569 16 45 17.3431 45 19C45 20.6569 43.6569 22 42 22H29V27H39C40.6569 27 42 28.3431 42 30C42 31.6569 40.6569 33 39 33H29V45C29 46.6569 27.6569 48 26 48C24.3431 48 23 46.6569 23 45V33H24C22.3431 33 21 31.6569 21 30V19Z" fill="url(#flowdeskGrad64)"/>
+</svg>
