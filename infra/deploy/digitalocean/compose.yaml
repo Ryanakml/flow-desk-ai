@@ -25,6 +25,7 @@ x-app-environment: &app-environment
   APP_BASE_URL: ${PUBLIC_BASE_URL}
   WEBHOOK_VERIFY_TOKEN: ${WEBHOOK_VERIFY_TOKEN}
   WEBHOOK_APP_SECRET: ${WEBHOOK_APP_SECRET}
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY}
 
 x-app-defaults: &app-defaults
   restart: unless-stopped
