@@ -73,7 +73,7 @@ describe("docker compose deployment contract", () => {
     const composePath = path.resolve(__dirname, "../../../infra/deploy/digitalocean/compose.yaml");
     const composeContent = fs.readFileSync(composePath, "utf-8");
     expect(composeContent).toMatch(
-      /x-app-environment:[\s\S]*?ENCRYPTION_KEY:\s*\$\{ENCRYPTION_KEY\}/
+      /x-app-environment:[\s\S]*?ENCRYPTION_KEY:\s*\$\{ENCRYPTION_KEY(?:-[^}]*)?\}/
     );
   });
 });
