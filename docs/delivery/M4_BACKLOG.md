@@ -126,3 +126,15 @@
 - **Delivery:** DigitalOcean manifests/scripts, cached CI image publication, gated staging deployment, and `digitalocean-staging.md`.
 - **Evidence:** PR checks, main deployment job, public build-info response, host firewall/container inspection, and linked issue #90.
 - **Owners:** engineering `@Ryanakml`; staging cost/backup owner `@Ryanakml`.
+
+### M4-09 — Make staging auth failures diagnosable and organization conflicts actionable
+
+- **Outcome:** operators can correlate browser failures with safe server logs, while expected organization slug conflicts no longer appear as opaque internal errors.
+- **Depends on:** M4-08.
+- **Scope:** structured unexpected-error logs; organization bootstrap conflict mapping; bounded SSH diagnostics; deploy-failure log capture; synthetic login/session/logout staging smoke test.
+- **Acceptance:** duplicate slugs return `409 ORGANIZATION_SLUG_CONFLICT`; unexpected failures include request/correlation IDs in protected logs; failed deployments print recent service logs before rollback; every successful staging deploy proves a full mock-auth session lifecycle.
+- **Design:** browser responses expose only safe Problem details and request IDs; detailed diagnostics remain in Docker/GitHub deployment logs; no credentials, cookies, or provider payloads are logged.
+- **Cross-cutting:** API, CI/CD, observability, security, tests, and runbooks `update`.
+- **Delivery:** API error classification/logging, `diagnose.sh`, CI auth smoke, and staging incident instructions.
+- **Evidence:** API tests, full verification, protected main deployment output, live duplicate-conflict check, and linked issue #92.
+- **Owners:** engineering and staging operations `@Ryanakml`.

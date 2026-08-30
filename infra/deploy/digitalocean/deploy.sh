@@ -32,8 +32,16 @@ if [[ -f ${current_release_file} ]]; then
   previous_tag=$(<"${current_release_file}")
 fi
 
+dump_diagnostics() {
+  echo "recent staging diagnostics:" >&2
+  "${compose[@]}" ps >&2 || true
+  "${compose[@]}" logs --no-color --timestamps --since 15m --tail 200 \
+    caddy web api ingress worker scheduler >&2 || true
+}
+
 rollback() {
   exit_code=$?
+  dump_diagnostics
   if [[ -n ${previous_tag} && ${previous_tag} =~ ^[0-9a-f]{40}$ ]]; then
     echo "deployment failed; rolling application containers back to ${previous_tag}" >&2
     export IMAGE_TAG=${previous_tag}
@@ -60,7 +68,6 @@ for attempt in $(seq 1 60); do
   fi
   if [[ ${attempt} -eq 60 ]]; then
     echo "staging health gate timed out" >&2
-    "${compose[@]}" ps >&2
     exit 1
   fi
   sleep 2
