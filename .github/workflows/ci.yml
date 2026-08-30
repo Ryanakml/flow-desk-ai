@@ -152,6 +152,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm turbo run build --filter=@flowdesk/worker...
       - run: pnpm --filter @flowdesk/db test:integration
+      - run: pnpm --filter @flowdesk/api test:integration
       - run: pnpm --filter @flowdesk/worker test:integration
 
   terraform:

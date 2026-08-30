@@ -1,0 +1,35 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="630" fill="#090D16"/>
+  
+  <!-- Subtle Background Gradients -->
+  <circle cx="200" cy="150" r="300" fill="#10B981" fill-opacity="0.08" filter="blur(80px)"/>
+  <circle cx="1000" cy="450" r="350" fill="#0EA5E9" fill-opacity="0.08" filter="blur(80px)"/>
+  
+  <defs>
+    <linearGradient id="ogGrad" x1="100" y1="180" x2="220" y2="300" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#10B981" />
+      <stop offset="100%" stop-color="#0EA5E9" />
+    </linearGradient>
+    <linearGradient id="textGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="100%" stop-color="#94A3B8" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Brand Icon -->
+  <g transform="translate(120, 170)">
+    <path fill-rule="evenodd" clip-rule="evenodd" d="M60 10C32.3858 10 10 32.3858 10 60C10 70.4875 13.225 80.2125 18.75 88.2875L11.25 108.75L32.4 101.6C40.2 106.788 49.725 110 60 110C87.6142 110 110 87.6142 110 60C110 32.3858 87.6142 10 60 10ZM38.75 35C38.75 32.2386 40.9886 30 43.75 30H76.25C79.0114 30 81.25 32.2386 81.25 35C81.25 37.7614 79.0114 40 76.25 40H53.75V50H71.25C74.0114 50 76.25 52.2386 76.25 55C76.25 57.7614 74.0114 60 71.25 60H53.75V85C53.75 87.7614 51.5114 90 48.75 90C45.9886 90 43.75 87.7614 43.75 85V60H43.75C40.9886 60 38.75 57.7614 38.75 55V35Z" fill="url(#ogGrad)"/>
+  </g>
+  
+  <!-- Brand Name -->
+  <text x="270" y="248" font-family="-apple-system, BlinkMacSystemFont, 'Inter', sans-serif" font-weight="800" font-size="64" letter-spacing="-1.5" fill="#FFFFFF">Flow<tspan fill="#10B981">Desk</tspan></text>
+  
+  <!-- Tagline & Description -->
+  <text x="120" y="360" font-family="-apple-system, BlinkMacSystemFont, 'Inter', sans-serif" font-weight="700" font-size="44" fill="url(#textGrad)">Enterprise WhatsApp Automation &amp; Team Inbox</text>
+  <text x="120" y="420" font-family="-apple-system, BlinkMacSystemFont, 'Inter', sans-serif" font-weight="400" font-size="24" fill="#94A3B8">AI-First Customer Operations • Meta Cloud API • Strict RAG Safety Guardrails</text>
+
+  <!-- Footer Meta Badge -->
+  <rect x="120" y="475" width="280" height="42" rx="21" fill="#1E293B" stroke="#334155"/>
+  <circle cx="146" cy="496" r="6" fill="#10B981"/>
+  <text x="164" y="503" font-family="-apple-system, BlinkMacSystemFont, 'Inter', sans-serif" font-weight="600" font-size="16" fill="#F8FAFC">Official WhatsApp SaaS</text>
+</svg>

@@ -12,6 +12,7 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:integration": "vitest run src/channels.integration.test.ts",
     "test:coverage": "vitest run --coverage",
     "clean": "rm -rf dist coverage"
   },
