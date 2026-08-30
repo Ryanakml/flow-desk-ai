@@ -22,6 +22,7 @@ import { createOrganizationsRouter, createInvitationsRouter } from "./organizati
 import { createConversationsRouter } from "./conversations.js";
 import { createAttachmentsRouter } from "./attachments.js";
 import { createBotRouter } from "./bot.js";
+import { createRoutingRouter } from "./routing.js";
 import type { ObjectStore } from "@flowdesk/providers";
 export { createAuthRouter, createRequireAuthMiddleware, type AuthenticatedUser } from "./auth.js";
 export {
@@ -224,6 +225,12 @@ export function createApiApp(options: ApiAppOptions) {
     app.use(
       "/api/v1/organizations/:orgId/bot",
       createBotRouter({
+        db: options.auth.db
+      })
+    );
+    app.use(
+      "/api/v1/organizations/:orgId/routing",
+      createRoutingRouter({
         db: options.auth.db
       })
     );
