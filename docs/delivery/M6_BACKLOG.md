@@ -1,57 +1,62 @@
-# Milestone 6 (M6) Delivery Backlog — Commercial SaaS Operation: Billing, Integrations, Analytics & Self-Service
+# Milestone 6 (M6) Backlog — Customer Self-Service, Analytics & Free Access Model
 
-## Overview
-
-Milestone 6 transforms FlowDesk into a commercially operable SaaS platform. It introduces plan catalogs, Stripe subscription management, entitlement enforcement, customer self-service billing portals, developer API key lifecycles, outbound webhook dispatch, and analytics reporting.
+**Status:** READY FOR IMPLEMENTATION  
+**Goal:** Deliver complete self-service onboarding (WhatsApp channel connection UI, API keys, webhooks) and team performance analytics while operating FlowDesk as a **Free & Open Community Platform**. (Billing & Paid Subscription entitlement is placed on hold as an optional modular extension for later).
 
 ---
 
-## Epic M6-E1 — Entitlements, Billing & Usage Ledger
+## Epic M6-E1 — Customer Self-Service & Integration Management
 
-### M6-01 — Entitlements Engine, Plan Catalog & Immutable Billing Ledger
+### M6-01 — Self-Service WhatsApp Channel Connection UI & Management
 
-- **Outcome:** multi-tier subscription plans (Free, Pro, Enterprise) with atomic entitlement checks and immutable ledger accounting.
+- **Outcome:** Admins can connect, test, and manage Meta WhatsApp Business Accounts directly from the FlowDesk Web Dashboard UI without manual database setup.
 - **Depends on:** M5-06.
-- **Scope:** database tables `plans`, `subscriptions`, `entitlements`, `usage_ledger`, and `invoices`; Stripe billing webhook integration with HMAC signature verification and deduplication; centralized entitlement checker in `@flowdesk/domain` gating channels, seats, AI tokens, and data retention; fallback grace period policy during upstream billing provider outages.
-- **Acceptance:** subscription status changes dynamically grant/revoke tenant capabilities; zero floating point calculations for usage/pricing; billing webhook idempotency prevents double charging or duplicate quota grants.
-- **Delivery:** migration `0020_m6_billing_ledger.sql`, Stripe provider in `packages/providers/src/stripe.ts`, API endpoints `/api/v1/organizations/:orgId/billing`.
-- **Evidence:** billing webhook supertest suite, entitlement boundary matrix, race condition concurrency test.
+- **Scope:** Web UI page `/settings/channels` supporting WhatsApp Cloud API credential entry (Phone Number ID, WhatsApp Business Account ID, Access Token) & verification testing; channel status toggle (`active`, `paused`, `error`); status badge indicators; RLS tenant isolation.
+- **Acceptance:** Admins can add and verify a live WhatsApp channel via UI; invalid credentials return friendly error feedback; channel operations are tenant-isolated.
+- **Delivery:** React UI components in `apps/web/src/views/ChannelsView.tsx`, API endpoints `POST/DELETE /api/v1/organizations/:orgId/channels`.
 
----
+### M6-02 — Scoped Developer API Keys & Webhook Subscriptions
 
-## Epic M6-E2 — Customer Self-Service & Developer Integrations
-
-### M6-02 — Customer Self-Service Portal, Developer API Keys & Webhook Subscriptions
-
-- **Outcome:** self-serve billing portal handoff, scoped API key rotation (prefix + SHA-256 hash), and outbound webhook delivery engine.
+- **Outcome:** External developers can generate scoped API keys (prefix + hashed token) and register outbound webhooks with HMAC signatures and retry queues.
 - **Depends on:** M6-01.
-- **Scope:** Stripe Customer Portal session generation (`POST /api/v1/organizations/:orgId/billing/portal`); API key CRUD with RBAC, scoped permissions, and expiration; outbound developer webhook engine (`flowdesk.webhook_subscriptions`) delivering signed payloads (HMAC-SHA256) for conversation events with retry backoff and dead-letter queue (DLQ).
-- **Acceptance:** customer admins can create/rotate/revoke scoped API keys; external webhooks receive signed payloads with retry on failure; API key hashes are non-reversible.
-- **Delivery:** developer API router `apps/api/src/developer.ts`, worker webhook dispatcher `apps/worker/src/developer-webhooks.ts`.
-- **Evidence:** API key auth supertest suite, outbound webhook signature & retry verification tests.
+- **Scope:** API key generation and rotation UI (`/settings/api-keys`); scoped permissions (`conversation:read`, `message:write`); outbound webhook registration (`/settings/webhooks`) with URL verification, HMAC secret signing, delivery log viewer, and dead-letter queue (DLQ) retry.
+- **Acceptance:** Generated API keys work for external REST requests; webhooks deliver event payloads signed with HMAC-SHA256; failed deliveries retry with exponential backoff.
+- **Delivery:** Database tables `flowdesk.api_keys` & `flowdesk.webhook_subscriptions`, API endpoints, worker delivery process.
 
 ---
 
-## Epic M6-E3 — Operational Analytics & Performance Reporting
+## Epic M6-E2 — Operational Analytics & Performance Reporting
 
-### M6-03 — Executive & Operational Analytics Engine & CSV Export Controls
+### M6-03 — Real-Time Analytics Engine & Read Aggregates
 
-- **Outcome:** aggregated inbox metrics, SLA resolution rates, agent workload, bot acceptance/escalation ratios, and audited CSV export engine.
+- **Outcome:** Live analytical metrics for response times, SLA compliance, queue load, and AI bot resolution rates.
 - **Depends on:** M6-02.
-- **Scope:** analytics read models and rollup jobs; API endpoints `GET /api/v1/organizations/:orgId/analytics/overview` and `/analytics/export`; metric definitions (inbound/outbound count, p50/p95 first response time, resolution time, bot draft accept vs escalation rate); timezone-aware query parameter filtering; audited CSV stream generator.
-- **Acceptance:** analytics queries do not scan primary inbox transaction tables; metrics respect tenant boundary; CSV export events are logged in `audit_logs`.
-- **Delivery:** analytics API router `apps/api/src/analytics.ts`, asynchronous aggregation job in `apps/worker/src/analytics-rollup.ts`.
-- **Evidence:** analytics supertest suite, CSV stream validation, RBAC export security matrix.
+- **Scope:** Asynchronous aggregation background process computing 5-minute and 1-hour metrics (inbound/outbound volume, first response time, average resolution time, SLA breach count, bot draft acceptance rate); PostgreSQL analytics read models.
+- **Acceptance:** Analytics queries execute instantly off read aggregates without scanning transactional message history; metrics respect tenant boundary.
+- **Delivery:** Database read models `flowdesk.analytics_aggregates_hourly`, background cron collector in `apps/scheduler`.
+
+### M6-04 — Analytics Dashboard & CSV Compliance Export
+
+- **Outcome:** Interactive analytics charts in Web Dashboard UI and compliance data export.
+- **Depends on:** M6-03.
+- **Scope:** Web UI view `/analytics` displaying metric cards and trend charts (Message Volume, SLA Resolution %, Bot vs Human ratio); CSV export action (`POST /api/v1/organizations/:orgId/analytics/export`) with audit logging.
+- **Acceptance:** Dashboard renders responsive trend charts; CSV export generates downloadable report with proper headers and audited download event.
+- **Delivery:** React UI view `apps/web/src/views/AnalyticsView.tsx`, REST API export router `apps/api/src/analytics.ts`.
 
 ---
 
-## Epic M6-E4 — Release Verification & Verification Packet
+## Epic M6-E3 [OPTIONAL / ON-HOLD FOR LATER] — Paid Subscriptions & Stripe Billing
 
-### M6-04 — Milestone 6 End-to-End Integration Suite & Evidence Packet
+### M6-05 — [ON-HOLD] Stripe Billing Adapter & Subscription Entitlements
 
-- **Outcome:** end-to-end commercial demonstration of billing, customer self-service, API keys, outbound webhooks, analytics, and release evidence packet.
-- **Depends on:** M6-03.
-- **Scope:** E2E test `apps/worker/src/m6-commercial.e2e.test.ts`; `docs/delivery/M6_EVIDENCE.md`; update `docs/delivery/TRACEABILITY.md`; full monorepo verification (`pnpm verify`).
-- **Acceptance:** all M6 stories pass release gates; 100% test pass rate across monorepo; all CI quality gates pass.
-- **Delivery:** `M6_EVIDENCE.md`, updated `TRACEABILITY.md`, and E2E verification test suite.
-- **Evidence:** `pnpm verify` clean exit 0 output, hosted CI checks passing.
+- **Outcome:** Optional paid plan subscription billing and quota enforcement (Held on standby for future monetization).
+- **Status:** **ON-HOLD / OPTIONAL**. FlowDesk operates 100% free by default.
+
+---
+
+## Epic M6-E4 — Release Verification & Evidence
+
+### M6-06 — M6 End-to-End Verification & Evidence Packet
+
+- **Outcome:** Full monorepo verification (`pnpm verify`), publication of `docs/delivery/M6_EVIDENCE.md`, and updated `docs/delivery/TRACEABILITY.md`.
+- **Acceptance:** 100% monorepo build & test pass rate across all 14 packages; clean hosted CI quality gates.
