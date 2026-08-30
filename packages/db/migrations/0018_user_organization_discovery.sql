@@ -1,5 +1,7 @@
 -- M4-10: bootstrap-safe organization discovery without weakening tenant RLS.
 
+GRANT SELECT ON flowdesk.organizations, flowdesk.memberships, flowdesk.roles TO flowdesk_system;
+
 CREATE OR REPLACE FUNCTION flowdesk.list_user_organizations(p_user_id uuid)
 RETURNS TABLE (
   id uuid,
