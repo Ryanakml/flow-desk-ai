@@ -155,8 +155,8 @@ const server = createProcessHealthServer({
   environment: config.APP_ENV
 });
 
-server.listen(config.PORT, () =>
-  logger.info({ port: config.PORT, claimsJobs: Boolean(dbPool) }, "worker.started")
+server.listen(config.PORT, "0.0.0.0", () =>
+  logger.info({ port: config.PORT, host: "0.0.0.0", claimsJobs: Boolean(dbPool) }, "worker.started")
 );
 
 function shutdown(signal: string) {

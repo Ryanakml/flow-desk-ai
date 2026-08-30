@@ -62,7 +62,9 @@ const app = createApiApp({
   logRequest: (event) => logger.info(event, "http.request.completed"),
   logError: (event) => logger.error(event, "http.request.failed")
 });
-const server = app.listen(config.PORT, () => logger.info({ port: config.PORT }, "api.started"));
+const server = app.listen(config.PORT, "0.0.0.0", () =>
+  logger.info({ port: config.PORT, host: "0.0.0.0" }, "api.started")
+);
 
 let shuttingDown = false;
 function shutdown(signal: string) {

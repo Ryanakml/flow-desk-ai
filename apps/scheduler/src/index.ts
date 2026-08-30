@@ -22,8 +22,8 @@ const server = createProcessHealthServer({
   gitSha: config.GIT_SHA,
   environment: config.APP_ENV
 });
-server.listen(config.PORT, () =>
-  logger.info({ port: config.PORT, schedulesJobs: false }, "scheduler.started")
+server.listen(config.PORT, "0.0.0.0", () =>
+  logger.info({ port: config.PORT, host: "0.0.0.0", schedulesJobs: false }, "scheduler.started")
 );
 function shutdown(signal: string) {
   logger.info({ signal }, "scheduler.stopping");
