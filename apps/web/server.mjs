@@ -21,5 +21,5 @@ const server = createServer((request, response) => {
   }
   serve(request, response);
 });
-server.listen(config.PORT);
+server.listen(config.PORT, "0.0.0.0");
 for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, () => server.close());
