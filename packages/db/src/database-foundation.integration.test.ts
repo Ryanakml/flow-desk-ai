@@ -101,26 +101,21 @@ describe("database foundation", () => {
   it("discovers only a user's active organizations before tenant context is selected", async () => {
     const userA = "00000000-0000-7000-8000-0000000000e1";
     const userB = "00000000-0000-7000-8000-0000000000e2";
+    const fixtureOrganizationIds = `SELECT id FROM flowdesk.organizations
+      WHERE slug IN ('bootstrap-discovery-a', 'bootstrap-discovery-b')`;
     await admin.query(
-      `DELETE FROM flowdesk.audit_logs
-       WHERE organization_id IN (
-         SELECT id FROM flowdesk.organizations
-         WHERE slug IN ('bootstrap-discovery-a', 'bootstrap-discovery-b')
-       );
-       DELETE FROM flowdesk.organization_settings
-       WHERE organization_id IN (
-         SELECT id FROM flowdesk.organizations
-         WHERE slug IN ('bootstrap-discovery-a', 'bootstrap-discovery-b')
-       );
-       DELETE FROM flowdesk.memberships WHERE user_id IN ($1, $2);
-       DELETE FROM flowdesk.roles
-       WHERE organization_id IN (
-         SELECT id FROM flowdesk.organizations
-         WHERE slug IN ('bootstrap-discovery-a', 'bootstrap-discovery-b')
-       );
-       DELETE FROM flowdesk.organizations
-       WHERE slug IN ('bootstrap-discovery-a', 'bootstrap-discovery-b')`,
-      [userA, userB]
+      `DELETE FROM flowdesk.audit_logs WHERE organization_id IN (${fixtureOrganizationIds})`
+    );
+    await admin.query(
+      `DELETE FROM flowdesk.organization_settings
+       WHERE organization_id IN (${fixtureOrganizationIds})`
+    );
+    await admin.query("DELETE FROM flowdesk.memberships WHERE user_id IN ($1, $2)", [userA, userB]);
+    await admin.query(
+      `DELETE FROM flowdesk.roles WHERE organization_id IN (${fixtureOrganizationIds})`
+    );
+    await admin.query(
+      "DELETE FROM flowdesk.organizations WHERE slug IN ('bootstrap-discovery-a', 'bootstrap-discovery-b')"
     );
     await admin.query(
       `INSERT INTO flowdesk.users (id, email, display_name) VALUES
