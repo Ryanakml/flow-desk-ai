@@ -20,6 +20,7 @@ fi
 
 temporary_file=$(mktemp /opt/flowdesk/shared/staging.env.XXXXXX)
 chmod 0600 "${temporary_file}"
+encryption_key=$(openssl rand -hex 24)
 postgres_password=$(openssl rand -hex 24)
 runtime_password=$(openssl rand -hex 24)
 redis_password=$(openssl rand -hex 24)
@@ -32,6 +33,7 @@ printf '%s\n' \
   "IMAGE_REGISTRY=ghcr.io/ryanakml" \
   "SITE_ADDRESS=:80" \
   "PUBLIC_BASE_URL=${public_base_url}" \
+  "ENCRYPTION_KEY=${encryption_key}" \
   "POSTGRES_DB=flowdesk_staging" \
   "POSTGRES_USER=flowdesk_bootstrap" \
   "POSTGRES_PASSWORD=${postgres_password}" \

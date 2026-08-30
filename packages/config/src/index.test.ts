@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   loadAuthConfig,
@@ -63,5 +65,15 @@ describe("loadChannelEncryptionConfig", () => {
         ENCRYPTION_KEY: "staging-channel-key-material"
       })
     ).toEqual({ ENCRYPTION_KEY: "staging-channel-key-material" });
+  });
+});
+
+describe("docker compose deployment contract", () => {
+  it("includes ENCRYPTION_KEY under x-app-environment in staging compose file", () => {
+    const composePath = path.resolve(__dirname, "../../../infra/deploy/digitalocean/compose.yaml");
+    const composeContent = fs.readFileSync(composePath, "utf-8");
+    expect(composeContent).toMatch(
+      /x-app-environment:[\s\S]*?ENCRYPTION_KEY:\s*\$\{ENCRYPTION_KEY\}/
+    );
   });
 });
