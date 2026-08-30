@@ -640,3 +640,49 @@ export async function deleteWebhookApi(
   });
   await handleResponse(res);
 }
+
+export interface AnalyticsMetricsClientResponse {
+  overview: {
+    totalConversations: number;
+    openConversations: number;
+    assignedConversations: number;
+    resolvedConversations: number;
+    totalMessages: number;
+    inboundMessages: number;
+    outboundMessages: number;
+    botMessages: number;
+    humanMessages: number;
+    botAutomationRate: number;
+    slaMetPercentage: number;
+    avgFirstResponseTimeSeconds: number;
+    avgResolutionTimeSeconds: number;
+  };
+  volumeSeries: Array<{
+    date: string;
+    inbound: number;
+    outbound: number;
+    bot: number;
+  }>;
+}
+
+export async function getAnalyticsMetricsApi(
+  orgId: string,
+  days = 30,
+  fetcher: typeof fetch = fetch
+): Promise<AnalyticsMetricsClientResponse> {
+  const res = await fetcher(`/api/v1/organizations/${orgId}/analytics/metrics?days=${days}`);
+  return (await handleResponse<unknown>(res)) as AnalyticsMetricsClientResponse;
+}
+
+export async function exportAnalyticsReportApi(
+  orgId: string,
+  fetcher: typeof fetch = fetch
+): Promise<Blob> {
+  const res = await fetcher(`/api/v1/organizations/${orgId}/analytics/export`, {
+    method: "POST"
+  });
+  if (!res.ok) {
+    await handleResponse(res);
+  }
+  return res.blob();
+}

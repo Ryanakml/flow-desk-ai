@@ -25,6 +25,7 @@ import { createBotRouter } from "./bot.js";
 import { createRoutingRouter } from "./routing.js";
 import { createChannelsRouter } from "./channels.js";
 import { createDeveloperRouter } from "./developer.js";
+import { createAnalyticsRouter } from "./analytics.js";
 import type { ObjectStore } from "@flowdesk/providers";
 export { createAuthRouter, createRequireAuthMiddleware, type AuthenticatedUser } from "./auth.js";
 export {
@@ -248,6 +249,12 @@ export function createApiApp(options: ApiAppOptions) {
     app.use(
       "/api/v1/organizations/:orgId/developer",
       createDeveloperRouter({
+        db: options.auth.db
+      })
+    );
+    app.use(
+      "/api/v1/organizations/:orgId/analytics",
+      createAnalyticsRouter({
         db: options.auth.db
       })
     );
