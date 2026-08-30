@@ -28,9 +28,12 @@ describe("API foundation & security (M1-08)", () => {
 
   it("logs unexpected errors with request context while returning a safe response", async () => {
     const logError = vi.fn();
-    const databaseError = Object.assign(new Error("database unavailable"), {
-      code: "57P01"
-    });
+    const databaseError = Object.assign(
+      new Error("database unavailable for alice@example.com?token=secret-value"),
+      {
+        code: "57P01"
+      }
+    );
     const failingDb = {
       query: async () => {
         await Promise.resolve();
@@ -66,7 +69,7 @@ describe("API foundation & security (M1-08)", () => {
         method: "GET",
         path: "/api/v1/auth/session",
         errorName: "Error",
-        errorMessage: "database unavailable",
+        errorMessage: "database unavailable for a***e@example.com?token=[REDACTED]",
         errorCode: "57P01"
       })
     );
