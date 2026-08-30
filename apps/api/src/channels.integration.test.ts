@@ -95,6 +95,10 @@ afterAll(async () => {
     [organizationA, organizationB]
   ]);
   await pool.query(
+    "DELETE FROM flowdesk.realtime_versions WHERE organization_id = ANY($1::uuid[])",
+    [[organizationA, organizationB]]
+  );
+  await pool.query(
     "DELETE FROM flowdesk.organization_settings WHERE organization_id = ANY($1::uuid[])",
     [[organizationA, organizationB]]
   );
