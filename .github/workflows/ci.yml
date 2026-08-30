@@ -46,6 +46,8 @@ jobs:
       - run: pnpm build
       - run: pnpm audit --prod --audit-level high
       - run: node scripts/scan-secrets.mjs
+      - name: Validate staging deployment script syntax
+        run: bash -n infra/deploy/digitalocean/deploy.sh
       - name: Deliberate failure probe
         if: ${{ inputs.run_failure_probe == true }}
         run: exit 42
