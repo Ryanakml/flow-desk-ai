@@ -64,7 +64,8 @@ describe("database foundation", () => {
       "0017_m4_knowledge_and_vector.sql",
       "0018_user_organization_discovery.sql",
       "0019_m5_routing_rules.sql",
-      "0020_m6_developer_integrations.sql"
+      "0020_m6_developer_integrations.sql",
+      "0021_m6_meta_embedded_signup.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -254,6 +255,8 @@ describe("database foundation", () => {
       "users",
       "webhook_events",
       "webhook_subscriptions",
+      "whatsapp_business_accounts",
+      "whatsapp_embedded_signup_attempts",
       "whatsapp_template_status_history",
       "whatsapp_template_sync_cursors",
       "whatsapp_template_versions",
@@ -298,6 +301,8 @@ describe("database foundation", () => {
       "team_memberships",
       "teams",
       "webhook_subscriptions",
+      "whatsapp_business_accounts",
+      "whatsapp_embedded_signup_attempts",
       "whatsapp_template_status_history",
       "whatsapp_template_sync_cursors",
       "whatsapp_template_versions",
