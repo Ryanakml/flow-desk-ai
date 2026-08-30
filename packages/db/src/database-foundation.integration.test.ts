@@ -61,7 +61,8 @@ describe("database foundation", () => {
       "0014_m3_service_window.sql",
       "0015_m3_media_quarantine.sql",
       "0016_m3_media_lifecycle.sql",
-      "0017_m4_knowledge_and_vector.sql"
+      "0017_m4_knowledge_and_vector.sql",
+      "0018_user_organization_discovery.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -97,6 +98,78 @@ describe("database foundation", () => {
     ]);
   });
 
+  it("discovers only a user's active organizations before tenant context is selected", async () => {
+    const userA = "00000000-0000-7000-8000-0000000000e1";
+    const userB = "00000000-0000-7000-8000-0000000000e2";
+    await admin.query(
+      `DELETE FROM flowdesk.audit_logs
+       WHERE organization_id IN (
+         SELECT id FROM flowdesk.organizations
+         WHERE slug IN ('bootstrap-discovery-a', 'bootstrap-discovery-b')
+       );
+       DELETE FROM flowdesk.organization_settings
+       WHERE organization_id IN (
+         SELECT id FROM flowdesk.organizations
+         WHERE slug IN ('bootstrap-discovery-a', 'bootstrap-discovery-b')
+       );
+       DELETE FROM flowdesk.memberships WHERE user_id IN ($1, $2);
+       DELETE FROM flowdesk.roles
+       WHERE organization_id IN (
+         SELECT id FROM flowdesk.organizations
+         WHERE slug IN ('bootstrap-discovery-a', 'bootstrap-discovery-b')
+       );
+       DELETE FROM flowdesk.organizations
+       WHERE slug IN ('bootstrap-discovery-a', 'bootstrap-discovery-b')`,
+      [userA, userB]
+    );
+    await admin.query(
+      `INSERT INTO flowdesk.users (id, email, display_name) VALUES
+       ($1, 'bootstrap-a@example.com', 'Bootstrap A'),
+       ($2, 'bootstrap-b@example.com', 'Bootstrap B')
+       ON CONFLICT (id) DO NOTHING`,
+      [userA, userB]
+    );
+    const organizationA = await admin.query<{ organization_id: string }>(
+      "SELECT organization_id FROM flowdesk.bootstrap_organization('bootstrap-discovery-a', 'Bootstrap Discovery A', $1)",
+      [userA]
+    );
+    const organizationB = await admin.query<{ organization_id: string }>(
+      "SELECT organization_id FROM flowdesk.bootstrap_organization('bootstrap-discovery-b', 'Bootstrap Discovery B', $1)",
+      [userB]
+    );
+
+    await admin.query("BEGIN");
+    try {
+      await admin.query("SET LOCAL ROLE flowdesk_runtime");
+      expect(
+        (
+          await admin.query(
+            "SELECT id FROM flowdesk.organizations WHERE id = ANY($1::uuid[]) ORDER BY id",
+            [[organizationA.rows[0]!.organization_id, organizationB.rows[0]!.organization_id]]
+          )
+        ).rows
+      ).toEqual([]);
+
+      const visibleToA = await admin.query<{ id: string; role_key: string }>(
+        "SELECT id, role_key FROM flowdesk.list_user_organizations($1)",
+        [userA]
+      );
+      expect(visibleToA.rows).toEqual([
+        { id: organizationA.rows[0]!.organization_id, role_key: "owner" }
+      ]);
+
+      const visibleToB = await admin.query<{ id: string; role_key: string }>(
+        "SELECT id, role_key FROM flowdesk.list_user_organizations($1)",
+        [userB]
+      );
+      expect(visibleToB.rows).toEqual([
+        { id: organizationB.rows[0]!.organization_id, role_key: "owner" }
+      ]);
+    } finally {
+      await admin.query("ROLLBACK");
+    }
+  });
+
   it("limits cross-tenant worker capabilities to non-login security-definer functions", async () => {
     const systemRole = await admin.query<{
       rolcanlogin: boolean;
@@ -116,7 +189,7 @@ describe("database foundation", () => {
        WHERE namespace.nspname = 'flowdesk'
          AND procedure.proname IN (
            'claim_attachment_scan_events', 'claim_outbox_events', 'list_attachment_retention_candidates',
-           'messaging_operational_snapshot', 'record_whatsapp_webhook'
+           'list_user_organizations', 'messaging_operational_snapshot', 'record_whatsapp_webhook'
          )
        ORDER BY procedure.proname`
     );
@@ -124,6 +197,7 @@ describe("database foundation", () => {
       { proname: "claim_attachment_scan_events", owner: "flowdesk_system" },
       { proname: "claim_outbox_events", owner: "flowdesk_system" },
       { proname: "list_attachment_retention_candidates", owner: "flowdesk_system" },
+      { proname: "list_user_organizations", owner: "flowdesk_system" },
       { proname: "messaging_operational_snapshot", owner: "flowdesk_system" },
       { proname: "record_whatsapp_webhook", owner: "flowdesk_system" }
     ]);

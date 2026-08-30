@@ -45,6 +45,7 @@ export function App() {
   // Onboarding (Bootstrap)
   const [newOrgName, setNewOrgName] = useState("");
   const [newOrgSlug, setNewOrgSlug] = useState("");
+  const [orgSlugManuallyEdited, setOrgSlugManuallyEdited] = useState(false);
   const [bootstrapping, setBootstrapping] = useState(false);
 
   // Team
@@ -190,8 +191,19 @@ export function App() {
       showToast(`Organization "${res.organization.displayName}" created!`);
       setNewOrgName("");
       setNewOrgSlug("");
-      await refreshSession();
+      setOrgSlugManuallyEdited(false);
+      setOrganizations((current) => [
+        ...current.filter((organization) => organization.id !== res.organization.id),
+        {
+          id: res.organization.id,
+          slug: res.organization.slug,
+          name: res.organization.displayName,
+          role: "owner",
+          membershipId: res.organization.membershipId
+        }
+      ]);
       setSelectedOrgId(res.organization.id);
+      setActiveTab("conversations");
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Failed to create organization", true);
     } finally {
@@ -482,7 +494,7 @@ export function App() {
                   value={newOrgName}
                   onChange={(e) => {
                     setNewOrgName(e.target.value);
-                    if (!newOrgSlug) {
+                    if (!orgSlugManuallyEdited) {
                       setNewOrgSlug(
                         e.target.value
                           .toLowerCase()
@@ -504,7 +516,10 @@ export function App() {
                   required
                   placeholder="e.g. acme-support"
                   value={newOrgSlug}
-                  onChange={(e) => setNewOrgSlug(e.target.value.toLowerCase())}
+                  onChange={(e) => {
+                    setOrgSlugManuallyEdited(true);
+                    setNewOrgSlug(e.target.value.toLowerCase());
+                  }}
                   className="form-input"
                 />
               </div>

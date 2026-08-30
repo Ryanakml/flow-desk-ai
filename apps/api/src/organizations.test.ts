@@ -329,8 +329,8 @@ function createMockDb(): DbClient {
         return { rowCount: 0 };
       }
 
-      // SELECT o.id, o.slug, o.display_name, r.key AS role_key, m.id AS membership_id FROM flowdesk.organizations o JOIN flowdesk.memberships m
-      if (sql.includes("FROM flowdesk.organizations o JOIN flowdesk.memberships m")) {
+      // SELECT * FROM flowdesk.list_user_organizations($1)
+      if (sql.includes("list_user_organizations")) {
         const [userId] = values as [string];
         const rows: unknown[] = [];
         for (const mem of memberships.values()) {
@@ -442,6 +442,24 @@ describe("API Organizations and Memberships (M1-05)", () => {
 
     orgId = body.organization.id;
     aliceMemberId = body.organization.membershipId;
+  });
+
+  it("GET /api/v1/organizations discovers only the authenticated user's organizations", async () => {
+    const aliceResponse = await request(app)
+      .get("/api/v1/organizations")
+      .set("Cookie", aliceCookie)
+      .expect(200);
+    const aliceBody = aliceResponse.body as { organizations: unknown[] };
+    expect(aliceBody.organizations).toEqual([
+      expect.objectContaining({ id: orgId, slug: "acme-corp", role: "owner" })
+    ]);
+
+    const charlieResponse = await request(app)
+      .get("/api/v1/organizations")
+      .set("Cookie", charlieCookie)
+      .expect(200);
+    const charlieBody = charlieResponse.body as { organizations: unknown[] };
+    expect(charlieBody.organizations).toEqual([]);
   });
 
   it("POST /api/v1/organizations returns a useful conflict for a duplicate slug", async () => {

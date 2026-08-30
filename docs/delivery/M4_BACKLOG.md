@@ -138,3 +138,15 @@
 - **Delivery:** API error classification/logging, `diagnose.sh`, CI auth smoke, and staging incident instructions.
 - **Evidence:** API tests, full verification, protected main deployment output, live duplicate-conflict check, and linked issue #92.
 - **Owners:** engineering and staging operations `@Ryanakml`.
+
+### M4-10 — Make organization discovery bootstrap-safe under forced RLS
+
+- **Outcome:** authenticated users can discover and select their active organizations before a tenant context exists, without weakening tenant-table RLS.
+- **Depends on:** M4-09.
+- **Scope:** narrow user-membership discovery function; API isolation coverage; immediate post-create organization selection; browser bootstrap regression coverage.
+- **Acceptance:** no-context direct table reads remain empty; discovery returns only active memberships for the authenticated session user; create exits onboarding with the new owner organization selected; duplicate slugs remain conflicts; cross-tenant routes remain fail-closed.
+- **Design:** a `flowdesk_system`-owned `SECURITY DEFINER` function is the only pre-tenant discovery capability; `PUBLIC` has no execute privilege and the API supplies its user ID only from the validated opaque session. Normal organization routes continue using transaction-scoped `app.organization_id`.
+- **Cross-cutting:** database, API, web, security, tests, and delivery docs `update`.
+- **Delivery:** migration `0018`, repository query update, bootstrap state transition, and PostgreSQL/API/browser tests.
+- **Evidence:** issue #95, database-foundation integration run, full verification, hosted CI, and staging bootstrap smoke.
+- **Owners:** engineering and security `@Ryanakml`.
