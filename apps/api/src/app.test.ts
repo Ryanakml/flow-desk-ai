@@ -197,7 +197,7 @@ describe("Realtime server initialization smoke test (Issue-B fix)", () => {
     // Must NOT be Express 404 — any Socket.IO response (200 handshake or 400 bad request)
     // proves the realtime server is mounted.
     expect(res.status).not.toBe(404);
-    // Also confirm it's not the Express problem+json 404 envelope
-    expect(res.body?.code).not.toBe("RESOURCE_NOT_FOUND");
+    const body = res.body as { code?: string } | undefined;
+    expect(body?.code).not.toBe("RESOURCE_NOT_FOUND");
   });
 });
