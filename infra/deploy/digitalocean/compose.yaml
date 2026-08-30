@@ -6,26 +6,26 @@ x-app-environment: &app-environment
   SERVICE_VERSION: ${IMAGE_TAG:?IMAGE_TAG is required}
   GIT_SHA: ${IMAGE_TAG:?IMAGE_TAG is required}
   LOG_LEVEL: ${LOG_LEVEL:-info}
-  DATABASE_URL: "postgresql://flowdesk_app:${POSTGRES_RUNTIME_PASSWORD}@postgres:5432/${POSTGRES_DB}"
-  REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379"
+  DATABASE_URL: "postgresql://flowdesk_app:${POSTGRES_RUNTIME_PASSWORD:-flowdesk_runtime_password}@postgres:5432/${POSTGRES_DB:-flowdesk_staging}"
+  REDIS_URL: "redis://:${REDIS_PASSWORD:-flowdesk_redis_password}@redis:6379"
   S3_BUCKET: flowdesk-staging
   S3_REGION: sgp1
   S3_ENDPOINT: "http://minio:9000"
   S3_FORCE_PATH_STYLE: "true"
-  S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
-  S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+  S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-flowdesk_staging}
+  S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-flowdesk_minio_password}
   CLAMAV_HOST: clamav
   CLAMAV_PORT: "3310"
-  AUTH_OIDC_ISSUER: ${AUTH_OIDC_ISSUER}
-  AUTH_OIDC_CLIENT_ID: ${AUTH_OIDC_CLIENT_ID}
-  AUTH_OIDC_CLIENT_SECRET: ${AUTH_OIDC_CLIENT_SECRET}
-  AUTH_OIDC_REDIRECT_URI: "${PUBLIC_BASE_URL}/api/v1/auth/callback"
+  AUTH_OIDC_ISSUER: ${AUTH_OIDC_ISSUER:-https://flowdesk.local.auth0.com/}
+  AUTH_OIDC_CLIENT_ID: ${AUTH_OIDC_CLIENT_ID:-flowdesk-staging-client}
+  AUTH_OIDC_CLIENT_SECRET: ${AUTH_OIDC_CLIENT_SECRET:-flowdesk-staging-secret}
+  AUTH_OIDC_REDIRECT_URI: "${PUBLIC_BASE_URL:-http://206.189.89.33}/api/v1/auth/callback"
   AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
   AUTH_MOCK_ENABLED: ${AUTH_MOCK_ENABLED:-true}
-  APP_BASE_URL: ${PUBLIC_BASE_URL}
-  WEBHOOK_VERIFY_TOKEN: ${WEBHOOK_VERIFY_TOKEN}
-  WEBHOOK_APP_SECRET: ${WEBHOOK_APP_SECRET}
-  ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+  APP_BASE_URL: ${PUBLIC_BASE_URL:-http://206.189.89.33}
+  WEBHOOK_VERIFY_TOKEN: ${WEBHOOK_VERIFY_TOKEN:-flowdesk_webhook_verify_token_default}
+  WEBHOOK_APP_SECRET: ${WEBHOOK_APP_SECRET:-flowdesk_webhook_app_secret_default}
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY:-dev-encryption-key-32-bytes-long!!}
 
 x-app-defaults: &app-defaults
   restart: unless-stopped
@@ -148,8 +148,8 @@ services:
     restart: unless-stopped
     command: [server, /data]
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-flowdesk_staging}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-flowdesk_minio_password}
     volumes: ["minio-data:/data"]
     networks: [application]
     security_opt: ["no-new-privileges:true"]
@@ -165,8 +165,8 @@ services:
     depends_on:
       minio: { condition: service_healthy }
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-flowdesk_staging}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-flowdesk_minio_password}
     entrypoint: [/bin/sh, -ec]
     command:
       - >-
