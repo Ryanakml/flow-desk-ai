@@ -334,15 +334,7 @@ export async function listUserOrganizations(
     display_name: string;
     role_key: string;
     membership_id: string;
-  }>(
-    `SELECT o.id, o.slug, o.display_name, r.key AS role_key, m.id AS membership_id
-     FROM flowdesk.organizations o
-     JOIN flowdesk.memberships m ON m.organization_id = o.id
-     JOIN flowdesk.roles r ON r.id = m.role_id
-     WHERE m.user_id = $1 AND m.status = 'active'
-     ORDER BY o.display_name ASC`,
-    [userId]
-  );
+  }>("SELECT * FROM flowdesk.list_user_organizations($1)", [userId]);
 
   return result.rows.map((row) => ({
     id: row.id,

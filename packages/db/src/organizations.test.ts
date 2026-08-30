@@ -252,8 +252,8 @@ function createMockDb(): DbClient {
         return { rows };
       }
 
-      // SELECT o.id, o.slug, o.display_name, r.key AS role_key, m.id AS membership_id FROM flowdesk.organizations o JOIN flowdesk.memberships m
-      if (sql.includes("FROM flowdesk.organizations o JOIN flowdesk.memberships m")) {
+      // SELECT * FROM flowdesk.list_user_organizations($1)
+      if (sql.includes("list_user_organizations")) {
         const [userId] = values as [string];
         const rows: unknown[] = [];
         for (const mem of memberships.values()) {
@@ -427,5 +427,6 @@ describe("Organizations and Memberships DB repository (M1-05)", () => {
     expect(orgs.length).toBe(1);
     expect(orgs[0]?.name).toBe("Acme Corp");
     expect(orgs[0]?.roleKey).toBe("owner");
+    expect(await listUserOrganizations(db, "u2")).toEqual([]);
   });
 });
