@@ -26,17 +26,17 @@ x-app-environment: &app-environment
   ENCRYPTION_KEY: ${ENCRYPTION_KEY:-dev-encryption-key-32-bytes-long!!}
 
 x-api-meta-environment: &api-meta-environment
-  META_APP_ID: ${META_APP_ID:?META_APP_ID is required}
-  META_APP_SECRET: ${META_APP_SECRET:?META_APP_SECRET is required}
-  META_EMBEDDED_SIGNUP_CONFIG_ID: ${META_EMBEDDED_SIGNUP_CONFIG_ID:?META_EMBEDDED_SIGNUP_CONFIG_ID is required}
-  META_SYSTEM_USER_ACCESS_TOKEN: ${META_SYSTEM_USER_ACCESS_TOKEN:?META_SYSTEM_USER_ACCESS_TOKEN is required}
-  META_SYSTEM_USER_ID: ${META_SYSTEM_USER_ID:?META_SYSTEM_USER_ID is required}
-  META_ADMIN_SYSTEM_USER_ACCESS_TOKEN: ${META_ADMIN_SYSTEM_USER_ACCESS_TOKEN:?META_ADMIN_SYSTEM_USER_ACCESS_TOKEN is required}
-  META_GRAPH_API_BASE_URL: ${META_GRAPH_API_BASE_URL:?META_GRAPH_API_BASE_URL is required}
+  META_APP_ID: ${META_APP_ID:-replace-with-flowdesk-meta-app-id}
+  META_APP_SECRET: ${META_APP_SECRET:-replace-with-flowdesk-meta-app-secret}
+  META_EMBEDDED_SIGNUP_CONFIG_ID: ${META_EMBEDDED_SIGNUP_CONFIG_ID:-replace-with-meta-embedded-signup-config-id}
+  META_SYSTEM_USER_ACCESS_TOKEN: ${META_SYSTEM_USER_ACCESS_TOKEN:-replace-with-flowdesk-system-user-access-token}
+  META_SYSTEM_USER_ID: ${META_SYSTEM_USER_ID:-replace-with-flowdesk-system-user-id}
+  META_ADMIN_SYSTEM_USER_ACCESS_TOKEN: ${META_ADMIN_SYSTEM_USER_ACCESS_TOKEN:-replace-with-business-admin-system-user-access-token}
+  META_GRAPH_API_BASE_URL: ${META_GRAPH_API_BASE_URL:-https://graph.facebook.com/v25.0}
 
 x-ingress-webhook-environment: &ingress-webhook-environment
-  WEBHOOK_VERIFY_TOKEN: ${WEBHOOK_VERIFY_TOKEN:?WEBHOOK_VERIFY_TOKEN is required}
-  WEBHOOK_APP_SECRET: ${WEBHOOK_APP_SECRET:?WEBHOOK_APP_SECRET is required}
+  WEBHOOK_VERIFY_TOKEN: ${WEBHOOK_VERIFY_TOKEN:-flowdesk_webhook_verify_token_default}
+  WEBHOOK_APP_SECRET: ${WEBHOOK_APP_SECRET:-flowdesk_webhook_app_secret_default}
 
 x-app-defaults: &app-defaults
   restart: unless-stopped
@@ -65,7 +65,7 @@ services:
     image: caddy:2.10.0-alpine
     restart: unless-stopped
     environment:
-      SITE_ADDRESS: "${SITE_ADDRESS:?SITE_ADDRESS is required}"
+      SITE_ADDRESS: "${SITE_ADDRESS:-staging.example.com}"
     ports:
       - "80:80"
       - "443:443"
@@ -83,35 +83,35 @@ services:
 
   web:
     <<: *app-defaults
-    image: ${IMAGE_REGISTRY}/flowdesk-web:${IMAGE_TAG}
+    image: ${IMAGE_REGISTRY:-ghcr.io/ryanakml}/flowdesk-web:${IMAGE_TAG}
     environment:
       <<: *app-environment
       PORT: "3000"
 
   api:
     <<: *app-defaults
-    image: ${IMAGE_REGISTRY}/flowdesk-api:${IMAGE_TAG}
+    image: ${IMAGE_REGISTRY:-ghcr.io/ryanakml}/flowdesk-api:${IMAGE_TAG}
     environment:
       <<: [*app-environment, *api-meta-environment]
       PORT: "4000"
 
   ingress:
     <<: *app-defaults
-    image: ${IMAGE_REGISTRY}/flowdesk-ingress:${IMAGE_TAG}
+    image: ${IMAGE_REGISTRY:-ghcr.io/ryanakml}/flowdesk-ingress:${IMAGE_TAG}
     environment:
       <<: [*app-environment, *ingress-webhook-environment]
       PORT: "4001"
 
   worker:
     <<: *app-defaults
-    image: ${IMAGE_REGISTRY}/flowdesk-worker:${IMAGE_TAG}
+    image: ${IMAGE_REGISTRY:-ghcr.io/ryanakml}/flowdesk-worker:${IMAGE_TAG}
     environment:
       <<: *app-environment
       PORT: "4002"
 
   scheduler:
     <<: *app-defaults
-    image: ${IMAGE_REGISTRY}/flowdesk-scheduler:${IMAGE_TAG}
+    image: ${IMAGE_REGISTRY:-ghcr.io/ryanakml}/flowdesk-scheduler:${IMAGE_TAG}
     environment:
       <<: *app-environment
       PORT: "4003"
@@ -120,8 +120,8 @@ services:
     image: pgvector/pgvector:0.8.0-pg16-bookworm
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_DB: ${POSTGRES_DB:-flowdesk_staging}
+      POSTGRES_USER: ${POSTGRES_USER:-flowdesk_bootstrap}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes: ["postgres-data:/var/lib/postgresql/data"]
     networks: [application]
@@ -199,10 +199,10 @@ services:
       retries: 40
 
   migrate:
-    image: ${IMAGE_REGISTRY}/flowdesk-migrator:${IMAGE_TAG}
+    image: ${IMAGE_REGISTRY:-ghcr.io/ryanakml}/flowdesk-migrator:${IMAGE_TAG}
     restart: "no"
     environment:
-      DATABASE_MIGRATOR_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+      DATABASE_MIGRATOR_URL: "postgresql://${POSTGRES_USER:-flowdesk_bootstrap}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-flowdesk_staging}"
     command: [node, scripts/migrate.mjs]
     depends_on:
       postgres: { condition: service_healthy }
