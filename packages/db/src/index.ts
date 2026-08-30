@@ -219,6 +219,12 @@ export {
   type WebhookSubscriptionRecord,
   type CreateWebhookSubscriptionParams
 } from "./webhook-subscriptions.js";
+export {
+  getAnalyticsOverview,
+  getVolumeTimeSeries,
+  type AnalyticsOverviewMetrics,
+  type VolumeTimeSeriesPoint
+} from "./analytics.js";
 
 export const DATABASE_PACKAGE_STATE = "m1-foundation-ready" as const;
 

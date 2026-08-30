@@ -23,9 +23,11 @@ import {
 import { InboxView } from "./InboxView.js";
 import { ChannelsView } from "./ChannelsView.js";
 import { DeveloperSettingsView } from "./DeveloperSettingsView.js";
+import { AnalyticsView } from "./AnalyticsView.js";
 import "./styles.css";
 
-type Tab = "conversations" | "workspace" | "channels" | "developer" | "team" | "audit";
+type Tab =
+  "conversations" | "analytics" | "workspace" | "channels" | "developer" | "team" | "audit";
 
 export function App() {
   const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
@@ -646,6 +648,15 @@ export function App() {
         </button>
         <button
           type="button"
+          onClick={() => setActiveTab("analytics")}
+          className={`tab-btn ${activeTab === "analytics" ? "active" : ""}`}
+          id="tab-analytics"
+          data-testid="tab-analytics"
+        >
+          Analytics & SLA
+        </button>
+        <button
+          type="button"
           onClick={() => setActiveTab("workspace")}
           className={`tab-btn ${activeTab === "workspace" ? "active" : ""}`}
           id="tab-workspace"
@@ -717,6 +728,9 @@ export function App() {
             sessionUserId={sessionUser.id}
           />
         )}
+
+        {/* Tab: Real-Time Analytics Engine & SLA */}
+        {activeTab === "analytics" && selectedOrgId && <AnalyticsView orgId={selectedOrgId} />}
 
         {/* Tab: Self-Service WhatsApp Channels */}
         {activeTab === "channels" && selectedOrgId && (
