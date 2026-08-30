@@ -8,6 +8,7 @@ import { createLogger, initializeTelemetry } from "@flowdesk/observability";
 import { Pool } from "pg";
 import { MetaWhatsAppProvider, S3ObjectStore } from "@flowdesk/providers";
 import { createApiApp } from "./app.js";
+import { createRealtimeServer } from "./realtime.js";
 
 const config = loadHttpConfig("api", Number(process.env["API_PORT"] ?? 4000));
 const stopTelemetry = initializeTelemetry({
@@ -66,6 +67,24 @@ const server = app.listen(config.PORT, "0.0.0.0", () =>
   logger.info({ port: config.PORT, host: "0.0.0.0" }, "api.started")
 );
 
+// Attach Socket.IO realtime server to the same HTTP server.
+// The path "/realtime" matches both the Caddy reverse_proxy rule (@api path /realtime*)
+// and the frontend socket.io-client { path: "/realtime" } option.
+// redisRequired: false — degrade to single-node mode when REDIS_URL is absent (e.g. local dev)
+// rather than hard-crashing at startup.
+let realtimeServer: ReturnType<typeof createRealtimeServer> | undefined;
+if (dbPool) {
+  realtimeServer = createRealtimeServer(server, {
+    db: dbPool,
+    redisUrl: process.env["REDIS_URL"],
+    redisRequired: false
+  });
+  realtimeServer.ready.catch((err: unknown) => {
+    logger.error({ err }, "realtime.redis_adapter_failed");
+  });
+  logger.info({ redisConfigured: Boolean(process.env["REDIS_URL"]) }, "realtime.initialized");
+}
+
 let shuttingDown = false;
 function shutdown(signal: string) {
   if (shuttingDown) return;
@@ -78,8 +97,11 @@ function shutdown(signal: string) {
   timer.unref();
   server.close((error) => {
     clearTimeout(timer);
-    void dbPool?.end();
-    void stopTelemetry().then(() => {
+    void Promise.all([
+      realtimeServer?.close(),
+      dbPool?.end(),
+      stopTelemetry()
+    ]).then(() => {
       if (error) {
         logger.error({ error }, "api.shutdown_failed");
         process.exitCode = 1;
