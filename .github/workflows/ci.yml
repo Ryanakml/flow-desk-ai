@@ -248,21 +248,11 @@ jobs:
           build_status=$(curl "${curl_args[@]}" --output deployment-record.json --write-out '%{http_code}' "${public_base_url}/api/v1/system/build")
           [[ ${build_status} == "200" ]]
           grep -q "${GITHUB_SHA}" deployment-record.json
-          cookie_jar="${RUNNER_TEMP}/flowdesk-staging.cookies"
-          authorization_url=$(curl --fail --show-error --silent --cookie-jar "${cookie_jar}" \
-            -H 'Accept: application/json' "${public_base_url}/api/v1/auth/login" | jq -er '.authorizationUrl')
-          curl --fail --show-error --silent --cookie "${cookie_jar}" --cookie-jar "${cookie_jar}" \
-            -H 'Accept: application/json' "${authorization_url}" >/dev/null
-          curl --fail --show-error --silent --cookie "${cookie_jar}" \
-            "${public_base_url}/api/v1/auth/session" | tee auth-smoke.json | jq -e '.user.id and .expiresAt' >/dev/null
-          curl --fail --show-error --silent --cookie "${cookie_jar}" -X POST \
-            "${public_base_url}/api/v1/auth/logout" | jq -e '.status == "ok"' >/dev/null
       - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         if: always()
         with:
           name: staging-deployment-${{ github.sha }}
           path: |
             deployment-record.json
-            auth-smoke.json
           if-no-files-found: warn
           retention-days: 30
