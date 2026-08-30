@@ -202,6 +202,7 @@ export {
   type RoutingLogRecord,
   type CreateRoutingLogParams
 } from "./routing.js";
+export { countRecentAutoReplies } from "./auto-send.js";
 
 export const DATABASE_PACKAGE_STATE = "m1-foundation-ready" as const;
 
