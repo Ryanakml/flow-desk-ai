@@ -87,7 +87,7 @@ describe("DeveloperSettingsView component (M6-02)", () => {
                 organizationId: orgId,
                 name: "CRM Dispatcher",
                 url: "https://crm.example.com/webhook",
-                secret: "whsec_1234567890abcdef",
+                secret: "whsec_test_secret",
                 events: ["conversation.created"],
                 isActive: true,
                 createdAt: new Date().toISOString()
