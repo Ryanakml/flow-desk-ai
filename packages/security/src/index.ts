@@ -23,6 +23,13 @@ export {
 export { encryptSecret, decryptSecret, type EncryptedEnvelope } from "./encryption.js";
 export { computeMetaSignature, verifyMetaSignature, computeSha256 } from "./signature.js";
 export {
+  generateApiKey,
+  hashApiKey,
+  verifyApiKeyHash,
+  hasRequiredScope,
+  type GeneratedApiKey
+} from "./api-keys.js";
+export {
   SsrfProtectionError,
   isPrivateIpAddress,
   isBlockedHostname,

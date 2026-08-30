@@ -22,9 +22,10 @@ import {
 } from "./api.js";
 import { InboxView } from "./InboxView.js";
 import { ChannelsView } from "./ChannelsView.js";
+import { DeveloperSettingsView } from "./DeveloperSettingsView.js";
 import "./styles.css";
 
-type Tab = "conversations" | "workspace" | "channels" | "team" | "audit";
+type Tab = "conversations" | "workspace" | "channels" | "developer" | "team" | "audit";
 
 export function App() {
   const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
@@ -662,6 +663,15 @@ export function App() {
         </button>
         <button
           type="button"
+          onClick={() => setActiveTab("developer")}
+          className={`tab-btn ${activeTab === "developer" ? "active" : ""}`}
+          id="tab-developer"
+          data-testid="tab-developer"
+        >
+          Developer API & Webhooks
+        </button>
+        <button
+          type="button"
           onClick={() => setActiveTab("team")}
           className={`tab-btn ${activeTab === "team" ? "active" : ""}`}
           id="tab-team"
@@ -714,6 +724,15 @@ export function App() {
             orgId={selectedOrgId}
             canManage={hasPermission(currentRole, "automation:publish")}
             showToast={showToast}
+          />
+        )}
+
+        {/* Tab: Developer API Keys & Webhooks */}
+        {activeTab === "developer" && selectedOrgId && (
+          <DeveloperSettingsView
+            orgId={selectedOrgId}
+            canManage={hasPermission(currentRole, "automation:publish")}
+            showToast={(msg, type) => showToast(msg, type === "error")}
           />
         )}
 

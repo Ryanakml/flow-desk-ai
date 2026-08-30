@@ -204,6 +204,21 @@ export {
   type CreateRoutingLogParams
 } from "./routing.js";
 export { countRecentAutoReplies } from "./auto-send.js";
+export {
+  listApiKeys,
+  createApiKey,
+  revokeApiKey,
+  findApiKeyByHash,
+  type ApiKeyRecord,
+  type CreateApiKeyParams
+} from "./api-keys.js";
+export {
+  listWebhookSubscriptions,
+  createWebhookSubscription,
+  deleteWebhookSubscription,
+  type WebhookSubscriptionRecord,
+  type CreateWebhookSubscriptionParams
+} from "./webhook-subscriptions.js";
 
 export const DATABASE_PACKAGE_STATE = "m1-foundation-ready" as const;
 
