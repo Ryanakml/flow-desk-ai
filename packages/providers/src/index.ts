@@ -39,7 +39,11 @@ export {
   type FetchTemplatesInput,
   type FetchTemplatesResult,
   type VerifyPhoneNumberInput,
-  type VerifyPhoneNumberResult
+  type VerifyPhoneNumberResult,
+  type ExchangeEmbeddedSignupCodeInput,
+  type ExchangeEmbeddedSignupCodeResult,
+  type SubscribeWhatsAppBusinessAccountInput,
+  type AssignWhatsAppBusinessAccountSystemUserInput
 } from "./whatsapp.js";
 export {
   type PresignedUploadInput,

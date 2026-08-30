@@ -28,8 +28,8 @@ const ownerUserId = randomUUID();
 const otherOwnerUserId = randomUUID();
 const sessionToken = `channel-integration-${randomUUID()}`;
 const encryptionKey = "channel-api-worker-integration-key";
-const initialAccessToken = "EAAG_INTEGRATION_INITIAL";
-const rotatedAccessToken = "EAAG_INTEGRATION_ROTATED";
+const initialAccessToken = "integration-meta-system-user-token";
+const rotatedAccessToken = "integration-meta-system-user-token";
 const phoneNumberId = `phone-${randomUUID()}`;
 const wabaId = `waba-${randomUUID()}`;
 let organizationA = "";
@@ -37,6 +37,20 @@ let organizationB = "";
 let channelId = "";
 let conversationId = "";
 let messageId = "";
+
+function readSignupStart(body: unknown): { attemptId: string; state: string } {
+  if (
+    typeof body !== "object" ||
+    body === null ||
+    !("attemptId" in body) ||
+    typeof body.attemptId !== "string" ||
+    !("state" in body) ||
+    typeof body.state !== "string"
+  ) {
+    throw new Error("Embedded Signup start response was malformed");
+  }
+  return { attemptId: body.attemptId, state: body.state };
+}
 
 beforeAll(async () => {
   if (!pool) return;
@@ -91,6 +105,14 @@ afterAll(async () => {
   await pool.query("DELETE FROM flowdesk.channels WHERE organization_id = ANY($1::uuid[])", [
     [organizationA, organizationB]
   ]);
+  await pool.query(
+    "DELETE FROM flowdesk.whatsapp_embedded_signup_attempts WHERE organization_id = ANY($1::uuid[])",
+    [[organizationA, organizationB]]
+  );
+  await pool.query(
+    "DELETE FROM flowdesk.whatsapp_business_accounts WHERE organization_id = ANY($1::uuid[])",
+    [[organizationA, organizationB]]
+  );
   await pool.query("DELETE FROM flowdesk.audit_logs WHERE organization_id = ANY($1::uuid[])", [
     [organizationA, organizationB]
   ]);
@@ -129,12 +151,26 @@ integration("POST /api/v1/organizations/:orgId/channels with PostgreSQL RLS", ()
         version: "integration",
         gitSha: "integration",
         environment: "local",
-        auth: { db: pool, config, encryptionKey, whatsappProvider: provider }
+        auth: {
+          db: pool,
+          config,
+          encryptionKey,
+          whatsappProvider: provider,
+          embeddedSignup: {
+            appId: "integration-meta-app-id",
+            appSecret: "integration-meta-app-secret",
+            configId: "integration-meta-embedded-config",
+            systemUserAccessToken: "integration-meta-system-user-token",
+            systemUserId: "integration-meta-system-user-id",
+            adminSystemUserAccessToken: "integration-meta-admin-system-user-token",
+            graphApiBaseUrl: "https://graph.facebook.com/v25.0"
+          }
+        }
       })
     : undefined;
   const ownerCookie = serializeSessionCookie(sessionToken, false);
 
-  it("creates for an authorized organization as flowdesk_runtime", async () => {
+  it("connects an authorized organization through server-side Embedded Signup as flowdesk_runtime", async () => {
     if (!pool || !app) throw new Error("integration database unavailable");
 
     const runtimeIdentity = await withTenantTransaction(
@@ -144,32 +180,42 @@ integration("POST /api/v1/organizations/:orgId/channels with PostgreSQL RLS", ()
     );
     expect(runtimeIdentity.rows[0]?.current_user).toBe("flowdesk_runtime");
 
+    const start = await request(app)
+      .post(`/api/v1/organizations/${organizationA}/channels/whatsapp/embedded-signup/start`)
+      .set("Cookie", ownerCookie);
+    expect(start.status).toBe(201);
+    const startRaw: unknown = start.body;
+    expect(startRaw).not.toHaveProperty("appSecret");
+    const startBody = readSignupStart(startRaw);
+
     const response = await request(app)
-      .post(`/api/v1/organizations/${organizationA}/channels`)
+      .post(`/api/v1/organizations/${organizationA}/channels/whatsapp/embedded-signup/complete`)
       .set("Cookie", ownerCookie)
       .send({
-        name: "Authorized WhatsApp",
+        attemptId: startBody.attemptId,
+        state: startBody.state,
+        code: "initial-meta-code",
         phoneNumberId,
-        wabaId,
-        accessToken: initialAccessToken
+        wabaId
       });
 
     expect(response.status).toBe(201);
     const responseBody: unknown = response.body;
     expect(responseBody).toMatchObject({
-      organizationId: organizationA,
-      name: "Authorized WhatsApp",
-      status: "active"
+      channel: { organizationId: organizationA, status: "active" }
     });
     if (
       typeof responseBody !== "object" ||
       responseBody === null ||
-      !("id" in responseBody) ||
-      typeof responseBody.id !== "string"
+      !("channel" in responseBody) ||
+      typeof responseBody.channel !== "object" ||
+      responseBody.channel === null ||
+      !("id" in responseBody.channel) ||
+      typeof responseBody.channel.id !== "string"
     ) {
       throw new Error("Channel creation response did not contain a string ID");
     }
-    channelId = responseBody.id;
+    channelId = responseBody.channel.id;
     const stored = await pool.query<{ encrypted_credentials: string }>(
       "SELECT encrypted_credentials FROM flowdesk.channels WHERE id = $1",
       [channelId]
@@ -194,7 +240,7 @@ integration("POST /api/v1/organizations/:orgId/channels with PostgreSQL RLS", ()
     ).toBe("1");
   });
 
-  it("rotates credentials in place and preserves conversation/message links", async () => {
+  it("reconnects through Meta in place and preserves conversation/message links", async () => {
     if (!pool || !app) throw new Error("integration database unavailable");
 
     const contact = await pool.query<{ id: string }>(
@@ -217,12 +263,24 @@ integration("POST /api/v1/organizations/:orgId/channels with PostgreSQL RLS", ()
     );
     messageId = message.rows[0]!.id;
 
+    const start = await request(app)
+      .post(`/api/v1/organizations/${organizationA}/channels/whatsapp/embedded-signup/start`)
+      .set("Cookie", ownerCookie);
+    const startBody = readSignupStart(start.body as unknown);
     const response = await request(app)
-      .patch(`/api/v1/organizations/${organizationA}/channels/${channelId}/credentials`)
+      .post(`/api/v1/organizations/${organizationA}/channels/whatsapp/embedded-signup/complete`)
       .set("Cookie", ownerCookie)
-      .send({ accessToken: rotatedAccessToken });
-    expect(response.status).toBe(200);
-    expect(response.body).toMatchObject({ channelId, organizationId: organizationA });
+      .send({
+        attemptId: startBody.attemptId,
+        state: startBody.state,
+        code: "rotated-meta-code",
+        phoneNumberId,
+        wabaId
+      });
+    expect(response.status).toBe(201);
+    expect(response.body).toMatchObject({
+      channel: { id: channelId, organizationId: organizationA }
+    });
 
     const persisted = await pool.query<{
       id: string;
@@ -253,12 +311,11 @@ integration("POST /api/v1/organizations/:orgId/channels with PostgreSQL RLS", ()
     ).toEqual({ channel_id: channelId, conversation_id: conversationId });
   });
 
-  it("denies cross-tenant credential rotation", async () => {
+  it("denies cross-tenant reconnect attempts", async () => {
     if (!pool || !app) throw new Error("integration database unavailable");
     const response = await request(app)
-      .patch(`/api/v1/organizations/${organizationB}/channels/${channelId}/credentials`)
-      .set("Cookie", ownerCookie)
-      .send({ accessToken: "must-not-be-written" });
+      .post(`/api/v1/organizations/${organizationB}/channels/whatsapp/embedded-signup/start`)
+      .set("Cookie", ownerCookie);
     expect(response.status).toBe(403);
     expect(response.body).toMatchObject({ code: "NOT_A_MEMBER" });
   });

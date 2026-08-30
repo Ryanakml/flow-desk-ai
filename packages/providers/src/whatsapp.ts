@@ -173,6 +173,28 @@ export interface VerifyPhoneNumberResult {
   verifiedName: string | null;
 }
 
+export interface ExchangeEmbeddedSignupCodeInput {
+  code: string;
+  appId: string;
+  appSecret: string;
+}
+
+export interface ExchangeEmbeddedSignupCodeResult {
+  accessToken: string;
+  expiresIn: number | null;
+}
+
+export interface SubscribeWhatsAppBusinessAccountInput {
+  wabaId: string;
+  accessToken: string;
+}
+
+export interface AssignWhatsAppBusinessAccountSystemUserInput {
+  wabaId: string;
+  systemUserId: string;
+  adminAccessToken: string;
+}
+
 export interface WhatsAppProvider {
   readonly name: string;
   sendTextMessage(input: SendTextMessageInput): Promise<SendTextMessageResult>;
@@ -182,6 +204,13 @@ export interface WhatsAppProvider {
   sendMediaMessage(input: SendMediaMessageInput): Promise<SendMediaMessageResult>;
   fetchMessageTemplates(input: FetchTemplatesInput): Promise<FetchTemplatesResult>;
   verifyPhoneNumber(input: VerifyPhoneNumberInput): Promise<VerifyPhoneNumberResult>;
+  exchangeEmbeddedSignupCode(
+    input: ExchangeEmbeddedSignupCodeInput
+  ): Promise<ExchangeEmbeddedSignupCodeResult>;
+  assignWhatsAppBusinessAccountSystemUser(
+    input: AssignWhatsAppBusinessAccountSystemUserInput
+  ): Promise<void>;
+  subscribeWhatsAppBusinessAccount(input: SubscribeWhatsAppBusinessAccountInput): Promise<void>;
 }
 
 export function classifyMetaError(status: number, code?: number): WhatsAppErrorClassification {
@@ -212,7 +241,7 @@ export interface MetaWhatsAppProviderOptions {
 }
 
 /**
- * Standard WhatsApp Cloud API Provider communicating with Graph API v21.0.
+ * Standard WhatsApp Cloud API Provider communicating with Graph API v21.0 by default.
  */
 export class MetaWhatsAppProvider implements WhatsAppProvider {
   readonly name = "meta-cloud-api";
@@ -280,6 +309,165 @@ export class MetaWhatsAppProvider implements WhatsAppProvider {
     }
 
     return body;
+  }
+
+  async exchangeEmbeddedSignupCode(
+    input: ExchangeEmbeddedSignupCodeInput
+  ): Promise<ExchangeEmbeddedSignupCodeResult> {
+    const url = new URL(`${this.baseUrl}/oauth/access_token`);
+    url.searchParams.set("client_id", input.appId);
+    url.searchParams.set("client_secret", input.appSecret);
+    url.searchParams.set("code", input.code);
+
+    let response: Response;
+    try {
+      response = await this.fetcher(url.toString(), { method: "GET" });
+    } catch {
+      throw new WhatsAppProviderError({
+        message: "Meta Embedded Signup is temporarily unavailable.",
+        classification: "TRANSIENT",
+        statusCode: 503
+      });
+    }
+
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      throw new WhatsAppProviderError({
+        message: "Meta Embedded Signup returned a malformed response.",
+        classification: "TRANSIENT",
+        statusCode: response.ok ? 502 : response.status
+      });
+    }
+
+    if (!response.ok) {
+      const error =
+        typeof body === "object" && body !== null && "error" in body ? body.error : undefined;
+      const code =
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        typeof error.code === "number"
+          ? error.code
+          : undefined;
+      throw new WhatsAppProviderError({
+        message: "Meta rejected the Embedded Signup authorization code.",
+        classification: classifyMetaError(response.status, code),
+        statusCode: response.status,
+        providerCode: code
+      });
+    }
+
+    const accessToken =
+      typeof body === "object" && body !== null && "access_token" in body
+        ? body.access_token
+        : undefined;
+    if (typeof accessToken !== "string" || accessToken.trim().length === 0) {
+      throw new WhatsAppProviderError({
+        message: "Meta Embedded Signup response did not contain an access token.",
+        classification: "TRANSIENT",
+        statusCode: 502
+      });
+    }
+    const expiresIn =
+      typeof body === "object" &&
+      body !== null &&
+      "expires_in" in body &&
+      typeof body.expires_in === "number"
+        ? body.expires_in
+        : null;
+    return { accessToken, expiresIn };
+  }
+
+  async subscribeWhatsAppBusinessAccount(
+    input: SubscribeWhatsAppBusinessAccountInput
+  ): Promise<void> {
+    let response: Response;
+    try {
+      response = await this.fetcher(
+        `${this.baseUrl}/${encodeURIComponent(input.wabaId)}/subscribed_apps`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${input.accessToken}` }
+        }
+      );
+    } catch {
+      throw new WhatsAppProviderError({
+        message: "Meta WABA subscription is temporarily unavailable.",
+        classification: "TRANSIENT",
+        statusCode: 503
+      });
+    }
+
+    if (response.ok) return;
+
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      body = undefined;
+    }
+    const error =
+      typeof body === "object" && body !== null && "error" in body ? body.error : undefined;
+    const code =
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      typeof error.code === "number"
+        ? error.code
+        : undefined;
+    throw new WhatsAppProviderError({
+      message: "Meta rejected the WABA webhook subscription.",
+      classification: classifyMetaError(response.status, code),
+      statusCode: response.status,
+      providerCode: code
+    });
+  }
+
+  async assignWhatsAppBusinessAccountSystemUser(
+    input: AssignWhatsAppBusinessAccountSystemUserInput
+  ): Promise<void> {
+    const url = new URL(`${this.baseUrl}/${encodeURIComponent(input.wabaId)}/assigned_users`);
+    url.searchParams.set("user", input.systemUserId);
+    url.searchParams.set("tasks", JSON.stringify(["MANAGE"]));
+
+    let response: Response;
+    try {
+      response = await this.fetcher(url.toString(), {
+        method: "POST",
+        headers: { Authorization: `Bearer ${input.adminAccessToken}` }
+      });
+    } catch {
+      throw new WhatsAppProviderError({
+        message: "Meta system-user assignment is temporarily unavailable.",
+        classification: "TRANSIENT",
+        statusCode: 503
+      });
+    }
+    if (response.ok) return;
+
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      body = undefined;
+    }
+    const error =
+      typeof body === "object" && body !== null && "error" in body ? body.error : undefined;
+    const code =
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      typeof error.code === "number"
+        ? error.code
+        : undefined;
+    throw new WhatsAppProviderError({
+      message: "Meta rejected FlowDesk system-user assignment to the WABA.",
+      classification: classifyMetaError(response.status, code),
+      statusCode: response.status,
+      providerCode: code
+    });
   }
 
   async verifyPhoneNumber(input: VerifyPhoneNumberInput): Promise<VerifyPhoneNumberResult> {
@@ -914,6 +1102,50 @@ export class FakeWhatsAppProvider implements WhatsAppProvider {
       displayPhoneNumber: null,
       verifiedName: null
     };
+  }
+
+  async exchangeEmbeddedSignupCode(
+    input: ExchangeEmbeddedSignupCodeInput
+  ): Promise<ExchangeEmbeddedSignupCodeResult> {
+    await Promise.resolve();
+    if (!input.code.trim()) {
+      throw new WhatsAppProviderError({
+        message: "Meta rejected the Embedded Signup authorization code.",
+        classification: "AUTH_FAILED",
+        statusCode: 401
+      });
+    }
+    return { accessToken: `fake-embedded-signup-${input.code}`, expiresIn: null };
+  }
+
+  async subscribeWhatsAppBusinessAccount(
+    input: SubscribeWhatsAppBusinessAccountInput
+  ): Promise<void> {
+    await Promise.resolve();
+    if (this.simulateFailure) {
+      const error = this.simulateFailure({
+        phoneNumberId: input.wabaId,
+        to: "waba-subscription",
+        text: "",
+        accessToken: input.accessToken
+      });
+      if (error) throw error;
+    }
+  }
+
+  async assignWhatsAppBusinessAccountSystemUser(
+    input: AssignWhatsAppBusinessAccountSystemUserInput
+  ): Promise<void> {
+    await Promise.resolve();
+    if (this.simulateFailure) {
+      const error = this.simulateFailure({
+        phoneNumberId: input.wabaId,
+        to: "system-user-assignment",
+        text: "",
+        accessToken: input.adminAccessToken
+      });
+      if (error) throw error;
+    }
   }
 
   async sendTextMessage(input: SendTextMessageInput): Promise<SendTextMessageResult> {

@@ -40,6 +40,17 @@ function createMockDb(): DbClient {
     { id: string; orgId: string; userId: string; roleId: string; status: string; createdAt: Date }
   >();
   const channels = new Map<string, MockChannelRow>();
+  const signupAttempts = new Map<
+    string,
+    {
+      id: string;
+      organization_id: string;
+      state_hash: string;
+      status: "initiated" | "processing" | "completed" | "failed";
+      expires_at: Date;
+    }
+  >();
+  const wabaOwners = new Map<string, string>();
 
   users.set(adminUserId, {
     id: adminUserId,
@@ -155,6 +166,78 @@ function createMockDb(): DbClient {
         return { rows: matched, rowCount: matched.length, command: "SELECT", oid: 0, fields: [] };
       }
 
+      if (sql.includes("SELECT * FROM flowdesk.channels WHERE phone_number_id = $1")) {
+        const phoneNumberId = params[0] as string;
+        const channel = Array.from(channels.values()).find(
+          (candidate) => candidate.phone_number_id === phoneNumberId
+        );
+        return channel
+          ? { rows: [channel], rowCount: 1, command: "SELECT", oid: 0, fields: [] }
+          : { rows: [], rowCount: 0, command: "SELECT", oid: 0, fields: [] };
+      }
+
+      if (sql.includes("INSERT INTO flowdesk.whatsapp_embedded_signup_attempts")) {
+        const id = `a0000000-0000-4000-8000-${String(signupAttempts.size + 1).padStart(12, "0")}`;
+        const row = {
+          id,
+          organization_id: params[0] as string,
+          state_hash: params[2] as string,
+          status: "initiated" as const,
+          expires_at: params[3] as Date
+        };
+        signupAttempts.set(id, row);
+        return { rows: [row], rowCount: 1, command: "INSERT", oid: 0, fields: [] };
+      }
+
+      if (
+        sql.includes("UPDATE flowdesk.whatsapp_embedded_signup_attempts SET status = 'processing'")
+      ) {
+        const attempt = signupAttempts.get(params[0] as string);
+        if (
+          !attempt ||
+          attempt.organization_id !== params[1] ||
+          attempt.state_hash !== params[2] ||
+          attempt.status !== "initiated" ||
+          attempt.expires_at.getTime() <= Date.now()
+        ) {
+          return { rows: [], rowCount: 0, command: "UPDATE", oid: 0, fields: [] };
+        }
+        attempt.status = "processing";
+        return { rows: [attempt], rowCount: 1, command: "UPDATE", oid: 0, fields: [] };
+      }
+
+      if (
+        sql.includes("UPDATE flowdesk.whatsapp_embedded_signup_attempts SET status = 'completed'")
+      ) {
+        const attempt = signupAttempts.get(params[0] as string);
+        if (attempt && attempt.organization_id === params[1]) attempt.status = "completed";
+        return { rows: [], rowCount: attempt ? 1 : 0, command: "UPDATE", oid: 0, fields: [] };
+      }
+
+      if (sql.includes("UPDATE flowdesk.whatsapp_embedded_signup_attempts SET status = 'failed'")) {
+        const attempt = signupAttempts.get(params[0] as string);
+        if (attempt && attempt.organization_id === params[1]) attempt.status = "failed";
+        return { rows: [], rowCount: attempt ? 1 : 0, command: "UPDATE", oid: 0, fields: [] };
+      }
+
+      if (sql.includes("INSERT INTO flowdesk.whatsapp_business_accounts")) {
+        const wabaId = params[0] as string;
+        const owner = params[1] as string;
+        if (wabaOwners.has(wabaId)) {
+          return { rows: [], rowCount: 0, command: "INSERT", oid: 0, fields: [] };
+        }
+        wabaOwners.set(wabaId, owner);
+        return { rows: [{ waba_id: wabaId }], rowCount: 1, command: "INSERT", oid: 0, fields: [] };
+      }
+
+      if (sql.includes("FROM flowdesk.whatsapp_business_accounts")) {
+        const wabaId = params[0] as string;
+        const owner = params[1] as string;
+        return wabaOwners.get(wabaId) === owner
+          ? { rows: [{ waba_id: wabaId }], rowCount: 1, command: "SELECT", oid: 0, fields: [] }
+          : { rows: [], rowCount: 0, command: "SELECT", oid: 0, fields: [] };
+      }
+
       if (sql.includes("SELECT * FROM flowdesk.channels WHERE id = $1")) {
         const idParam = params[0] as string;
         const c = channels.get(idParam);
@@ -244,7 +327,16 @@ describe("Self-Service Channels REST API (M6-01)", () => {
       db,
       config,
       encryptionKey: "dev-encryption-key-32-bytes-long!!",
-      whatsappProvider: provider
+      whatsappProvider: provider,
+      embeddedSignup: {
+        appId: "flowdesk-meta-app-id",
+        appSecret: "flowdesk-meta-app-secret",
+        configId: "flowdesk-embedded-signup-config",
+        systemUserAccessToken: "flowdesk-system-user-token",
+        systemUserId: "flowdesk-system-user-id",
+        adminSystemUserAccessToken: "flowdesk-admin-system-user-token",
+        graphApiBaseUrl: "https://graph.facebook.com/v25.0"
+      }
     }
   });
 
@@ -262,22 +354,87 @@ describe("Self-Service Channels REST API (M6-01)", () => {
     expect(body[0]?.phoneNumberId).toBe("10987654321");
   });
 
-  it("POST /api/v1/organizations/:orgId/channels creates and encrypts new channel", async () => {
-    const res = (await request(app)
+  it("completes Embedded Signup server-side and only activates after Meta validation and subscription", async () => {
+    const start = (await request(app)
+      .post(`/api/v1/organizations/${orgId}/channels/whatsapp/embedded-signup/start`)
+      .set("Cookie", adminCookie)) as unknown as { status: number; body: unknown };
+    expect(start.status).toBe(201);
+    const startBody = start.body as {
+      attemptId: string;
+      state: string;
+      appId: string;
+      appSecret?: string;
+    };
+    expect(startBody.appId).toBe("flowdesk-meta-app-id");
+    expect(startBody.state.length).toBeGreaterThanOrEqual(32);
+    expect(startBody.appSecret).toBeUndefined();
+
+    const exchangeCode = vi.spyOn(provider, "exchangeEmbeddedSignupCode");
+    const assignSystemUser = vi.spyOn(provider, "assignWhatsAppBusinessAccountSystemUser");
+    const subscribe = vi.spyOn(provider, "subscribeWhatsAppBusinessAccount");
+    const complete = (await request(app)
+      .post(`/api/v1/organizations/${orgId}/channels/whatsapp/embedded-signup/complete`)
+      .set("Cookie", adminCookie)
+      .send({
+        attemptId: startBody.attemptId,
+        state: startBody.state,
+        code: "one-time-meta-code",
+        phoneNumberId: "10987654399",
+        wabaId: "9876543299"
+      })) as unknown as { status: number; body: unknown };
+
+    expect(complete.status).toBe(201);
+    expect(complete.body).toMatchObject({
+      channel: { status: "active", phoneNumberId: "10987654399" }
+    });
+    expect(exchangeCode).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "one-time-meta-code", appSecret: "flowdesk-meta-app-secret" })
+    );
+    expect(verifyPhoneNumber).toHaveBeenNthCalledWith(1, {
+      phoneNumberId: "10987654399",
+      wabaId: "9876543299",
+      accessToken: "fake-embedded-signup-one-time-meta-code"
+    });
+    expect(assignSystemUser).toHaveBeenCalledWith(
+      expect.objectContaining({
+        wabaId: "9876543299",
+        systemUserId: "flowdesk-system-user-id",
+        adminAccessToken: "flowdesk-admin-system-user-token"
+      })
+    );
+    expect(verifyPhoneNumber).toHaveBeenNthCalledWith(2, {
+      phoneNumberId: "10987654399",
+      wabaId: "9876543299",
+      accessToken: "flowdesk-system-user-token"
+    });
+    expect(subscribe).toHaveBeenCalledWith(
+      expect.objectContaining({ wabaId: "9876543299", accessToken: "flowdesk-system-user-token" })
+    );
+
+    const replay = await request(app)
+      .post(`/api/v1/organizations/${orgId}/channels/whatsapp/embedded-signup/complete`)
+      .set("Cookie", adminCookie)
+      .send({
+        attemptId: startBody.attemptId,
+        state: startBody.state,
+        code: "one-time-meta-code",
+        phoneNumberId: "10987654399",
+        wabaId: "9876543299"
+      });
+    expect(replay.status).toBe(409);
+  });
+
+  it("retires the manual credential endpoint", async () => {
+    const response = await request(app)
       .post(`/api/v1/organizations/${orgId}/channels`)
       .set("Cookie", adminCookie)
       .send({
-        name: "Sales WhatsApp Line",
+        name: "No longer accepted",
         phoneNumberId: "10987654399",
         wabaId: "9876543299",
         accessToken: "EAAG_TEST_TOKEN_XYZ"
-      })) as unknown as { status: number; body: unknown };
-
-    expect(res.status).toBe(201);
-    const body = res.body as { id: string; name: string; status: string };
-    expect(body.id).toBeDefined();
-    expect(body.name).toBe("Sales WhatsApp Line");
-    expect(body.status).toBe("active");
+      });
+    expect(response.status).toBe(410);
   });
 
   it("POST /api/v1/organizations/:orgId/channels/:channelId/verify verifies credentials", async () => {
@@ -294,27 +451,6 @@ describe("Self-Service Channels REST API (M6-01)", () => {
       wabaId: "9876543210",
       accessToken: "EAAG123456789"
     });
-  });
-
-  it("PATCH /api/v1/organizations/:orgId/channels/:channelId/credentials rotates without replacing the channel", async () => {
-    const res = (await request(app)
-      .patch(`/api/v1/organizations/${orgId}/channels/c1/credentials`)
-      .set("Cookie", adminCookie)
-      .send({ accessToken: "EAAG_NEW_PERMANENT_TOKEN" })) as unknown as {
-      status: number;
-      body: unknown;
-    };
-
-    expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ channelId: "c1", organizationId: orgId });
-
-    verifyPhoneNumber.mockClear();
-    await request(app)
-      .post(`/api/v1/organizations/${orgId}/channels/c1/verify`)
-      .set("Cookie", adminCookie);
-    expect(verifyPhoneNumber).toHaveBeenCalledWith(
-      expect.objectContaining({ accessToken: "EAAG_NEW_PERMANENT_TOKEN" })
-    );
   });
 
   it("DELETE /api/v1/organizations/:orgId/channels/:channelId deletes channel", async () => {

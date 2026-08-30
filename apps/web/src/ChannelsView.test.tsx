@@ -1,188 +1,149 @@
 // @vitest-environment jsdom
-import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChannelsView } from "./ChannelsView.js";
 
-function getUrlString(input: RequestInfo | URL): string {
+const orgId = "org-123";
+const attemptId = "a0000000-0000-4000-8000-000000000111";
+
+function channel() {
+  return {
+    id: "c0000000-0000-4000-8000-000000000001",
+    organizationId: orgId,
+    type: "whatsapp",
+    name: "Support Line",
+    phoneNumberId: "10987654321",
+    wabaId: "9876543210",
+    status: "active",
+    statusReason: null,
+    metadata: { connectionMethod: "meta_embedded_signup" },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function response(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" }
+  });
+}
+
+function urlFor(input: RequestInfo | URL): string {
   if (typeof input === "string") return input;
-  if (input instanceof URL) return input.toString();
+  if (input instanceof URL) return input.href;
   return input.url;
 }
 
-describe("ChannelsView component (M6-01)", () => {
-  const orgId = "org-123";
+describe("ChannelsView Meta Embedded Signup", () => {
   const showToast = vi.fn();
   const originalFetch = globalThis.fetch;
 
   beforeEach(() => {
     showToast.mockReset();
+    delete window.FB;
   });
 
   afterEach(() => {
     cleanup();
     globalThis.fetch = originalFetch;
     vi.restoreAllMocks();
+    delete window.FB;
   });
 
-  it("renders channel list and connect channel button", async () => {
-    globalThis.fetch = vi.fn().mockImplementation((input: RequestInfo | URL) => {
-      const urlStr = getUrlString(input);
-      if (urlStr.includes(`/api/v1/organizations/${orgId}/channels`)) {
-        return Promise.resolve(
-          new Response(
-            JSON.stringify([
-              {
-                id: "c1",
-                organizationId: orgId,
-                type: "whatsapp",
-                name: "Support Line",
-                phoneNumberId: "10987654321",
-                wabaId: "9876543210",
-                status: "active",
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-              }
-            ]),
-            { status: 200, headers: { "Content-Type": "application/json" } }
-          )
-        );
-      }
-      return Promise.reject(new Error(`Unhandled URL: ${urlStr}`));
-    }) as typeof fetch;
-
+  it("renders Meta connection controls and never renders manual credential fields", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(response([channel()])) as typeof fetch;
     render(<ChannelsView orgId={orgId} canManage={true} showToast={showToast} />);
 
-    expect(screen.getByText("Loading connected channels...")).toBeTruthy();
-
-    await waitFor(() => {
-      expect(screen.getByText("Support Line")).toBeTruthy();
-    });
-
-    expect(screen.getByText(/10987654321/)).toBeTruthy();
-    expect(screen.getAllByText("+ Connect WhatsApp Channel")[0]).toBeTruthy();
-  });
-
-  it("opens modal and submits new channel connection", async () => {
-    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
-      const urlStr = getUrlString(input);
-      if (urlStr.includes(`/api/v1/organizations/${orgId}/channels`)) {
-        if (init?.method === "POST") {
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({
-                id: "c2",
-                organizationId: orgId,
-                type: "whatsapp",
-                name: "Sales Line",
-                phoneNumberId: "10987654399",
-                wabaId: "9876543299",
-                status: "active",
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-              }),
-              { status: 201, headers: { "Content-Type": "application/json" } }
-            )
-          );
-        }
-        return Promise.resolve(
-          new Response(JSON.stringify([]), {
-            status: 200,
-            headers: { "Content-Type": "application/json" }
-          })
-        );
-      }
-      return Promise.reject(new Error(`Unhandled URL: ${urlStr}`));
-    });
-
-    globalThis.fetch = fetchMock as typeof fetch;
-
-    render(<ChannelsView orgId={orgId} canManage={true} showToast={showToast} />);
-
-    await waitFor(() => {
-      expect(screen.getByText("No WhatsApp channels connected yet.")).toBeTruthy();
-    });
-
-    fireEvent.click(screen.getAllByText("+ Connect WhatsApp Channel")[0]!);
-
-    expect(screen.getByText("Connect Meta WhatsApp Channel")).toBeTruthy();
-
-    fireEvent.change(screen.getByLabelText("Channel Name"), { target: { value: "Sales Line" } });
-    fireEvent.change(screen.getByLabelText("Phone Number ID"), {
-      target: { value: "10987654399" }
-    });
-    fireEvent.change(screen.getByLabelText("WhatsApp Business Account ID (WABA ID)"), {
-      target: { value: "9876543299" }
-    });
-    fireEvent.change(screen.getByLabelText("Permanent System User Access Token"), {
-      target: { value: "EAAG123456" }
-    });
-
-    fireEvent.click(screen.getByText("Connect Channel"));
-
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalled();
-    });
-  });
-
-  it("rotates the token in place without displaying the stored credential", async () => {
-    const channel = {
-      id: "c1",
-      organizationId: orgId,
-      type: "whatsapp",
-      name: "Support Line",
-      phoneNumberId: "10987654321",
-      wabaId: "9876543210",
-      status: "active",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
-      const urlStr = getUrlString(input);
-      if (urlStr.endsWith(`/channels/${channel.id}/credentials`) && init?.method === "PATCH") {
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              channelId: channel.id,
-              organizationId: orgId,
-              updatedAt: new Date().toISOString()
-            }),
-            { status: 200, headers: { "Content-Type": "application/json" } }
-          )
-        );
-      }
-      if (urlStr.includes(`/api/v1/organizations/${orgId}/channels`)) {
-        return Promise.resolve(
-          new Response(JSON.stringify([channel]), {
-            status: 200,
-            headers: { "Content-Type": "application/json" }
-          })
-        );
-      }
-      return Promise.reject(new Error(`Unhandled URL: ${urlStr}`));
-    });
-    globalThis.fetch = fetchMock as typeof fetch;
-
-    render(<ChannelsView orgId={orgId} canManage={true} showToast={showToast} />);
     await screen.findByText("Support Line");
+    expect(screen.getByText("Connect WhatsApp with Meta")).toBeTruthy();
+    expect(screen.getByText("Reconnect with Meta")).toBeTruthy();
+    expect(screen.queryByText("Permanent System User Access Token")).toBeNull();
+    expect(screen.queryByText("App Secret")).toBeNull();
+  });
 
-    fireEvent.click(screen.getByText("Rotate token"));
-    expect(screen.getByText("Update WhatsApp access token")).toBeTruthy();
-    expect(screen.queryByDisplayValue(/EAAG/)).toBeNull();
-
-    fireEvent.change(screen.getByLabelText("New permanent System User access token"), {
-      target: { value: "EAAG_NEW_PERMANENT_TOKEN" }
+  it("starts a server-bound Meta signup and only completes after code plus Meta WABA event", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = urlFor(input);
+      if (url.endsWith("/embedded-signup/start")) {
+        return Promise.resolve(
+          response(
+            {
+              attemptId,
+              state: "state-value-with-more-than-thirty-two-characters",
+              appId: "flowdesk-meta-app-id",
+              configId: "flowdesk-embedded-config-id",
+              expiresAt: new Date(Date.now() + 600000).toISOString()
+            },
+            201
+          )
+        );
+      }
+      if (url.endsWith("/embedded-signup/complete")) {
+        return Promise.resolve(
+          response(
+            {
+              channel: channel(),
+              displayPhoneNumber: "+62 812 3456 7890",
+              verifiedName: "Support"
+            },
+            201
+          )
+        );
+      }
+      if (url.endsWith(`/api/v1/organizations/${orgId}/channels`)) {
+        return Promise.resolve(response([]));
+      }
+      return Promise.reject(new Error(`Unhandled URL: ${url}`));
     });
-    fireEvent.click(screen.getByText("Update access token"));
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    let loginCallback: ((response: { authResponse?: { code?: string } }) => void) | undefined;
+    const fbLogin = vi.fn((callback: (response: { authResponse?: { code?: string } }) => void) => {
+      loginCallback = callback;
+    });
+    window.FB = {
+      init: vi.fn(),
+      login: fbLogin
+    };
+
+    render(<ChannelsView orgId={orgId} canManage={true} showToast={showToast} />);
+    await screen.findByText("No WhatsApp channels connected yet.");
+    fireEvent.click(screen.getByText("Connect WhatsApp with Meta"));
+
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some((call) => {
+          const input: unknown = call[0];
+          if (typeof input !== "string" && !(input instanceof URL) && !(input instanceof Request)) {
+            return false;
+          }
+          const url = urlFor(input);
+          return url.endsWith("/embedded-signup/start");
+        })
+      ).toBe(true)
+    );
+    await waitFor(() => expect(fbLogin).toHaveBeenCalled());
+    loginCallback?.({ authResponse: { code: "one-time-meta-code" } });
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        origin: "https://www.facebook.com",
+        data: JSON.stringify({
+          type: "WA_EMBEDDED_SIGNUP",
+          event: "FINISH",
+          data: { phone_number_id: "10987654321", waba_id: "9876543210" }
+        })
+      })
+    );
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        `/api/v1/organizations/${orgId}/channels/${channel.id}/credentials`,
+        `/api/v1/organizations/${orgId}/channels/whatsapp/embedded-signup/complete`,
         expect.objectContaining({
-          method: "PATCH",
-          body: JSON.stringify({ accessToken: "EAAG_NEW_PERMANENT_TOKEN" })
+          method: "POST"
         })
       );
-      expect(showToast).toHaveBeenCalledWith("WhatsApp access token updated successfully");
     });
+    expect(screen.queryByText("Permanent System User Access Token")).toBeNull();
   });
 });

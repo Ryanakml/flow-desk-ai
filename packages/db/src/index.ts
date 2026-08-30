@@ -68,6 +68,15 @@ export {
   type UpdateChannelCredentialsInput
 } from "./channels.js";
 export {
+  createWhatsAppEmbeddedSignupAttempt,
+  beginWhatsAppEmbeddedSignupAttempt,
+  completeWhatsAppEmbeddedSignupAttempt,
+  failWhatsAppEmbeddedSignupAttempt,
+  claimWhatsAppBusinessAccount,
+  type WhatsAppEmbeddedSignupAttempt,
+  type WhatsAppEmbeddedSignupAttemptStatus
+} from "./whatsapp-embedded-signup.js";
+export {
   recordWebhookEvent,
   getWebhookEventById,
   type WebhookEventRecord,

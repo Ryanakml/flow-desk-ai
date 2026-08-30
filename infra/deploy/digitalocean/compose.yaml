@@ -23,9 +23,20 @@ x-app-environment: &app-environment
   AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
   AUTH_MOCK_ENABLED: ${AUTH_MOCK_ENABLED:-true}
   APP_BASE_URL: ${PUBLIC_BASE_URL:?PUBLIC_BASE_URL is required}
-  WEBHOOK_VERIFY_TOKEN: ${WEBHOOK_VERIFY_TOKEN:-flowdesk_webhook_verify_token_default}
-  WEBHOOK_APP_SECRET: ${WEBHOOK_APP_SECRET:-flowdesk_webhook_app_secret_default}
   ENCRYPTION_KEY: ${ENCRYPTION_KEY:-dev-encryption-key-32-bytes-long!!}
+
+x-api-meta-environment: &api-meta-environment
+  META_APP_ID: ${META_APP_ID:?META_APP_ID is required}
+  META_APP_SECRET: ${META_APP_SECRET:?META_APP_SECRET is required}
+  META_EMBEDDED_SIGNUP_CONFIG_ID: ${META_EMBEDDED_SIGNUP_CONFIG_ID:?META_EMBEDDED_SIGNUP_CONFIG_ID is required}
+  META_SYSTEM_USER_ACCESS_TOKEN: ${META_SYSTEM_USER_ACCESS_TOKEN:?META_SYSTEM_USER_ACCESS_TOKEN is required}
+  META_SYSTEM_USER_ID: ${META_SYSTEM_USER_ID:?META_SYSTEM_USER_ID is required}
+  META_ADMIN_SYSTEM_USER_ACCESS_TOKEN: ${META_ADMIN_SYSTEM_USER_ACCESS_TOKEN:?META_ADMIN_SYSTEM_USER_ACCESS_TOKEN is required}
+  META_GRAPH_API_BASE_URL: ${META_GRAPH_API_BASE_URL:?META_GRAPH_API_BASE_URL is required}
+
+x-ingress-webhook-environment: &ingress-webhook-environment
+  WEBHOOK_VERIFY_TOKEN: ${WEBHOOK_VERIFY_TOKEN:?WEBHOOK_VERIFY_TOKEN is required}
+  WEBHOOK_APP_SECRET: ${WEBHOOK_APP_SECRET:?WEBHOOK_APP_SECRET is required}
 
 x-app-defaults: &app-defaults
   restart: unless-stopped
@@ -81,14 +92,14 @@ services:
     <<: *app-defaults
     image: ${IMAGE_REGISTRY}/flowdesk-api:${IMAGE_TAG}
     environment:
-      <<: *app-environment
+      <<: [*app-environment, *api-meta-environment]
       PORT: "4000"
 
   ingress:
     <<: *app-defaults
     image: ${IMAGE_REGISTRY}/flowdesk-ingress:${IMAGE_TAG}
     environment:
-      <<: *app-environment
+      <<: [*app-environment, *ingress-webhook-environment]
       PORT: "4001"
 
   worker:
