@@ -42,7 +42,9 @@ import {
   type BotConfigResponse,
   type UpdateBotConfigRequest,
   GenerateBotDraftResponseSchema,
-  type GenerateBotDraftResponse
+  type GenerateBotDraftResponse,
+  StartWhatsAppEmbeddedSignupResponseSchema,
+  CompleteWhatsAppEmbeddedSignupResponseSchema
 } from "@flowdesk/contracts";
 import type { RoleKey } from "@flowdesk/domain";
 
@@ -513,17 +515,58 @@ export async function listChannelsApi(
   return (await handleResponse<unknown>(res)) as ChannelClientRecord[];
 }
 
-export async function createChannelApi(
+export async function startWhatsAppEmbeddedSignupApi(
   orgId: string,
-  body: { name: string; phoneNumberId: string; wabaId: string; accessToken: string },
   fetcher: typeof fetch = fetch
-): Promise<ChannelClientRecord> {
-  const res = await fetcher(`/api/v1/organizations/${orgId}/channels`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
-  return (await handleResponse<unknown>(res)) as ChannelClientRecord;
+): Promise<{
+  attemptId: string;
+  state: string;
+  appId: string;
+  configId: string;
+  expiresAt: string;
+}> {
+  const res = await fetcher(
+    `/api/v1/organizations/${orgId}/channels/whatsapp/embedded-signup/start`,
+    { method: "POST" }
+  );
+  return StartWhatsAppEmbeddedSignupResponseSchema.parse(await handleResponse<unknown>(res));
+}
+
+export async function completeWhatsAppEmbeddedSignupApi(
+  orgId: string,
+  body: {
+    attemptId: string;
+    state: string;
+    code: string;
+    phoneNumberId: string;
+    wabaId: string;
+    name?: string;
+  },
+  fetcher: typeof fetch = fetch
+): Promise<{
+  channel: ChannelClientRecord;
+  displayPhoneNumber: string | null;
+  verifiedName: string | null;
+}> {
+  const res = await fetcher(
+    `/api/v1/organizations/${orgId}/channels/whatsapp/embedded-signup/complete`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }
+  );
+  const parsed = CompleteWhatsAppEmbeddedSignupResponseSchema.parse(
+    await handleResponse<unknown>(res)
+  );
+  return {
+    channel: {
+      ...parsed.channel,
+      statusReason: parsed.channel.statusReason ?? null
+    },
+    displayPhoneNumber: parsed.displayPhoneNumber,
+    verifiedName: parsed.verifiedName
+  };
 }
 
 export async function verifyChannelApi(

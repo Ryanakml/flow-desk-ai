@@ -1,12 +1,62 @@
-import { useState, useEffect, useCallback, useId } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  listChannelsApi,
-  createChannelApi,
-  verifyChannelApi,
+  completeWhatsAppEmbeddedSignupApi,
   deleteChannelApi,
-  rotateChannelCredentialsApi,
+  listChannelsApi,
+  startWhatsAppEmbeddedSignupApi,
+  verifyChannelApi,
   type ChannelClientRecord
 } from "./api.js";
+
+interface FacebookSdk {
+  init(config: { appId: string; cookie: boolean; xfbml: boolean; version: string }): void;
+  login(
+    callback: (response: { authResponse?: { code?: string } }) => void,
+    options: Record<string, unknown>
+  ): void;
+}
+
+declare global {
+  interface Window {
+    FB?: FacebookSdk;
+  }
+}
+
+const META_SDK_URL = "https://connect.facebook.net/en_US/sdk.js";
+const META_MESSAGE_ORIGINS = new Set(["https://www.facebook.com", "https://web.facebook.com"]);
+
+function loadMetaSdk(appId: string): Promise<FacebookSdk> {
+  if (window.FB) {
+    window.FB.init({ appId, cookie: true, xfbml: false, version: "v25.0" });
+    return Promise.resolve(window.FB);
+  }
+
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.async = true;
+    script.defer = true;
+    script.src = META_SDK_URL;
+    script.onload = () => {
+      if (!window.FB) {
+        reject(new Error("Meta login SDK did not load."));
+        return;
+      }
+      window.FB.init({ appId, cookie: true, xfbml: false, version: "v25.0" });
+      resolve(window.FB);
+    };
+    script.onerror = () => reject(new Error("Meta login SDK could not be loaded."));
+    document.head.appendChild(script);
+  });
+}
+
+type PendingSignup = {
+  attemptId: string;
+  state: string;
+  code?: string;
+  phoneNumberId?: string;
+  wabaId?: string;
+  completing?: boolean;
+};
 
 export interface ChannelsViewProps {
   orgId: string;
@@ -17,30 +67,14 @@ export interface ChannelsViewProps {
 export function ChannelsView({ orgId, canManage, showToast }: ChannelsViewProps) {
   const [channels, setChannels] = useState<ChannelClientRecord[]>([]);
   const [loading, setLoading] = useState(false);
-  const [showModal, setShowModal] = useState(false);
+  const [connecting, setConnecting] = useState(false);
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
-  const [rotatingChannelId, setRotatingChannelId] = useState<string | null>(null);
-  const [rotatedAccessToken, setRotatedAccessToken] = useState("");
-  const [rotating, setRotating] = useState(false);
-
-  // Form State
-  const [name, setName] = useState("");
-  const [phoneNumberId, setPhoneNumberId] = useState("");
-  const [wabaId, setWabaId] = useState("");
-  const [accessToken, setAccessToken] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-
-  const nameId = useId();
-  const phoneId = useId();
-  const wabaInputId = useId();
-  const tokenInputId = useId();
-  const rotatedTokenInputId = useId();
+  const pendingSignup = useRef<PendingSignup | null>(null);
 
   const loadChannels = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await listChannelsApi(orgId);
-      setChannels(res);
+      setChannels(await listChannelsApi(orgId));
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Failed to load channels", true);
     } finally {
@@ -52,39 +86,125 @@ export function ChannelsView({ orgId, canManage, showToast }: ChannelsViewProps)
     void loadChannels();
   }, [loadChannels]);
 
-  const handleCreateChannel = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name || !phoneNumberId || !wabaId || !accessToken) {
-      showToast("Please fill in all required fields", true);
+  const completePendingSignup = useCallback(async () => {
+    const pending = pendingSignup.current;
+    if (
+      !pending ||
+      pending.completing ||
+      !pending.code ||
+      !pending.phoneNumberId ||
+      !pending.wabaId
+    ) {
       return;
     }
-
+    pending.completing = true;
+    setConnecting(true);
     try {
-      setSubmitting(true);
-      await createChannelApi(orgId, { name, phoneNumberId, wabaId, accessToken });
-      showToast("WhatsApp channel connected successfully!");
-      setShowModal(false);
-      setName("");
-      setPhoneNumberId("");
-      setWabaId("");
-      setAccessToken("");
+      const result = await completeWhatsAppEmbeddedSignupApi(orgId, {
+        attemptId: pending.attemptId,
+        state: pending.state,
+        code: pending.code,
+        phoneNumberId: pending.phoneNumberId,
+        wabaId: pending.wabaId
+      });
+      showToast(`WhatsApp channel connected: ${result.channel.name}`);
+      pendingSignup.current = null;
       await loadChannels();
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Failed to connect channel", true);
+      showToast(
+        err instanceof Error ? err.message : "Meta connection could not be completed.",
+        true
+      );
     } finally {
-      setSubmitting(false);
+      const current = pendingSignup.current;
+      if (current) current.completing = false;
+      setConnecting(false);
+    }
+  }, [loadChannels, orgId, showToast]);
+
+  useEffect(() => {
+    const receiveMetaSignupEvent = (event: MessageEvent<unknown>) => {
+      if (!META_MESSAGE_ORIGINS.has(event.origin) || typeof event.data !== "string") return;
+      let payload: unknown;
+      try {
+        payload = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      if (
+        typeof payload !== "object" ||
+        payload === null ||
+        !("type" in payload) ||
+        payload.type !== "WA_EMBEDDED_SIGNUP" ||
+        !("event" in payload) ||
+        payload.event !== "FINISH" ||
+        !("data" in payload) ||
+        typeof payload.data !== "object" ||
+        payload.data === null
+      ) {
+        return;
+      }
+      const data = payload.data as Record<string, unknown>;
+      const pending = pendingSignup.current;
+      if (
+        !pending ||
+        typeof data["phone_number_id"] !== "string" ||
+        typeof data["waba_id"] !== "string"
+      ) {
+        return;
+      }
+      pending.phoneNumberId = data["phone_number_id"];
+      pending.wabaId = data["waba_id"];
+      void completePendingSignup();
+    };
+    window.addEventListener("message", receiveMetaSignupEvent);
+    return () => window.removeEventListener("message", receiveMetaSignupEvent);
+  }, [completePendingSignup]);
+
+  const handleConnect = async () => {
+    if (!canManage || connecting) return;
+    try {
+      setConnecting(true);
+      const setup = await startWhatsAppEmbeddedSignupApi(orgId);
+      pendingSignup.current = { attemptId: setup.attemptId, state: setup.state };
+      const sdk = await loadMetaSdk(setup.appId);
+      sdk.login(
+        (loginResponse) => {
+          const pending = pendingSignup.current;
+          const code = loginResponse.authResponse?.code;
+          if (!pending || !code) {
+            pendingSignup.current = null;
+            setConnecting(false);
+            showToast("Meta connection was cancelled before authorization completed.", true);
+            return;
+          }
+          pending.code = code;
+          void completePendingSignup();
+        },
+        {
+          config_id: setup.configId,
+          response_type: "code",
+          override_default_response_type: true,
+          extras: { setup: {} }
+        }
+      );
+    } catch (err) {
+      pendingSignup.current = null;
+      setConnecting(false);
+      showToast(err instanceof Error ? err.message : "Unable to start Meta connection.", true);
     }
   };
 
   const handleVerify = async (channelId: string) => {
     try {
       setVerifyingId(channelId);
-      const res = await verifyChannelApi(orgId, channelId);
-      if (res.verified) {
-        showToast("WhatsApp API Connection Verified Successfully!");
-      } else {
-        showToast(`Verification Failed: ${res.message}`, true);
-      }
+      const result = await verifyChannelApi(orgId, channelId);
+      showToast(
+        result.verified
+          ? "WhatsApp API connection is healthy."
+          : `Verification failed: ${result.message}`,
+        !result.verified
+      );
       await loadChannels();
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Verification error", true);
@@ -94,33 +214,19 @@ export function ChannelsView({ orgId, canManage, showToast }: ChannelsViewProps)
   };
 
   const handleDelete = async (channelId: string) => {
-    if (!window.confirm("Are you sure you want to disconnect this channel?")) return;
-    try {
-      await deleteChannelApi(orgId, channelId);
-      showToast("Channel disconnected successfully");
-      await loadChannels();
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Failed to disconnect channel", true);
-    }
-  };
-
-  const handleRotateCredentials = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!rotatingChannelId || !rotatedAccessToken.trim()) {
-      showToast("A new permanent System User access token is required", true);
+    if (
+      !window.confirm(
+        "Disconnect this WhatsApp channel? Existing conversation history will remain."
+      )
+    ) {
       return;
     }
     try {
-      setRotating(true);
-      await rotateChannelCredentialsApi(orgId, rotatingChannelId, rotatedAccessToken.trim());
-      showToast("WhatsApp access token updated successfully");
-      setRotatedAccessToken("");
-      setRotatingChannelId(null);
+      await deleteChannelApi(orgId, channelId);
+      showToast("Channel disconnected successfully.");
       await loadChannels();
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Failed to update access token", true);
-    } finally {
-      setRotating(false);
+      showToast(err instanceof Error ? err.message : "Failed to disconnect channel", true);
     }
   };
 
@@ -130,17 +236,19 @@ export function ChannelsView({ orgId, canManage, showToast }: ChannelsViewProps)
         <div>
           <h2 className="text-xl font-bold text-gray-900">WhatsApp Channels</h2>
           <p className="text-sm text-gray-500">
-            Connect your Meta WhatsApp Business Accounts for AI copilot and auto-response.
+            Connect a WhatsApp Business Account securely through Meta. FlowDesk never asks for your
+            Meta App Secret or a pasted access token.
           </p>
         </div>
         {canManage && (
           <button
             type="button"
-            onClick={() => setShowModal(true)}
+            onClick={() => void handleConnect()}
             className="btn btn-primary"
             id="connect-channel-btn"
+            disabled={connecting}
           >
-            + Connect WhatsApp Channel
+            {connecting ? "Connecting with Meta..." : "Connect WhatsApp with Meta"}
           </button>
         )}
       </div>
@@ -153,10 +261,11 @@ export function ChannelsView({ orgId, canManage, showToast }: ChannelsViewProps)
           {canManage && (
             <button
               type="button"
-              onClick={() => setShowModal(true)}
+              onClick={() => void handleConnect()}
               className="btn btn-secondary btn-sm"
+              disabled={connecting}
             >
-              Connect your first channel
+              Connect your first channel with Meta
             </button>
           )}
         </div>
@@ -179,7 +288,9 @@ export function ChannelsView({ orgId, canManage, showToast }: ChannelsViewProps)
                   {channel.status.toUpperCase()}
                 </span>
               </div>
-
+              {channel.statusReason && (
+                <p className="mb-3 text-sm text-amber-700">{channel.statusReason}</p>
+              )}
               <div className="text-sm text-gray-600 space-y-1 mb-4">
                 <p>
                   <strong>Phone Number ID:</strong> {channel.phoneNumberId}
@@ -188,18 +299,15 @@ export function ChannelsView({ orgId, canManage, showToast }: ChannelsViewProps)
                   <strong>WABA ID:</strong> {channel.wabaId}
                 </p>
               </div>
-
               {canManage && (
-                <div className="flex gap-2 border-t pt-3 mt-2">
+                <div className="flex flex-wrap gap-2 border-t pt-3 mt-2">
                   <button
                     type="button"
-                    onClick={() => {
-                      setRotatedAccessToken("");
-                      setRotatingChannelId(channel.id);
-                    }}
+                    onClick={() => void handleConnect()}
+                    disabled={connecting}
                     className="btn btn-secondary btn-sm"
                   >
-                    Rotate token
+                    Reconnect with Meta
                   </button>
                   <button
                     type="button"
@@ -207,7 +315,7 @@ export function ChannelsView({ orgId, canManage, showToast }: ChannelsViewProps)
                     disabled={verifyingId === channel.id}
                     className="btn btn-secondary btn-sm"
                   >
-                    {verifyingId === channel.id ? "Verifying..." : "Verify Connection"}
+                    {verifyingId === channel.id ? "Checking..." : "Test connection"}
                   </button>
                   <button
                     type="button"
@@ -220,143 +328,6 @@ export function ChannelsView({ orgId, canManage, showToast }: ChannelsViewProps)
               )}
             </div>
           ))}
-        </div>
-      )}
-
-      {showModal && (
-        <div className="modal-overlay fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="modal-content bg-white rounded-lg p-6 max-w-md w-full shadow-xl">
-            <h3 className="text-lg font-bold mb-4">Connect Meta WhatsApp Channel</h3>
-            <form onSubmit={(e) => void handleCreateChannel(e)} className="space-y-4">
-              <div>
-                <label htmlFor={nameId} className="block text-sm font-medium text-gray-700 mb-1">
-                  Channel Name
-                </label>
-                <input
-                  id={nameId}
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="e.g. Support WhatsApp Line"
-                  className="input w-full"
-                  required
-                />
-              </div>
-
-              <div>
-                <label htmlFor={phoneId} className="block text-sm font-medium text-gray-700 mb-1">
-                  Phone Number ID
-                </label>
-                <input
-                  id={phoneId}
-                  type="text"
-                  value={phoneNumberId}
-                  onChange={(e) => setPhoneNumberId(e.target.value)}
-                  placeholder="Meta Phone Number ID (e.g. 10987654321)"
-                  className="input w-full"
-                  required
-                />
-              </div>
-
-              <div>
-                <label
-                  htmlFor={wabaInputId}
-                  className="block text-sm font-medium text-gray-700 mb-1"
-                >
-                  WhatsApp Business Account ID (WABA ID)
-                </label>
-                <input
-                  id={wabaInputId}
-                  type="text"
-                  value={wabaId}
-                  onChange={(e) => setWabaId(e.target.value)}
-                  placeholder="WABA ID (e.g. 9876543210)"
-                  className="input w-full"
-                  required
-                />
-              </div>
-
-              <div>
-                <label
-                  htmlFor={tokenInputId}
-                  className="block text-sm font-medium text-gray-700 mb-1"
-                >
-                  Permanent System User Access Token
-                </label>
-                <input
-                  id={tokenInputId}
-                  type="password"
-                  value={accessToken}
-                  onChange={(e) => setAccessToken(e.target.value)}
-                  placeholder="EAAG..."
-                  className="input w-full"
-                  required
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-4">
-                <button
-                  type="button"
-                  onClick={() => setShowModal(false)}
-                  className="btn btn-secondary"
-                  disabled={submitting}
-                >
-                  Cancel
-                </button>
-                <button type="submit" className="btn btn-primary" disabled={submitting}>
-                  {submitting ? "Connecting..." : "Connect Channel"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {rotatingChannelId && (
-        <div className="modal-overlay fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="modal-content bg-white rounded-lg p-6 max-w-md w-full shadow-xl">
-            <h3 className="text-lg font-bold mb-2">Update WhatsApp access token</h3>
-            <p className="text-sm text-gray-600 mb-4">
-              This keeps the existing channel, conversations, messages, and templates linked. The
-              current token is never displayed.
-            </p>
-            <form onSubmit={(e) => void handleRotateCredentials(e)} className="space-y-4">
-              <div>
-                <label
-                  htmlFor={rotatedTokenInputId}
-                  className="block text-sm font-medium text-gray-700 mb-1"
-                >
-                  New permanent System User access token
-                </label>
-                <input
-                  id={rotatedTokenInputId}
-                  type="password"
-                  value={rotatedAccessToken}
-                  onChange={(e) => setRotatedAccessToken(e.target.value)}
-                  placeholder="EAAG..."
-                  className="input w-full"
-                  autoComplete="new-password"
-                  required
-                />
-              </div>
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRotatedAccessToken("");
-                    setRotatingChannelId(null);
-                  }}
-                  className="btn btn-secondary"
-                  disabled={rotating}
-                >
-                  Cancel
-                </button>
-                <button type="submit" className="btn btn-primary" disabled={rotating}>
-                  {rotating ? "Updating..." : "Update access token"}
-                </button>
-              </div>
-            </form>
-          </div>
         </div>
       )}
     </div>

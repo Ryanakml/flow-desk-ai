@@ -14,7 +14,7 @@ import {
 } from "@flowdesk/security";
 import express, { type ErrorRequestHandler, type RequestHandler } from "express";
 
-import type { AuthConfig } from "@flowdesk/config";
+import type { AuthConfig, MetaEmbeddedSignupConfig } from "@flowdesk/config";
 import type { DbClient } from "@flowdesk/db";
 import type { IdentityProvider } from "@flowdesk/providers";
 import type { WhatsAppProvider } from "@flowdesk/providers";
@@ -47,6 +47,7 @@ export interface ApiAppAuthOptions {
   identityProvider?: IdentityProvider;
   encryptionKey?: string;
   whatsappProvider?: WhatsAppProvider;
+  embeddedSignup?: MetaEmbeddedSignupConfig;
 }
 
 export interface ApiAppOptions {
@@ -248,7 +249,8 @@ export function createApiApp(options: ApiAppOptions) {
       createChannelsRouter({
         db: options.auth.db,
         ...(options.auth.encryptionKey ? { encryptionKey: options.auth.encryptionKey } : {}),
-        ...(options.auth.whatsappProvider ? { provider: options.auth.whatsappProvider } : {})
+        ...(options.auth.whatsappProvider ? { provider: options.auth.whatsappProvider } : {}),
+        ...(options.auth.embeddedSignup ? { embeddedSignup: options.auth.embeddedSignup } : {})
       })
     );
     app.use(

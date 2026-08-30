@@ -5,6 +5,7 @@ import {
   loadAuthConfig,
   loadChannelEncryptionConfig,
   loadHttpConfig,
+  loadMetaEmbeddedSignupConfig,
   loadMediaConfig
 } from "./index.js";
 
@@ -65,6 +66,35 @@ describe("loadChannelEncryptionConfig", () => {
         ENCRYPTION_KEY: "staging-channel-key-material"
       })
     ).toEqual({ ENCRYPTION_KEY: "staging-channel-key-material" });
+  });
+});
+
+describe("loadMetaEmbeddedSignupConfig", () => {
+  it("is disabled until every server-side platform credential is configured", () => {
+    expect(loadMetaEmbeddedSignupConfig({})).toBeUndefined();
+    expect(() => loadMetaEmbeddedSignupConfig({ META_APP_ID: "app-id" })).toThrow();
+  });
+
+  it("keeps the platform App Secret and system-user token server-only", () => {
+    expect(
+      loadMetaEmbeddedSignupConfig({
+        META_APP_ID: "app-id",
+        META_APP_SECRET: "app-secret",
+        META_EMBEDDED_SIGNUP_CONFIG_ID: "config-id",
+        META_SYSTEM_USER_ACCESS_TOKEN: "system-user-token",
+        META_SYSTEM_USER_ID: "system-user-id",
+        META_ADMIN_SYSTEM_USER_ACCESS_TOKEN: "admin-system-user-token",
+        META_GRAPH_API_BASE_URL: "https://graph.facebook.com/v25.0"
+      })
+    ).toEqual({
+      appId: "app-id",
+      appSecret: "app-secret",
+      configId: "config-id",
+      systemUserAccessToken: "system-user-token",
+      systemUserId: "system-user-id",
+      adminSystemUserAccessToken: "admin-system-user-token",
+      graphApiBaseUrl: "https://graph.facebook.com/v25.0"
+    });
   });
 });
 

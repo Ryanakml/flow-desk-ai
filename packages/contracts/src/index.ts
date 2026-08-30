@@ -311,6 +311,39 @@ export const CreateChannelRequestSchema = z.object({
 });
 export type CreateChannelRequest = z.infer<typeof CreateChannelRequestSchema>;
 
+/** Browser-to-API contract for a platform-owned Meta Embedded Signup session. */
+export const StartWhatsAppEmbeddedSignupResponseSchema = z.object({
+  attemptId: z.string().uuid(),
+  state: z.string().min(32),
+  appId: z.string().min(1),
+  configId: z.string().min(1),
+  expiresAt: z.string().datetime()
+});
+export type StartWhatsAppEmbeddedSignupResponse = z.infer<
+  typeof StartWhatsAppEmbeddedSignupResponseSchema
+>;
+
+export const CompleteWhatsAppEmbeddedSignupRequestSchema = z.object({
+  attemptId: z.string().uuid(),
+  state: z.string().min(32).max(1024),
+  code: z.string().trim().min(1).max(8192),
+  phoneNumberId: z.string().trim().min(1).max(255),
+  wabaId: z.string().trim().min(1).max(255),
+  name: z.string().trim().min(1).max(100).optional()
+});
+export type CompleteWhatsAppEmbeddedSignupRequest = z.infer<
+  typeof CompleteWhatsAppEmbeddedSignupRequestSchema
+>;
+
+export const CompleteWhatsAppEmbeddedSignupResponseSchema = z.object({
+  channel: ChannelSchema,
+  displayPhoneNumber: z.string().nullable(),
+  verifiedName: z.string().nullable()
+});
+export type CompleteWhatsAppEmbeddedSignupResponse = z.infer<
+  typeof CompleteWhatsAppEmbeddedSignupResponseSchema
+>;
+
 export const UpdateChannelStatusRequestSchema = z.object({
   status: ChannelStatusSchema,
   statusReason: z.string().trim().max(500).optional()

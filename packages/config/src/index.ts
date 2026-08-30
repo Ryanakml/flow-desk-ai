@@ -124,6 +124,67 @@ export function loadWebhookConfig(environment: NodeJS.ProcessEnv = process.env):
   return webhookConfigSchema.parse(environment);
 }
 
+/**
+ * Credentials for FlowDesk's single, platform-owned Meta App. App Secret is
+ * intentionally server-only: it must never be placed in the web bundle or a
+ * tenant-owned channel record.
+ */
+const metaEmbeddedSignupConfigSchema = z
+  .object({
+    META_APP_ID: z.string().trim().min(1).optional(),
+    META_APP_SECRET: z.string().trim().min(1).optional(),
+    META_EMBEDDED_SIGNUP_CONFIG_ID: z.string().trim().min(1).optional(),
+    META_SYSTEM_USER_ACCESS_TOKEN: z.string().trim().min(1).optional(),
+    META_SYSTEM_USER_ID: z.string().trim().min(1).optional(),
+    META_ADMIN_SYSTEM_USER_ACCESS_TOKEN: z.string().trim().min(1).optional(),
+    META_GRAPH_API_BASE_URL: z.string().url().optional()
+  })
+  .superRefine((config, context) => {
+    const configured = [
+      config.META_APP_ID,
+      config.META_APP_SECRET,
+      config.META_EMBEDDED_SIGNUP_CONFIG_ID,
+      config.META_SYSTEM_USER_ACCESS_TOKEN,
+      config.META_SYSTEM_USER_ID,
+      config.META_ADMIN_SYSTEM_USER_ACCESS_TOKEN,
+      config.META_GRAPH_API_BASE_URL
+    ].filter(Boolean).length;
+    if (configured !== 0 && configured !== 7) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "META_APP_ID, META_APP_SECRET, META_EMBEDDED_SIGNUP_CONFIG_ID, META_SYSTEM_USER_ACCESS_TOKEN, META_SYSTEM_USER_ID, META_ADMIN_SYSTEM_USER_ACCESS_TOKEN, and META_GRAPH_API_BASE_URL must be configured together"
+      });
+    }
+  })
+  .transform((config) =>
+    config.META_APP_ID &&
+    config.META_APP_SECRET &&
+    config.META_EMBEDDED_SIGNUP_CONFIG_ID &&
+    config.META_SYSTEM_USER_ACCESS_TOKEN &&
+    config.META_SYSTEM_USER_ID &&
+    config.META_ADMIN_SYSTEM_USER_ACCESS_TOKEN &&
+    config.META_GRAPH_API_BASE_URL
+      ? {
+          appId: config.META_APP_ID,
+          appSecret: config.META_APP_SECRET,
+          configId: config.META_EMBEDDED_SIGNUP_CONFIG_ID,
+          systemUserAccessToken: config.META_SYSTEM_USER_ACCESS_TOKEN,
+          systemUserId: config.META_SYSTEM_USER_ID,
+          adminSystemUserAccessToken: config.META_ADMIN_SYSTEM_USER_ACCESS_TOKEN,
+          graphApiBaseUrl: config.META_GRAPH_API_BASE_URL
+        }
+      : undefined
+  );
+
+export type MetaEmbeddedSignupConfig = NonNullable<z.infer<typeof metaEmbeddedSignupConfigSchema>>;
+
+export function loadMetaEmbeddedSignupConfig(
+  environment: NodeJS.ProcessEnv = process.env
+): MetaEmbeddedSignupConfig | undefined {
+  return metaEmbeddedSignupConfigSchema.parse(environment);
+}
+
 const DEVELOPMENT_ENCRYPTION_KEY = "dev-encryption-key-32-bytes-long!!";
 
 const channelEncryptionConfigSchema = z

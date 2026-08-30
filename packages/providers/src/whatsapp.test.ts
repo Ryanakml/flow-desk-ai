@@ -83,6 +83,69 @@ describe("WhatsApp Provider Adapter (M2-02)", () => {
   });
 
   describe("MetaWhatsAppProvider", () => {
+    it("exchanges an Embedded Signup code, assigns the system user, and subscribes the selected WABA", async () => {
+      const fetchFn = vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ access_token: "EAAG_embedded_token", expires_in: 3600 }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+          })
+        )
+        .mockResolvedValueOnce(new Response(JSON.stringify({ success: true }), { status: 200 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ success: true }), { status: 200 }));
+      const provider = new MetaWhatsAppProvider({ fetchFn: fetchFn as typeof fetch });
+
+      const token = await provider.exchangeEmbeddedSignupCode({
+        code: "one-time-code",
+        appId: "flowdesk-app-id",
+        appSecret: "server-only-app-secret"
+      });
+      await provider.assignWhatsAppBusinessAccountSystemUser({
+        wabaId: "waba_456",
+        systemUserId: "flowdesk-system-user-id",
+        adminAccessToken: "business-admin-token"
+      });
+      await provider.subscribeWhatsAppBusinessAccount({
+        wabaId: "waba_456",
+        accessToken: token.accessToken
+      });
+
+      expect(token).toEqual({ accessToken: "EAAG_embedded_token", expiresIn: 3600 });
+      expect(fetchFn.mock.calls[0]?.[0]).toContain("/oauth/access_token?");
+      expect(fetchFn.mock.calls[1]?.[0]).toBe(
+        "https://graph.facebook.com/v21.0/waba_456/assigned_users?user=flowdesk-system-user-id&tasks=%5B%22MANAGE%22%5D"
+      );
+      const assignmentRequest = fetchFn.mock.calls[1]?.[1] as RequestInit | undefined;
+      expect(new Headers(assignmentRequest?.headers).get("Authorization")).toBe(
+        "Bearer business-admin-token"
+      );
+      expect(fetchFn.mock.calls[2]?.[0]).toBe(
+        "https://graph.facebook.com/v21.0/waba_456/subscribed_apps"
+      );
+      const subscriptionRequest = fetchFn.mock.calls[2]?.[1] as RequestInit | undefined;
+      expect(new Headers(subscriptionRequest?.headers).get("Authorization")).toBe(
+        "Bearer EAAG_embedded_token"
+      );
+    });
+
+    it("fails closed when Meta rejects WABA subscription", async () => {
+      const provider = new MetaWhatsAppProvider({
+        fetchFn: vi.fn().mockResolvedValue(
+          new Response(JSON.stringify({ error: { code: 10 } }), {
+            status: 403,
+            headers: { "Content-Type": "application/json" }
+          })
+        ) as typeof fetch
+      });
+      await expect(
+        provider.subscribeWhatsAppBusinessAccount({
+          wabaId: "waba_456",
+          accessToken: "EAAG_never_log_this"
+        })
+      ).rejects.toMatchObject({ classification: "PERMISSION_DENIED", statusCode: 403 });
+    });
+
     it("verifies phone metadata with the raw token and enforces the WABA relationship", async () => {
       const requests: Array<{ url: string; authorization: string | null }> = [];
       const fetchFn: typeof fetch = (input, init) => {
