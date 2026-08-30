@@ -342,5 +342,37 @@ export function createBotRouter(options: BotRouterOptions): Router {
     }
   );
 
+  // POST /api/v1/organizations/:orgId/bot/emergency-stop
+  router.post(
+    "/emergency-stop",
+    requireAuth,
+    requireAdminPermission,
+    async (request: Request, response: Response) => {
+      try {
+        const orgId = getParam(request.params, "orgId");
+        const { enabled = true } = request.body as { enabled?: boolean; reason?: string };
+
+        const updatedConfig = await upsertBotConfig(options.db, {
+          organizationId: orgId,
+          emergencyDisabled: enabled
+        });
+
+        return response.status(200).json({
+          organizationId: orgId,
+          emergencyDisabled: updatedConfig.emergencyDisabled,
+          triggeredAt: new Date().toISOString()
+        });
+      } catch (err) {
+        return sendProblem(
+          response,
+          500,
+          "INTERNAL_ERROR",
+          "Internal error",
+          err instanceof Error ? err.message : "Failed to toggle emergency stop"
+        );
+      }
+    }
+  );
+
   return router;
 }

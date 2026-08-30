@@ -337,4 +337,30 @@ describe("Bot Configuration & AI Draft Generation API", () => {
     expect(body.citations).toHaveLength(1);
     expect(body.citations[0]?.documentTitle).toBe("Policy Guide");
   });
+
+  it("triggers emergency stop for organization bot", async () => {
+    const db = createMockDb();
+    const app = createApiApp({
+      service: "api",
+      version: "dev",
+      gitSha: "dev",
+      environment: "local",
+      auth: { db, config }
+    });
+
+    const cookieHeader = serializeSessionCookie("bot-test-token-12345", false);
+
+    const res = (await request(app)
+      .post("/api/v1/organizations/org1/bot/emergency-stop")
+      .set("Cookie", cookieHeader)
+      .send({ enabled: true, reason: "Security incident detected" })) as unknown as {
+      status: number;
+      body: unknown;
+    };
+
+    expect(res.status).toBe(200);
+    const body = res.body as { organizationId: string; emergencyDisabled: boolean };
+    expect(body.organizationId).toBe("org1");
+    expect(body.emergencyDisabled).toBe(true);
+  });
 });
