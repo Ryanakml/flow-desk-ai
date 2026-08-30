@@ -286,6 +286,8 @@ describe("database foundation", () => {
       "queues",
       "realtime_versions",
       "roles",
+      "routing_logs",
+      "routing_rules",
       "saved_filters",
       "sla_policies",
       "tags",

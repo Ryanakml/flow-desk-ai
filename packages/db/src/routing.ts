@@ -114,6 +114,9 @@ function mapRowToRoutingLog(row: RoutingLogDbRow): RoutingLogRecord {
   };
 }
 
+/**
+ * M5-01: Automated Conversation Routing Rules & Logs Database Access Layer
+ */
 export async function createRoutingRule(
   db: DbClient,
   params: CreateRoutingRuleParams
