@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+/**
+ * M5-05: Failure Injection & Component Degradation Test Suite
+ */
 import type { DbClient } from "@flowdesk/db";
 import { evaluateAndProcessAutoSend } from "./auto-send.js";
 
