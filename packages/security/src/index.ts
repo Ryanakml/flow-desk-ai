@@ -31,6 +31,12 @@ export {
   type AntiSsrfFetchOptions,
   type AntiSsrfFetchResult
 } from "./ssrf.js";
+export {
+  setGlobalKillswitch,
+  getGlobalKillswitch,
+  isAutoSendKillswitchActive,
+  type KillswitchState
+} from "./killswitch.js";
 // M4-07: AI Safety Guardrails
 export {
   checkPromptInjection,
