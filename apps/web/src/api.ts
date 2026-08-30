@@ -490,3 +490,65 @@ export async function generateBotDraft(
   });
   return GenerateBotDraftResponseSchema.parse(await handleResponse<unknown>(res));
 }
+
+// M6-01: Self-Service Channels API
+export interface ChannelClientRecord {
+  id: string;
+  organizationId: string;
+  type: string;
+  name: string;
+  phoneNumberId: string;
+  wabaId: string;
+  status: string;
+  statusReason?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function listChannelsApi(
+  orgId: string,
+  fetcher: typeof fetch = fetch
+): Promise<ChannelClientRecord[]> {
+  const res = await fetcher(`/api/v1/organizations/${orgId}/channels`);
+  return (await handleResponse<unknown>(res)) as ChannelClientRecord[];
+}
+
+export async function createChannelApi(
+  orgId: string,
+  body: { name: string; phoneNumberId: string; wabaId: string; accessToken: string },
+  fetcher: typeof fetch = fetch
+): Promise<ChannelClientRecord> {
+  const res = await fetcher(`/api/v1/organizations/${orgId}/channels`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  return (await handleResponse<unknown>(res)) as ChannelClientRecord;
+}
+
+export async function verifyChannelApi(
+  orgId: string,
+  channelId: string,
+  fetcher: typeof fetch = fetch
+): Promise<{ channelId: string; verified: boolean; status: string; message: string }> {
+  const res = await fetcher(`/api/v1/organizations/${orgId}/channels/${channelId}/verify`, {
+    method: "POST"
+  });
+  return (await handleResponse<unknown>(res)) as {
+    channelId: string;
+    verified: boolean;
+    status: string;
+    message: string;
+  };
+}
+
+export async function deleteChannelApi(
+  orgId: string,
+  channelId: string,
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const res = await fetcher(`/api/v1/organizations/${orgId}/channels/${channelId}`, {
+    method: "DELETE"
+  });
+  await handleResponse(res);
+}

@@ -21,9 +21,10 @@ import {
   ApiError
 } from "./api.js";
 import { InboxView } from "./InboxView.js";
+import { ChannelsView } from "./ChannelsView.js";
 import "./styles.css";
 
-type Tab = "conversations" | "workspace" | "team" | "audit";
+type Tab = "conversations" | "workspace" | "channels" | "team" | "audit";
 
 export function App() {
   const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
@@ -652,6 +653,15 @@ export function App() {
         </button>
         <button
           type="button"
+          onClick={() => setActiveTab("channels")}
+          className={`tab-btn ${activeTab === "channels" ? "active" : ""}`}
+          id="tab-channels"
+          data-testid="tab-channels"
+        >
+          WhatsApp Channels
+        </button>
+        <button
+          type="button"
           onClick={() => setActiveTab("team")}
           className={`tab-btn ${activeTab === "team" ? "active" : ""}`}
           id="tab-team"
@@ -695,6 +705,15 @@ export function App() {
             organizationId={selectedOrgId}
             userRole={currentRole}
             sessionUserId={sessionUser.id}
+          />
+        )}
+
+        {/* Tab: Self-Service WhatsApp Channels */}
+        {activeTab === "channels" && selectedOrgId && (
+          <ChannelsView
+            orgId={selectedOrgId}
+            canManage={hasPermission(currentRole, "automation:publish")}
+            showToast={showToast}
           />
         )}
 

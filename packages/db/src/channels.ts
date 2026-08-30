@@ -176,3 +176,15 @@ export async function updateChannelStatus(
   if (!row) throw new Error(`Failed to update status for channel '${id}'`);
   return mapChannelRow(row);
 }
+
+export async function deleteChannel(
+  db: DbClient,
+  id: string,
+  organizationId: string
+): Promise<boolean> {
+  const res = await db.query(
+    "DELETE FROM flowdesk.channels WHERE id = $1 AND organization_id = $2",
+    [id, organizationId]
+  );
+  return (res.rowCount ?? 0) > 0;
+}
