@@ -10,7 +10,9 @@ The public surface is Caddy on ports 80 and 443. PostgreSQL, Redis, MinIO, ClamA
 - `/api/*`, `/metrics`, and `/realtime*` to `api`;
 - `/webhooks/*` to `ingress`.
 
-Until a domain is supplied, staging uses `http://206.189.89.33`, mock authentication, and an insecure development-compatible cookie. Do not enter real customer data or provider credentials. A domain cutover must set `SITE_ADDRESS`, `PUBLIC_BASE_URL`, the Auth0 callback, `AUTH_MOCK_ENABLED=false`, and `AUTH_COOKIE_SECURE=true` together.
+`PUBLIC_BASE_URL` is the canonical external staging origin. It must be an HTTPS origin without a path, query string, fragment, or credentials. The deployment health gate and GitHub public smoke test derive `/livez` and `/api/v1/system/build` from it. `SITE_ADDRESS` is Caddy's listener address and must match the hostname in `PUBLIC_BASE_URL`; it is initialized from that URL by `configure-staging-env.sh`.
+
+To move staging to a new domain, update only `PUBLIC_BASE_URL` and `SITE_ADDRESS` in `/opt/flowdesk/shared/staging.env`, then update the identity provider's allowed callback URL and merge a release PR. Do not use a raw IP or HTTP URL as `PUBLIC_BASE_URL`. Mock authentication and insecure cookies remain staging-only settings; before real customer data or provider credentials are used, set `AUTH_MOCK_ENABLED=false` and `AUTH_COOKIE_SECURE=true`.
 
 ## Host bootstrap
 
@@ -28,7 +30,7 @@ Pull requests execute all quality/database/Terraform gates and cached image buil
 4. Stateful dependencies become healthy.
 5. The checksum-locked migration runner executes once under its PostgreSQL advisory lock.
 6. The restricted `flowdesk_app` login is provisioned as a member of the `NOBYPASSRLS` runtime group; applications never receive the bootstrap credential.
-7. Application containers start, then both the web liveness endpoint and API build identity must match the release SHA.
+7. Application containers start, then the canonical public `/livez` endpoint and API build identity must both return `200`; the observed build SHA must match the release SHA.
 8. GitHub stores the public build response as 30-day deployment evidence.
 
 The `staging` GitHub Environment holds `STAGING_SSH_PRIVATE_KEY`; its non-secret variables are `STAGING_HOST`, `STAGING_USER`, and the pinned `STAGING_SSH_HOST_KEY`. The short-lived GitHub token is used to pull private GHCR images and is removed from the host after deployment.
@@ -38,8 +40,9 @@ The `staging` GitHub Environment holds `STAGING_SSH_PRIVATE_KEY`; its non-secret
 From outside the Droplet:
 
 ```bash
-curl --fail http://206.189.89.33/livez
-curl --fail http://206.189.89.33/api/v1/system/build
+public_base_url=$(sed -n 's/^PUBLIC_BASE_URL=//p' /opt/flowdesk/shared/staging.env | head -n 1)
+curl --fail "${public_base_url%/}/livez"
+curl --fail "${public_base_url%/}/api/v1/system/build"
 ```
 
 On the Droplet:

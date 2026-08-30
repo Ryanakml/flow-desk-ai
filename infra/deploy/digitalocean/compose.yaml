@@ -19,10 +19,10 @@ x-app-environment: &app-environment
   AUTH_OIDC_ISSUER: ${AUTH_OIDC_ISSUER:-https://flowdesk.local.auth0.com/}
   AUTH_OIDC_CLIENT_ID: ${AUTH_OIDC_CLIENT_ID:-flowdesk-staging-client}
   AUTH_OIDC_CLIENT_SECRET: ${AUTH_OIDC_CLIENT_SECRET:-flowdesk-staging-secret}
-  AUTH_OIDC_REDIRECT_URI: "${PUBLIC_BASE_URL:-http://206.189.89.33}/api/v1/auth/callback"
+  AUTH_OIDC_REDIRECT_URI: "${PUBLIC_BASE_URL:?PUBLIC_BASE_URL is required}/api/v1/auth/callback"
   AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
   AUTH_MOCK_ENABLED: ${AUTH_MOCK_ENABLED:-true}
-  APP_BASE_URL: ${PUBLIC_BASE_URL:-http://206.189.89.33}
+  APP_BASE_URL: ${PUBLIC_BASE_URL:?PUBLIC_BASE_URL is required}
   WEBHOOK_VERIFY_TOKEN: ${WEBHOOK_VERIFY_TOKEN:-flowdesk_webhook_verify_token_default}
   WEBHOOK_APP_SECRET: ${WEBHOOK_APP_SECRET:-flowdesk_webhook_app_secret_default}
   ENCRYPTION_KEY: ${ENCRYPTION_KEY:-dev-encryption-key-32-bytes-long!!}
@@ -54,7 +54,7 @@ services:
     image: caddy:2.10.0-alpine
     restart: unless-stopped
     environment:
-      SITE_ADDRESS: "${SITE_ADDRESS:-:80}"
+      SITE_ADDRESS: "${SITE_ADDRESS:?SITE_ADDRESS is required}"
     ports:
       - "80:80"
       - "443:443"
