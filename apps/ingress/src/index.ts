@@ -22,7 +22,9 @@ const server = createIngressApp({
   webhookVerifyToken: webhookConfig.WEBHOOK_VERIFY_TOKEN,
   webhookAppSecret: webhookConfig.WEBHOOK_APP_SECRET,
   ...(dbPool ? { dbClient: dbPool } : {})
-}).listen(config.PORT, () => logger.info({ port: config.PORT }, "ingress.started"));
+}).listen(config.PORT, "0.0.0.0", () =>
+  logger.info({ port: config.PORT, host: "0.0.0.0" }, "ingress.started")
+);
 
 function shutdown(signal: string) {
   logger.info({ signal }, "ingress.stopping");
