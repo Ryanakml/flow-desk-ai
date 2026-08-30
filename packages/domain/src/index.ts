@@ -87,3 +87,4 @@ export {
   type RoutingEvaluationContext,
   type RoutingResult
 } from "./routing.js";
+export * from "./auto-send.js";
