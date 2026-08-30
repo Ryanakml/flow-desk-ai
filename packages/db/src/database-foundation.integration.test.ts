@@ -62,7 +62,8 @@ describe("database foundation", () => {
       "0015_m3_media_quarantine.sql",
       "0016_m3_media_lifecycle.sql",
       "0017_m4_knowledge_and_vector.sql",
-      "0018_user_organization_discovery.sql"
+      "0018_user_organization_discovery.sql",
+      "0019_m5_routing_rules.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -241,6 +242,8 @@ describe("database foundation", () => {
       "queues",
       "realtime_versions",
       "roles",
+      "routing_logs",
+      "routing_rules",
       "saved_filters",
       "sla_policies",
       "tags",
