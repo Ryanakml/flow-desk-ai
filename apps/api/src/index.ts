@@ -97,11 +97,7 @@ function shutdown(signal: string) {
   timer.unref();
   server.close((error) => {
     clearTimeout(timer);
-    void Promise.all([
-      realtimeServer?.close(),
-      dbPool?.end(),
-      stopTelemetry()
-    ]).then(() => {
+    void Promise.all([realtimeServer?.close(), dbPool?.end(), stopTelemetry()]).then(() => {
       if (error) {
         logger.error({ error }, "api.shutdown_failed");
         process.exitCode = 1;

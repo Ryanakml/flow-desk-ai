@@ -478,7 +478,13 @@ describe("Ingress Application & Webhook Routes (M2-03)", () => {
               };
             }
             if (sql.includes("SELECT set_config")) {
-              return { rows: [{ set_config: values[0] }], rowCount: 1, command: "SELECT", oid: 0, fields: [] };
+              return {
+                rows: [{ set_config: values[0] }],
+                rowCount: 1,
+                command: "SELECT",
+                oid: 0,
+                fields: []
+              };
             }
             if (sql.includes("INSERT INTO flowdesk.outbox_events")) {
               return { rows: [], rowCount: 1, command: "INSERT", oid: 0, fields: [] };

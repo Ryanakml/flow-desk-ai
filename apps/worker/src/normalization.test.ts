@@ -422,7 +422,10 @@ describe("Channel status casing and silent-drop visibility (Issue-A fix)", () =>
   it("resolves channel with 'active' status and creates conversation + message", async () => {
     // Confirms that an 'active' channel IS matched and the full pipeline runs.
     const conversations = new Map<string, { id: string; customerPhone: string }>();
-    const messages = new Map<string, { id: string; content: string; providerMessageId: string | null }>();
+    const messages = new Map<
+      string,
+      { id: string; content: string; providerMessageId: string | null }
+    >();
 
     const activeDb = {
       async query(queryText: string, values: unknown[] = []) {
@@ -435,17 +438,54 @@ describe("Channel status casing and silent-drop visibility (Issue-A fix)", () =>
           return { rows: [], rowCount: 0, command: "SELECT", oid: 0, fields: [] };
         }
         if (sql.includes("INSERT INTO flowdesk.conversations")) {
-          const c = { id: "conv-casing-1", organizationId: orgId, channelId, customerPhone: values[2] as string, customerName: null, status: "new", version: 1 };
+          const c = {
+            id: "conv-casing-1",
+            organizationId: orgId,
+            channelId,
+            customerPhone: values[2] as string,
+            customerName: null,
+            status: "new",
+            version: 1
+          };
           conversations.set(c.id, c);
           return { rows: [c], rowCount: 1, command: "INSERT", oid: 0, fields: [] };
         }
-        if (sql.includes("FROM flowdesk.messages WHERE organization_id = $1 AND provider_message_id")) {
+        if (
+          sql.includes("FROM flowdesk.messages WHERE organization_id = $1 AND provider_message_id")
+        ) {
           return { rows: [], rowCount: 0, command: "SELECT", oid: 0, fields: [] };
         }
         if (sql.includes("INSERT INTO flowdesk.messages")) {
-          const m = { id: `msg-casing-${messages.size + 1}`, content: values[7] as string, providerMessageId: (values[6] as string | null) ?? null };
+          const m = {
+            id: `msg-casing-${messages.size + 1}`,
+            content: values[7] as string,
+            providerMessageId: (values[6] as string | null) ?? null
+          };
           messages.set(m.id, m);
-          return { rows: [{ ...m, organizationId: orgId, conversationId: "conv-casing-1", channelId, direction: "inbound", senderType: "customer", status: "delivered", metadata: {}, sentAt: new Date(), deliveredAt: null, readAt: null, errorDetail: null, createdAt: new Date(), updatedAt: new Date() }], rowCount: 1, command: "INSERT", oid: 0, fields: [] };
+          return {
+            rows: [
+              {
+                ...m,
+                organizationId: orgId,
+                conversationId: "conv-casing-1",
+                channelId,
+                direction: "inbound",
+                senderType: "customer",
+                status: "delivered",
+                metadata: {},
+                sentAt: new Date(),
+                deliveredAt: null,
+                readAt: null,
+                errorDetail: null,
+                createdAt: new Date(),
+                updatedAt: new Date()
+              }
+            ],
+            rowCount: 1,
+            command: "INSERT",
+            oid: 0,
+            fields: []
+          };
         }
         if (sql.includes("UPDATE flowdesk.conversations SET last_message_at")) {
           return { rows: [], rowCount: 1, command: "UPDATE", oid: 0, fields: [] };
