@@ -1,0 +1,26 @@
+groups:
+  - name: flowdesk_m5_slo_alerts
+    rules:
+      - alert: FlowDeskWebhookLatencyHigh
+        expr: histogram_quantile(0.99, sum(rate(flowdesk_http_request_duration_seconds_bucket[5m])) by (le)) > 0.5
+        for: 2m
+        labels:
+          severity: p2
+        annotations:
+          summary: "Inbound webhook p99 latency exceeds 500ms SLO target"
+
+      - alert: FlowDeskAutoSendFailureRateHigh
+        expr: rate(flowdesk_auto_send_failures_total[5m]) / rate(flowdesk_auto_send_total[5m]) > 0.001
+        for: 1m
+        labels:
+          severity: p1
+        annotations:
+          summary: "Auto-send error rate exceeds 0.1% SLO budget limit"
+
+      - alert: FlowDeskEmergencyKillswitchTripped
+        expr: flowdesk_emergency_killswitch_active == 1
+        for: 0m
+        labels:
+          severity: p1
+        annotations:
+          summary: "Emergency killswitch is active for tenant or global system"
