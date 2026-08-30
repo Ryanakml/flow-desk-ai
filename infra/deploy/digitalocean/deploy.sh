@@ -61,12 +61,12 @@ trap rollback ERR
   < provision-runtime.sql
 "${compose[@]}" up -d --no-build --remove-orphans "${app_services[@]}" caddy
 
-for attempt in $(seq 1 60); do
+for attempt in $(seq 1 120); do
   if curl --fail --silent --show-error http://127.0.0.1/livez >/dev/null && \
     curl --fail --silent --show-error http://127.0.0.1/api/v1/system/build | grep -q "${image_tag}"; then
     break
   fi
-  if [[ ${attempt} -eq 60 ]]; then
+  if [[ ${attempt} -eq 120 ]]; then
     echo "staging health gate timed out" >&2
     exit 1
   fi
