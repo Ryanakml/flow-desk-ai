@@ -210,6 +210,7 @@ describe("database foundation", () => {
        WHERE table_schema = 'flowdesk' AND column_name = 'organization_id' AND is_nullable = 'NO'`
     );
     expect(tables.rows.map((row) => row.table_name)).toEqual([
+      "api_keys",
       "attachment_upload_sessions",
       "attachments",
       "audit_logs",
@@ -252,12 +253,14 @@ describe("database foundation", () => {
       "teams",
       "users",
       "webhook_events",
+      "webhook_subscriptions",
       "whatsapp_template_status_history",
       "whatsapp_template_sync_cursors",
       "whatsapp_template_versions",
       "whatsapp_templates"
     ]);
     expect(tenantColumns.rows.map((row) => row.table_name).sort()).toEqual([
+      "api_keys",
       "attachment_upload_sessions",
       "attachments",
       "audit_logs",
@@ -294,6 +297,7 @@ describe("database foundation", () => {
       "tags",
       "team_memberships",
       "teams",
+      "webhook_subscriptions",
       "whatsapp_template_status_history",
       "whatsapp_template_sync_cursors",
       "whatsapp_template_versions",
