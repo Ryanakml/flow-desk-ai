@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck disable=SC1091
+source "${script_dir}/health-check.sh"
+
 if [[ ${EUID} -ne 0 ]]; then
   echo "configure-staging-env.sh must run as root" >&2
   exit 1
 fi
 
 public_base_url=${1:-}
-if [[ ! ${public_base_url} =~ ^https?://[^/]+$ ]]; then
-  echo "usage: configure-staging-env.sh <http-or-https-base-url>" >&2
+if ! valid_public_base_url "${public_base_url}"; then
+  echo "usage: configure-staging-env.sh <https-base-url>" >&2
   exit 1
 fi
+public_base_url=${public_base_url%/}
 
 environment_file=/opt/flowdesk/shared/staging.env
 if [[ -f ${environment_file} ]]; then
@@ -31,7 +36,7 @@ oidc_secret=$(openssl rand -hex 24)
 
 printf '%s\n' \
   "IMAGE_REGISTRY=ghcr.io/ryanakml" \
-  "SITE_ADDRESS=:80" \
+  "SITE_ADDRESS=${public_base_url#https://}" \
   "PUBLIC_BASE_URL=${public_base_url}" \
   "ENCRYPTION_KEY=${encryption_key}" \
   "POSTGRES_DB=flowdesk_staging" \

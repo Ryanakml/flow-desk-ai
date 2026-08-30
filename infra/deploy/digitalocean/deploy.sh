@@ -8,6 +8,8 @@ if [[ ! ${image_tag} =~ ^[0-9a-f]{40}$ ]]; then
 fi
 
 release_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck disable=SC1091
+source "${release_dir}/health-check.sh"
 shared_dir=/opt/flowdesk/shared
 environment_file=${shared_dir}/staging.env
 current_release_file=${shared_dir}/current-image
@@ -25,9 +27,25 @@ source "${environment_file}"
 set +a
 export IMAGE_TAG=${image_tag}
 
+public_base_url=${PUBLIC_BASE_URL:-}
+if [[ -z ${public_base_url} ]]; then
+  echo "PUBLIC_BASE_URL is required in ${environment_file}" >&2
+  exit 1
+fi
+if ! valid_public_base_url "${public_base_url}"; then
+  echo "PUBLIC_BASE_URL must be an HTTPS origin without credentials, query, fragment, or path" >&2
+  exit 1
+fi
+public_base_url=${public_base_url%/}
+export PUBLIC_BASE_URL=${public_base_url}
+health_urls=$(derive_health_urls "${public_base_url}")
+livez_url=${health_urls%%$'\n'*}
+build_url=${health_urls#*$'\n'}
+livez_target=${livez_url#https://}
+build_target=${build_url#https://}
+
 compose=(docker compose --env-file "${environment_file}" -f compose.yaml)
 app_services=(web api ingress worker scheduler)
-health_base_url=http://127.0.0.1
 health_deadline_seconds=${STAGING_HEALTH_DEADLINE_SECONDS:-240}
 health_retry_interval_seconds=${STAGING_HEALTH_RETRY_INTERVAL_SECONDS:-2}
 caddy_stabilization_seconds=${CADDY_STABILIZATION_SECONDS:-5}
@@ -86,7 +104,7 @@ health_started_at=${SECONDS}
 health_deadline_at=$((health_started_at + health_deadline_seconds))
 health_attempt=0
 health_passed=false
-echo "staging health gate: expected_sha=${image_tag} deadline_seconds=${health_deadline_seconds} retry_interval_seconds=${health_retry_interval_seconds}" >&2
+echo "staging health gate: livez_target=${livez_target} build_target=${build_target} expected_sha=${image_tag} deadline_seconds=${health_deadline_seconds} retry_interval_seconds=${health_retry_interval_seconds}" >&2
 
 if ((caddy_stabilization_seconds > 0)); then
   stabilization_sleep_seconds=${caddy_stabilization_seconds}
@@ -114,7 +132,7 @@ while ((SECONDS < health_deadline_at)); do
     --connect-timeout "${curl_connect_timeout_seconds}" \
     --max-time "${curl_max_time_seconds}" \
     --output "${livez_body}" --write-out '%{http_code}' \
-    "${health_base_url}/livez" 2>"${livez_error}"); then
+    "${livez_url}" 2>"${livez_error}"); then
     :
   else
     livez_exit=$?
@@ -126,7 +144,7 @@ while ((SECONDS < health_deadline_at)); do
       --connect-timeout "${curl_connect_timeout_seconds}" \
       --max-time "${curl_max_time_seconds}" \
       --output "${build_body}" --write-out '%{http_code}' \
-      "${health_base_url}/api/v1/system/build" 2>"${build_error}"); then
+      "${build_url}" 2>"${build_error}"); then
       :
     else
       build_exit=$?
@@ -135,7 +153,7 @@ while ((SECONDS < health_deadline_at)); do
     observed_sha=${observed_sha:-unavailable}
   fi
 
-  if [[ ${livez_exit} -eq 0 && ${livez_status} == "200" && ${build_exit} -eq 0 && ${build_status} == "200" && ${observed_sha} == "${image_tag}" ]]; then
+  if health_check_passed "${livez_status}" "${build_status}" "${observed_sha}" "${image_tag}" && [[ ${livez_exit} -eq 0 && ${build_exit} -eq 0 ]]; then
     rm -f "${livez_body}" "${livez_error}" "${build_body}" "${build_error}"
     echo "staging health gate passed: attempt=${health_attempt} expected_sha=${image_tag} observed_sha=${observed_sha}" >&2
     health_passed=true
@@ -144,8 +162,12 @@ while ((SECONDS < health_deadline_at)); do
 
   livez_error_text=$(tr '\n' ' ' < "${livez_error}")
   build_error_text=$(tr '\n' ' ' < "${build_error}")
+  livez_redirect=false
+  build_redirect=false
+  if is_redirect_status "${livez_status}"; then livez_redirect=true; fi
+  if is_redirect_status "${build_status}"; then build_redirect=true; fi
   rm -f "${livez_body}" "${livez_error}" "${build_body}" "${build_error}"
-  echo "staging health retry: attempt=${health_attempt} livez_status=${livez_status} livez_exit=${livez_exit} livez_error=${livez_error_text:-none} build_status=${build_status} build_exit=${build_exit} build_error=${build_error_text:-none} expected_sha=${image_tag} observed_sha=${observed_sha}" >&2
+  echo "staging health retry: attempt=${health_attempt} livez_target=${livez_target} livez_status=${livez_status} livez_exit=${livez_exit} livez_error=${livez_error_text:-none} livez_redirect=${livez_redirect} build_target=${build_target} build_status=${build_status} build_exit=${build_exit} build_error=${build_error_text:-none} build_redirect=${build_redirect} expected_sha=${image_tag} observed_sha=${observed_sha}" >&2
 
   remaining_seconds=$((health_deadline_at - SECONDS))
   if ((remaining_seconds <= 0)); then
