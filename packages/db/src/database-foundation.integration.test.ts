@@ -63,7 +63,8 @@ describe("database foundation", () => {
       "0016_m3_media_lifecycle.sql",
       "0017_m4_knowledge_and_vector.sql",
       "0018_user_organization_discovery.sql",
-      "0019_m5_routing_rules.sql"
+      "0019_m5_routing_rules.sql",
+      "0020_m6_developer_integrations.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -209,6 +210,7 @@ describe("database foundation", () => {
        WHERE table_schema = 'flowdesk' AND column_name = 'organization_id' AND is_nullable = 'NO'`
     );
     expect(tables.rows.map((row) => row.table_name)).toEqual([
+      "api_keys",
       "attachment_upload_sessions",
       "attachments",
       "audit_logs",
@@ -251,12 +253,14 @@ describe("database foundation", () => {
       "teams",
       "users",
       "webhook_events",
+      "webhook_subscriptions",
       "whatsapp_template_status_history",
       "whatsapp_template_sync_cursors",
       "whatsapp_template_versions",
       "whatsapp_templates"
     ]);
     expect(tenantColumns.rows.map((row) => row.table_name).sort()).toEqual([
+      "api_keys",
       "attachment_upload_sessions",
       "attachments",
       "audit_logs",
@@ -293,6 +297,7 @@ describe("database foundation", () => {
       "tags",
       "team_memberships",
       "teams",
+      "webhook_subscriptions",
       "whatsapp_template_status_history",
       "whatsapp_template_sync_cursors",
       "whatsapp_template_versions",

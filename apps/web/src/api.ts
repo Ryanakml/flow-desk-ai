@@ -552,3 +552,91 @@ export async function deleteChannelApi(
   });
   await handleResponse(res);
 }
+
+export interface DeveloperApiKeyRecord {
+  id: string;
+  organizationId: string;
+  name: string;
+  keyPrefix: string;
+  rawKey?: string;
+  scopes: string[];
+  createdByUserId?: string | null;
+  expiresAt?: string | null;
+  revokedAt?: string | null;
+  createdAt: string;
+}
+
+export interface WebhookSubscriptionClientRecord {
+  id: string;
+  organizationId: string;
+  name: string;
+  url: string;
+  secret: string;
+  events: string[];
+  isActive: boolean;
+  createdAt: string;
+}
+
+export async function listApiKeysApi(
+  orgId: string,
+  fetcher: typeof fetch = fetch
+): Promise<DeveloperApiKeyRecord[]> {
+  const res = await fetcher(`/api/v1/organizations/${orgId}/developer/api-keys`);
+  return (await handleResponse<unknown>(res)) as DeveloperApiKeyRecord[];
+}
+
+export async function createApiKeyApi(
+  orgId: string,
+  body: { name: string; scopes?: string[] },
+  fetcher: typeof fetch = fetch
+): Promise<DeveloperApiKeyRecord> {
+  const res = await fetcher(`/api/v1/organizations/${orgId}/developer/api-keys`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  return (await handleResponse<unknown>(res)) as DeveloperApiKeyRecord;
+}
+
+export async function revokeApiKeyApi(
+  orgId: string,
+  keyId: string,
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const res = await fetcher(`/api/v1/organizations/${orgId}/developer/api-keys/${keyId}`, {
+    method: "DELETE"
+  });
+  await handleResponse(res);
+}
+
+export async function listWebhooksApi(
+  orgId: string,
+  fetcher: typeof fetch = fetch
+): Promise<WebhookSubscriptionClientRecord[]> {
+  const res = await fetcher(`/api/v1/organizations/${orgId}/developer/webhooks`);
+  return (await handleResponse<unknown>(res)) as WebhookSubscriptionClientRecord[];
+}
+
+export async function createWebhookApi(
+  orgId: string,
+  body: { name: string; url: string; events?: string[] },
+  fetcher: typeof fetch = fetch
+): Promise<WebhookSubscriptionClientRecord> {
+  const res = await fetcher(`/api/v1/organizations/${orgId}/developer/webhooks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  return (await handleResponse<unknown>(res)) as WebhookSubscriptionClientRecord;
+}
+
+export async function deleteWebhookApi(
+  orgId: string,
+  webhookId: string,
+  fetcher: typeof fetch = fetch
+): Promise<void> {
+  const res = await fetcher(`/api/v1/organizations/${orgId}/developer/webhooks/${webhookId}`, {
+    method: "DELETE"
+  });
+  await handleResponse(res);
+}
