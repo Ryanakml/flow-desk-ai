@@ -3,10 +3,23 @@ import type { DbClient } from "@flowdesk/db";
 import { recordWebhookEvent } from "@flowdesk/db";
 import { computeSha256, getSecurityHeaders, verifyMetaSignature } from "@flowdesk/security";
 
+/**
+ * Minimal logger interface accepted by the ingress app. Typed narrowly so the
+ * app module does not depend directly on pino — any compatible logger works,
+ * including test spies.
+ */
+export interface IngressLogger {
+  info(context: Record<string, unknown>, message: string): void;
+  warn(context: Record<string, unknown>, message: string): void;
+  error(context: Record<string, unknown>, message: string): void;
+}
+
 export interface IngressAppOptions {
   webhookVerifyToken?: string;
   webhookAppSecret?: string;
   dbClient?: DbClient;
+  /** Optional structured logger. When omitted, no events are emitted. */
+  logger?: IngressLogger;
 }
 
 /**
@@ -54,6 +67,7 @@ export function createIngressApp(options?: IngressAppOptions) {
     "flowdesk_webhook_app_secret_default";
 
   const dbClient = options?.dbClient;
+  const logger = options?.logger;
 
   // Health and readiness endpoints
   app.get("/livez", (_req, res) => res.json({ status: "ok" }));
@@ -132,6 +146,10 @@ export function createIngressApp(options?: IngressAppOptions) {
 
       const payloadHash = computeSha256(rawBody);
       const phoneNumberId = extractPhoneNumberId(parsedPayload);
+      // Propagate request/correlation IDs into log context; never log the
+      // raw payload, signature, or any customer message content.
+      const requestId = req.header("x-request-id");
+      const correlationId = req.header("x-correlation-id") ?? requestId;
 
       // If database client is provided, persist event durably before acknowledging
       if (dbClient) {
@@ -142,6 +160,18 @@ export function createIngressApp(options?: IngressAppOptions) {
           phoneNumberId
         })
           .then((result) => {
+            // Log only control-plane identifiers — no payload, no signature, no message text.
+            logger?.info(
+              {
+                eventId: result.webhookEvent.id,
+                phoneNumberId,
+                organizationId: result.webhookEvent.organizationId,
+                deduplicated: result.deduplicated,
+                ...(requestId ? { requestId } : {}),
+                ...(correlationId ? { correlationId } : {})
+              },
+              "ingress.webhook.received"
+            );
             res.status(200).json({
               status: "received",
               deduplicated: result.deduplicated,
@@ -150,6 +180,15 @@ export function createIngressApp(options?: IngressAppOptions) {
           })
           .catch((error: unknown) => {
             const errorMessage = error instanceof Error ? error.message : "Database error";
+            logger?.error(
+              {
+                phoneNumberId,
+                errorMessage,
+                ...(requestId ? { requestId } : {}),
+                ...(correlationId ? { correlationId } : {})
+              },
+              "ingress.webhook.persistence_failed"
+            );
             res.status(503).json({
               type: "https://flowdesk.dev/errors/service-unavailable",
               title: "Service Unavailable",

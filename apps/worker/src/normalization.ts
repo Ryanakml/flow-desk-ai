@@ -9,7 +9,16 @@ import {
   recordRoutingLog
 } from "@flowdesk/db";
 import { type MessageStatus, evaluateRoutingRules } from "@flowdesk/domain";
-import { recordWhatsAppWebhookProcessed } from "@flowdesk/observability";
+import { createLogger, recordWhatsAppWebhookProcessed } from "@flowdesk/observability";
+
+// Module-level logger used only for silent-drop diagnostics within processWebhookPayload.
+// Individual callers (index.ts) retain their own richer loggers.
+const normalizationLogger = createLogger({
+  service: "flowdesk-worker",
+  environment: process.env["APP_ENV"] ?? "local",
+  version: process.env["SERVICE_VERSION"] ?? "dev",
+  level: process.env["LOG_LEVEL"] ?? "info"
+});
 
 export interface NormalizedInboundMessage {
   type: "inbound_message";
@@ -238,7 +247,7 @@ export async function processWebhookPayload(
     if (channelCache.has(phoneId)) return channelCache.get(phoneId)!;
     const res = await client.query<{ id: string }>(
       `SELECT id FROM flowdesk.channels
-       WHERE organization_id = $1 AND phone_number_id = $2 AND status != 'DISCONNECTED'
+       WHERE organization_id = $1 AND phone_number_id = $2 AND status != 'disconnected'
        LIMIT 1`,
       [params.organizationId, phoneId]
     );
@@ -252,7 +261,21 @@ export async function processWebhookPayload(
   for (const item of items) {
     if (item.type === "inbound_message") {
       const channelId = await resolveChannelId(item.phoneNumberId);
-      if (!channelId) continue;
+      if (!channelId) {
+        // Structured warning: phoneNumberId received from Meta does not match any active
+        // channel for this organization. This causes a silent message drop — log it so
+        // operators can correlate the channel ID and fix the channel registration.
+        normalizationLogger.warn(
+          {
+            organizationId: params.organizationId,
+            phoneNumberId: item.phoneNumberId,
+            correlationId: params.correlationId,
+            providerMessageId: item.providerMessageId
+          },
+          "worker.webhook.channel_not_found: inbound message dropped — phoneNumberId does not match any active channel"
+        );
+        continue;
+      }
 
       // 1. Idempotently match or create conversation thread
       const conversation = await findOrCreateConversation(client, {

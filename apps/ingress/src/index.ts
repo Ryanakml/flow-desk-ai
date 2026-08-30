@@ -21,7 +21,12 @@ const logger = createLogger({
 const server = createIngressApp({
   webhookVerifyToken: webhookConfig.WEBHOOK_VERIFY_TOKEN,
   webhookAppSecret: webhookConfig.WEBHOOK_APP_SECRET,
-  ...(dbPool ? { dbClient: dbPool } : {})
+  ...(dbPool ? { dbClient: dbPool } : {}),
+  logger: {
+    info: (ctx, msg) => logger.info(ctx, msg),
+    warn: (ctx, msg) => logger.warn(ctx, msg),
+    error: (ctx, msg) => logger.error(ctx, msg)
+  }
 }).listen(config.PORT, "0.0.0.0", () =>
   logger.info({ port: config.PORT, host: "0.0.0.0" }, "ingress.started")
 );

@@ -416,4 +416,212 @@ describe("Ingress Application & Webhook Routes (M2-03)", () => {
       expect(body.detail).toContain("Durable webhook persistence failed; please retry");
     });
   });
+
+  describe("Structured Webhook Logging (Issue-A fix)", () => {
+    interface MockEvent {
+      id: string;
+      provider: string;
+      payloadHash: string;
+      rawPayload: string;
+      phoneNumberId: string | null;
+      status: string;
+    }
+
+    function createLoggingMockDb(orgId: string | null = "org-logging-001") {
+      const persistedEvents = new Map<string, MockEvent>();
+      return {
+        persistedEvents,
+        client: {
+          async query(queryText: string, values: unknown[] = []) {
+            await Promise.resolve();
+            const sql = queryText.replace(/\s+/g, " ").trim();
+
+            if (sql.includes("SELECT organization_id FROM flowdesk.channels")) {
+              if (!orgId) return { rows: [], rowCount: 0, command: "SELECT", oid: 0, fields: [] };
+              return {
+                rows: [{ organization_id: orgId }],
+                rowCount: 1,
+                command: "SELECT",
+                oid: 0,
+                fields: []
+              };
+            }
+            if (sql.includes("INSERT INTO flowdesk.webhook_events")) {
+              const id = `evt-log-${persistedEvents.size + 1}`;
+              const phoneId = (values[2] as string | null) ?? null;
+              const record: MockEvent = {
+                id,
+                provider: values[0] as string,
+                payloadHash: values[1] as string,
+                rawPayload: values[4] as string,
+                phoneNumberId: phoneId,
+                status: "received"
+              };
+              persistedEvents.set(id, record);
+              return {
+                rows: [
+                  {
+                    ...record,
+                    organizationId: orgId,
+                    correlationId: "corr-log-1",
+                    processingError: null,
+                    receivedAt: new Date(),
+                    processedAt: null,
+                    createdAt: new Date(),
+                    updatedAt: new Date()
+                  }
+                ],
+                rowCount: 1,
+                command: "INSERT",
+                oid: 0,
+                fields: []
+              };
+            }
+            if (sql.includes("SELECT set_config")) {
+              return {
+                rows: [{ set_config: values[0] }],
+                rowCount: 1,
+                command: "SELECT",
+                oid: 0,
+                fields: []
+              };
+            }
+            if (sql.includes("INSERT INTO flowdesk.outbox_events")) {
+              return { rows: [], rowCount: 1, command: "INSERT", oid: 0, fields: [] };
+            }
+            return { rows: [], rowCount: 0, command: "SELECT", oid: 0, fields: [] };
+          }
+        }
+      };
+    }
+
+    const loggingPayload = JSON.stringify({
+      object: "whatsapp_business_account",
+      entry: [
+        {
+          id: "waba_log",
+          changes: [
+            {
+              field: "messages",
+              value: {
+                messaging_product: "whatsapp",
+                metadata: {
+                  display_phone_number: "+628001234567",
+                  phone_number_id: "99988877766"
+                },
+                messages: [{ id: "wamid.log.001", type: "text", text: { body: "Hello log test" } }]
+              }
+            }
+          ]
+        }
+      ]
+    });
+
+    it("emits ingress.webhook.received log with control-plane fields on persistence success", async () => {
+      const mockDb = createLoggingMockDb("org-logging-001");
+      const infoLogs: Array<{ ctx: Record<string, unknown>; msg: string }> = [];
+      const ingressApp = createIngressApp({
+        webhookVerifyToken: verifyToken,
+        webhookAppSecret: appSecret,
+        dbClient: mockDb.client as never,
+        logger: {
+          info: (ctx, msg) => infoLogs.push({ ctx, msg }),
+          warn: () => undefined,
+          error: () => undefined
+        }
+      });
+
+      const signature = computeMetaSignature(loggingPayload, appSecret);
+
+      await request(ingressApp)
+        .post("/webhooks/whatsapp")
+        .set("Content-Type", "application/json")
+        .set("X-Hub-Signature-256", signature)
+        .set("x-request-id", "req-abc")
+        .set("x-correlation-id", "corr-xyz")
+        .send(loggingPayload)
+        .expect(200);
+
+      const receivedLog = infoLogs.find((l) => l.msg === "ingress.webhook.received");
+      expect(receivedLog).toBeDefined();
+      expect(receivedLog!.ctx).toMatchObject({
+        phoneNumberId: "99988877766",
+        organizationId: "org-logging-001",
+        deduplicated: false,
+        requestId: "req-abc",
+        correlationId: "corr-xyz"
+      });
+      expect(receivedLog!.ctx).toHaveProperty("eventId");
+      // Must NOT log raw payload, signature, or message body
+      expect(JSON.stringify(receivedLog!.ctx)).not.toContain("Hello log test");
+      expect(JSON.stringify(receivedLog!.ctx)).not.toContain("sha256=");
+    });
+
+    it("emits ingress.webhook.persistence_failed log with phoneNumberId when DB throws", async () => {
+      const errorLogs: Array<{ ctx: Record<string, unknown>; msg: string }> = [];
+      const failingDb = {
+        async query() {
+          await Promise.resolve();
+          throw new Error("Connection terminated unexpectedly");
+        }
+      };
+      const ingressApp = createIngressApp({
+        webhookVerifyToken: verifyToken,
+        webhookAppSecret: appSecret,
+        dbClient: failingDb as never,
+        logger: {
+          info: () => undefined,
+          warn: () => undefined,
+          error: (ctx, msg) => errorLogs.push({ ctx, msg })
+        }
+      });
+
+      const signature = computeMetaSignature(loggingPayload, appSecret);
+
+      await request(ingressApp)
+        .post("/webhooks/whatsapp")
+        .set("Content-Type", "application/json")
+        .set("X-Hub-Signature-256", signature)
+        .send(loggingPayload)
+        .expect(503);
+
+      const failLog = errorLogs.find((l) => l.msg === "ingress.webhook.persistence_failed");
+      expect(failLog).toBeDefined();
+      expect(failLog!.ctx).toMatchObject({
+        phoneNumberId: "99988877766",
+        errorMessage: "Connection terminated unexpectedly"
+      });
+      // Must NOT log raw payload or signature
+      expect(JSON.stringify(failLog!.ctx)).not.toContain("Hello log test");
+    });
+
+    it("includes organizationId: null in log when phoneNumberId has no matching channel", async () => {
+      const mockDb = createLoggingMockDb(null); // no org resolved
+      const infoLogs: Array<{ ctx: Record<string, unknown>; msg: string }> = [];
+      const ingressApp = createIngressApp({
+        webhookVerifyToken: verifyToken,
+        webhookAppSecret: appSecret,
+        dbClient: mockDb.client as never,
+        logger: {
+          info: (ctx, msg) => infoLogs.push({ ctx, msg }),
+          warn: () => undefined,
+          error: () => undefined
+        }
+      });
+
+      const signature = computeMetaSignature(loggingPayload, appSecret);
+
+      await request(ingressApp)
+        .post("/webhooks/whatsapp")
+        .set("Content-Type", "application/json")
+        .set("X-Hub-Signature-256", signature)
+        .send(loggingPayload)
+        .expect(200);
+
+      const receivedLog = infoLogs.find((l) => l.msg === "ingress.webhook.received");
+      expect(receivedLog).toBeDefined();
+      // organizationId is null when phone_number_id doesn't match any channel
+      expect(receivedLog!.ctx["organizationId"]).toBeNull();
+    });
+  });
 });

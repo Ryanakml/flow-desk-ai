@@ -67,7 +67,7 @@ export async function recordWebhookEvent(
   if (input.phoneNumberId) {
     const channelRes = await client.query<{ organization_id: string }>(
       `SELECT organization_id FROM flowdesk.channels
-       WHERE phone_number_id = $1 AND status != 'DISCONNECTED' LIMIT 1`,
+       WHERE phone_number_id = $1 AND status != 'disconnected' LIMIT 1`,
       [input.phoneNumberId]
     );
     if (channelRes.rows[0]) {
