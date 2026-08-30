@@ -188,6 +188,20 @@ export {
   type BotConfig,
   type BotRun
 } from "./knowledge.js";
+export {
+  createRoutingRule,
+  listRoutingRules,
+  getRoutingRuleById,
+  updateRoutingRule,
+  deleteRoutingRule,
+  recordRoutingLog,
+  listRoutingLogsForConversation,
+  type DbRoutingRule,
+  type CreateRoutingRuleParams,
+  type UpdateRoutingRuleParams,
+  type RoutingLogRecord,
+  type CreateRoutingLogParams
+} from "./routing.js";
 
 export const DATABASE_PACKAGE_STATE = "m1-foundation-ready" as const;
 

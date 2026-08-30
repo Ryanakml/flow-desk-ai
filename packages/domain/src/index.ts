@@ -79,3 +79,11 @@ export {
   type AssembledPromptContext,
   type FormatPromptParams
 } from "./rag.js";
+export {
+  matchesRoutingCondition,
+  evaluateRoutingRules,
+  type RoutingCondition,
+  type RoutingRule,
+  type RoutingEvaluationContext,
+  type RoutingResult
+} from "./routing.js";

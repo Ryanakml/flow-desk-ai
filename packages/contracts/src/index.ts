@@ -783,3 +783,70 @@ export const GenerateBotDraftResponseSchema = z.object({
   reasoning: z.string().optional()
 });
 export type GenerateBotDraftResponse = z.infer<typeof GenerateBotDraftResponseSchema>;
+
+// M5: Routing Rules schemas
+export const RoutingConditionSchema = z.object({
+  channelId: z.string().uuid().optional(),
+  tag: z.string().min(1).optional(),
+  language: z.string().min(1).optional(),
+  intent: z.string().min(1).optional(),
+  customerPhonePrefix: z.string().min(1).optional(),
+  isWithinBusinessHours: z.boolean().optional()
+});
+export type RoutingCondition = z.infer<typeof RoutingConditionSchema>;
+
+export const RoutingRuleSchema = z.object({
+  id: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  name: z.string().min(1).max(200),
+  priority: z.number().int().min(0),
+  conditions: RoutingConditionSchema,
+  targetQueueId: z.string().uuid().nullable(),
+  targetTeamId: z.string().uuid().nullable(),
+  targetUserId: z.string().uuid().nullable(),
+  isActive: z.boolean(),
+  createdAt: z.string().datetime({ offset: true }),
+  updatedAt: z.string().datetime({ offset: true })
+});
+export type RoutingRuleResponse = z.infer<typeof RoutingRuleSchema>;
+
+export const CreateRoutingRuleRequestSchema = z.object({
+  name: z.string().min(1).max(200),
+  priority: z.number().int().min(0).optional(),
+  conditions: RoutingConditionSchema.optional(),
+  targetQueueId: z.string().uuid().nullable().optional(),
+  targetTeamId: z.string().uuid().nullable().optional(),
+  targetUserId: z.string().uuid().nullable().optional(),
+  isActive: z.boolean().optional()
+});
+export type CreateRoutingRuleRequest = z.infer<typeof CreateRoutingRuleRequestSchema>;
+
+export const UpdateRoutingRuleRequestSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  priority: z.number().int().min(0).optional(),
+  conditions: RoutingConditionSchema.optional(),
+  targetQueueId: z.string().uuid().nullable().optional(),
+  targetTeamId: z.string().uuid().nullable().optional(),
+  targetUserId: z.string().uuid().nullable().optional(),
+  isActive: z.boolean().optional()
+});
+export type UpdateRoutingRuleRequest = z.infer<typeof UpdateRoutingRuleRequestSchema>;
+
+export const ListRoutingRulesResponseSchema = z.array(RoutingRuleSchema);
+export type ListRoutingRulesResponse = z.infer<typeof ListRoutingRulesResponseSchema>;
+
+export const RoutingLogSchema = z.object({
+  id: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  conversationId: z.string().uuid(),
+  matchedRuleId: z.string().uuid().nullable(),
+  targetQueueId: z.string().uuid().nullable(),
+  targetTeamId: z.string().uuid().nullable(),
+  targetUserId: z.string().uuid().nullable(),
+  reason: z.string(),
+  routedAt: z.string().datetime({ offset: true })
+});
+export type RoutingLogResponse = z.infer<typeof RoutingLogSchema>;
+
+export const ListRoutingLogsResponseSchema = z.array(RoutingLogSchema);
+export type ListRoutingLogsResponse = z.infer<typeof ListRoutingLogsResponseSchema>;

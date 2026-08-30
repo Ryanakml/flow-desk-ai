@@ -1,12 +1,14 @@
-import type { DbClient } from "@flowdesk/db";
 import {
+  type DbClient,
   createMessage,
   findOrCreateConversation,
   recordOutboxEventFailure,
   runInTenantTransaction,
-  updateMessageStatus
+  updateMessageStatus,
+  listRoutingRules,
+  recordRoutingLog
 } from "@flowdesk/db";
-import type { MessageStatus } from "@flowdesk/domain";
+import { type MessageStatus, evaluateRoutingRules } from "@flowdesk/domain";
 import { recordWhatsAppWebhookProcessed } from "@flowdesk/observability";
 
 export interface NormalizedInboundMessage {
@@ -285,6 +287,45 @@ export async function processWebhookPayload(
           status: "delivered"
         });
         result.processedInboundCount += 1;
+
+        // M5-01: Evaluate automated routing rules for new inbound conversation
+        try {
+          const rules = await listRoutingRules(client, params.organizationId);
+          if (rules.length > 0) {
+            const routingResult = evaluateRoutingRules(rules, {
+              channelId,
+              customerPhone: item.customerPhone
+            });
+            if (routingResult.matchedRule) {
+              await client.query(
+                `UPDATE flowdesk.conversations
+                 SET queue_id = COALESCE($1, queue_id),
+                     team_id = COALESCE($2, team_id),
+                     assigned_to_user_id = COALESCE($3, assigned_to_user_id),
+                     updated_at = clock_timestamp()
+                 WHERE organization_id = $4 AND id = $5`,
+                [
+                  routingResult.targetQueueId,
+                  routingResult.targetTeamId,
+                  routingResult.targetUserId,
+                  params.organizationId,
+                  conversation.id
+                ]
+              );
+            }
+            await recordRoutingLog(client, {
+              organizationId: params.organizationId,
+              conversationId: conversation.id,
+              matchedRuleId: routingResult.matchedRule?.id ?? null,
+              targetQueueId: routingResult.targetQueueId,
+              targetTeamId: routingResult.targetTeamId,
+              targetUserId: routingResult.targetUserId,
+              reason: routingResult.reason
+            });
+          }
+        } catch {
+          // Non-blocking routing log exception guard
+        }
       }
     } else if (item.type === "status_update") {
       // Find outbound message by providerMessageId
