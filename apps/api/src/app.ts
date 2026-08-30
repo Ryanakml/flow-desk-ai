@@ -17,6 +17,7 @@ import express, { type ErrorRequestHandler, type RequestHandler } from "express"
 import type { AuthConfig } from "@flowdesk/config";
 import type { DbClient } from "@flowdesk/db";
 import type { IdentityProvider } from "@flowdesk/providers";
+import type { WhatsAppProvider } from "@flowdesk/providers";
 import { createAuthRouter } from "./auth.js";
 import { createOrganizationsRouter, createInvitationsRouter } from "./organizations.js";
 import { createConversationsRouter } from "./conversations.js";
@@ -44,6 +45,8 @@ export interface ApiAppAuthOptions {
   db: DbClient;
   config: AuthConfig;
   identityProvider?: IdentityProvider;
+  encryptionKey?: string;
+  whatsappProvider?: WhatsAppProvider;
 }
 
 export interface ApiAppOptions {
@@ -243,7 +246,9 @@ export function createApiApp(options: ApiAppOptions) {
     app.use(
       "/api/v1/organizations/:orgId/channels",
       createChannelsRouter({
-        db: options.auth.db
+        db: options.auth.db,
+        ...(options.auth.encryptionKey ? { encryptionKey: options.auth.encryptionKey } : {}),
+        ...(options.auth.whatsappProvider ? { provider: options.auth.whatsappProvider } : {})
       })
     );
     app.use(

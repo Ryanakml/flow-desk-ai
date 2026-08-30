@@ -8,7 +8,7 @@ import {
   runInTenantTransaction
 } from "@flowdesk/db";
 import { FakeWhatsAppProvider } from "@flowdesk/providers";
-import { encryptSecret } from "@flowdesk/security";
+import { encryptWhatsAppChannelCredentials } from "@flowdesk/security";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { processOutboxOutboundBatch } from "./dispatch.js";
@@ -22,6 +22,7 @@ const organizationA = randomUUID();
 const organizationB = randomUUID();
 const agentUserId = randomUUID();
 const phoneNumberId = `phone-${randomUUID()}`;
+const wabaId = `waba-${randomUUID()}`;
 const encryptionKey = "m2-real-postgres-integration-key";
 
 beforeAll(async () => {
@@ -57,8 +58,15 @@ integration("M2 vertical slice against PostgreSQL RLS", () => {
         organizationId: organizationA,
         name: "Integration WhatsApp",
         phoneNumberId,
-        wabaId: `waba-${randomUUID()}`,
-        encryptedCredentials: JSON.stringify(encryptSecret("fake-access-token", encryptionKey)),
+        wabaId,
+        encryptedCredentials: encryptWhatsAppChannelCredentials(
+          {
+            accessToken: "fake-access-token",
+            phoneNumberId,
+            wabaId
+          },
+          encryptionKey
+        ),
         status: "active"
       })
     );

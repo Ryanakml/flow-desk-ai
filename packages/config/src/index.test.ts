@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { loadAuthConfig, loadHttpConfig, loadMediaConfig } from "./index.js";
+import {
+  loadAuthConfig,
+  loadChannelEncryptionConfig,
+  loadHttpConfig,
+  loadMediaConfig
+} from "./index.js";
 
 describe("loadHttpConfig", () => {
   it("fails closed for an invalid port", () => {
@@ -36,5 +41,27 @@ describe("loadMediaConfig", () => {
 
   it("fails closed when staging media dependencies are absent", () => {
     expect(() => loadMediaConfig({ APP_ENV: "staging" })).toThrow();
+  });
+});
+
+describe("loadChannelEncryptionConfig", () => {
+  it("allows the fallback only for local development", () => {
+    expect(
+      loadChannelEncryptionConfig({ NODE_ENV: "development", APP_ENV: "local" })
+    ).toMatchObject({ ENCRYPTION_KEY: "dev-encryption-key-32-bytes-long!!" });
+    expect(() => loadChannelEncryptionConfig({ NODE_ENV: "test", APP_ENV: "local" })).toThrow();
+    expect(() =>
+      loadChannelEncryptionConfig({ NODE_ENV: "production", APP_ENV: "staging" })
+    ).toThrow();
+  });
+
+  it("uses the canonical ENCRYPTION_KEY in staging and production", () => {
+    expect(
+      loadChannelEncryptionConfig({
+        NODE_ENV: "production",
+        APP_ENV: "staging",
+        ENCRYPTION_KEY: "staging-channel-key-material"
+      })
+    ).toEqual({ ENCRYPTION_KEY: "staging-channel-key-material" });
   });
 });

@@ -32,6 +32,12 @@ export interface CreateChannelInput {
   metadata?: Record<string, unknown> | undefined;
 }
 
+export interface UpdateChannelCredentialsInput {
+  id: string;
+  organizationId: string;
+  encryptedCredentials: string;
+}
+
 interface RawChannelRow {
   id: string;
   organization_id: string;
@@ -175,6 +181,22 @@ export async function updateChannelStatus(
   const row = res.rows[0];
   if (!row) throw new Error(`Failed to update status for channel '${id}'`);
   return mapChannelRow(row);
+}
+
+export async function updateChannelCredentials(
+  db: DbClient,
+  input: UpdateChannelCredentialsInput
+): Promise<ChannelRecord | null> {
+  const res = await db.query<RawChannelRow>(
+    `UPDATE flowdesk.channels
+     SET encrypted_credentials = $3,
+         updated_at = clock_timestamp()
+     WHERE id = $1 AND organization_id = $2
+     RETURNING *`,
+    [input.id, input.organizationId, input.encryptedCredentials]
+  );
+  const row = res.rows[0];
+  return row ? mapChannelRow(row) : null;
 }
 
 export async function deleteChannel(

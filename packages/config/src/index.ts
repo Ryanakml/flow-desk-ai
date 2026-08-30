@@ -123,3 +123,34 @@ export type WebhookConfig = z.infer<typeof webhookConfigSchema>;
 export function loadWebhookConfig(environment: NodeJS.ProcessEnv = process.env): WebhookConfig {
   return webhookConfigSchema.parse(environment);
 }
+
+const DEVELOPMENT_ENCRYPTION_KEY = "dev-encryption-key-32-bytes-long!!";
+
+const channelEncryptionConfigSchema = z
+  .object({
+    NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+    APP_ENV: z.enum(["local", "preview", "staging", "production"]).default("local"),
+    ENCRYPTION_KEY: z.string().min(16).optional()
+  })
+  .superRefine((config, context) => {
+    const developmentFallbackAllowed =
+      config.NODE_ENV === "development" && config.APP_ENV === "local";
+    if (!config.ENCRYPTION_KEY && !developmentFallbackAllowed) {
+      context.addIssue({
+        code: "custom",
+        path: ["ENCRYPTION_KEY"],
+        message: "ENCRYPTION_KEY is required outside local development"
+      });
+    }
+  })
+  .transform((config) => ({
+    ENCRYPTION_KEY: config.ENCRYPTION_KEY ?? DEVELOPMENT_ENCRYPTION_KEY
+  }));
+
+export type ChannelEncryptionConfig = z.infer<typeof channelEncryptionConfigSchema>;
+
+export function loadChannelEncryptionConfig(
+  environment: NodeJS.ProcessEnv = process.env
+): ChannelEncryptionConfig {
+  return channelEncryptionConfigSchema.parse(environment);
+}

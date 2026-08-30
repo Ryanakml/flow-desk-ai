@@ -5,6 +5,7 @@ import {
   getChannelById,
   getChannelByPhoneNumberId,
   listChannels,
+  updateChannelCredentials,
   updateChannelStatus
 } from "./channels.js";
 
@@ -89,6 +90,17 @@ function createMockDb(): DbClient {
         }
       }
 
+      if (sql.includes("SET encrypted_credentials = $3")) {
+        const id = values[0] as string;
+        const organizationId = values[1] as string;
+        const channel = channels.get(id);
+        if (channel?.organization_id === organizationId) {
+          channel.encrypted_credentials = values[2] as string;
+          channel.updated_at = new Date();
+          return { rows: [channel], rowCount: 1, command: "UPDATE", oid: 0, fields: [] };
+        }
+      }
+
       return { rows: [], rowCount: 0, command: "SELECT", oid: 0, fields: [] };
     }
   } as unknown as DbClient;
@@ -155,5 +167,28 @@ describe("Channels Repository (M2-01)", () => {
     await expect(updateChannelStatus(db, channel.id, "draft")).rejects.toThrow(
       "Invalid channel status transition from 'active' to 'draft'."
     );
+  });
+
+  it("rotates only encrypted credentials while preserving channel identity", async () => {
+    const db = createMockDb();
+    const channel = await createChannel(db, {
+      organizationId: "a0000000-0000-4000-8000-000000000001",
+      name: "Rotation Line",
+      phoneNumberId: "10000000003",
+      wabaId: "waba-3",
+      encryptedCredentials: "old-envelope"
+    });
+    const updated = await updateChannelCredentials(db, {
+      id: channel.id,
+      organizationId: channel.organizationId,
+      encryptedCredentials: "new-envelope"
+    });
+    expect(updated).toMatchObject({
+      id: channel.id,
+      organizationId: channel.organizationId,
+      phoneNumberId: channel.phoneNumberId,
+      wabaId: channel.wabaId,
+      encryptedCredentials: "new-envelope"
+    });
   });
 });

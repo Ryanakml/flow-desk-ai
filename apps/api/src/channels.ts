@@ -1,29 +1,76 @@
 import { Router, type Request, type Response } from "express";
-import { type ChannelStatus } from "@flowdesk/domain";
+import {
+  CreateChannelRequestSchema,
+  RotateChannelCredentialsRequestSchema,
+  UpdateChannelStatusRequestSchema,
+  type ChannelVerificationState
+} from "@flowdesk/contracts";
+import { loadChannelEncryptionConfig } from "@flowdesk/config";
 import {
   createChannel,
   getChannelById,
   listChannels,
   updateChannelStatus,
+  updateChannelCredentials,
   deleteChannel,
   recordAuditEvent,
   runInTenantTransaction,
   type DbClient
 } from "@flowdesk/db";
-import { encryptSecret, decryptSecret } from "@flowdesk/security";
+import {
+  MetaWhatsAppProvider,
+  WhatsAppProviderError,
+  type WhatsAppProvider
+} from "@flowdesk/providers";
+import {
+  decryptWhatsAppChannelCredentials,
+  encryptWhatsAppChannelCredentials,
+  WhatsAppCredentialError
+} from "@flowdesk/security";
 import { createRequireAuthMiddleware } from "./auth.js";
 import { createRequireOrgPermissionMiddleware } from "./organizations.js";
 
 export interface ChannelsRouterOptions {
   db: DbClient;
   encryptionKey?: string;
+  provider?: WhatsAppProvider;
 }
 
 function getEncryptionKey(options: ChannelsRouterOptions): string {
   if (options.encryptionKey) return options.encryptionKey;
-  const envKey = process.env["ENCRYPTION_KEY"];
-  if (typeof envKey === "string" && envKey.length > 0) return envKey;
-  return "dev-encryption-key-32-bytes-long!!";
+  return loadChannelEncryptionConfig().ENCRYPTION_KEY;
+}
+
+function getProvider(options: ChannelsRouterOptions): WhatsAppProvider {
+  return options.provider ?? new MetaWhatsAppProvider();
+}
+
+function verificationFailure(error: WhatsAppProviderError): {
+  state: ChannelVerificationState;
+  message: string;
+} {
+  switch (error.classification) {
+    case "AUTH_FAILED":
+      return {
+        state: "revoked_or_expired",
+        message: "Meta rejected the access token because it is expired, revoked, or invalid."
+      };
+    case "PERMISSION_DENIED":
+      return {
+        state: "permission_failure",
+        message: "The access token does not have permission to inspect this WhatsApp phone number."
+      };
+    case "RESOURCE_MISMATCH":
+      return {
+        state: "identifier_mismatch",
+        message: "The configured Phone Number ID does not belong to the configured WABA ID."
+      };
+    default:
+      return {
+        state: "meta_unavailable",
+        message: "Meta could not complete credential verification at this time."
+      };
+  }
 }
 
 function getParam(params: Record<string, string | string[] | undefined>, key: string): string {
@@ -72,7 +119,9 @@ export function createChannelsRouter(options: ChannelsRouterOptions): Router {
     async (request: Request, response: Response) => {
       try {
         const orgId = getParam(request.params, "orgId");
-        const channels = await listChannels(options.db, orgId);
+        const channels = await runInTenantTransaction(options.db, { organizationId: orgId }, (db) =>
+          listChannels(db, orgId)
+        );
 
         const sanitized = channels.map((c) => ({
           id: c.id,
@@ -109,27 +158,21 @@ export function createChannelsRouter(options: ChannelsRouterOptions): Router {
     async (request: Request, response: Response) => {
       try {
         const orgId = getParam(request.params, "orgId");
-        const { name, phoneNumberId, wabaId, accessToken } = request.body as {
-          name?: string;
-          phoneNumberId?: string;
-          wabaId?: string;
-          accessToken?: string;
-        };
-
-        if (!name || !phoneNumberId || !wabaId || !accessToken) {
+        const parsed = CreateChannelRequestSchema.safeParse(request.body);
+        if (!parsed.success) {
           return sendProblem(
             response,
             400,
-            "BAD_REQUEST",
+            "VALIDATION_ERROR",
             "Invalid channel input",
-            "Missing required fields: name, phoneNumberId, wabaId, accessToken"
+            parsed.error.issues.map((issue) => issue.message).join("; ")
           );
         }
+        const { name, phoneNumberId, wabaId, accessToken, metadata } = parsed.data;
 
         const encryptionKey = getEncryptionKey(options);
-
-        const encrypted = encryptSecret(
-          JSON.stringify({ accessToken, phoneNumberId, wabaId }),
+        const encryptedCredentials = encryptWhatsAppChannelCredentials(
+          { accessToken, phoneNumberId, wabaId },
           encryptionKey
         );
 
@@ -147,8 +190,9 @@ export function createChannelsRouter(options: ChannelsRouterOptions): Router {
               name,
               phoneNumberId,
               wabaId,
-              encryptedCredentials: JSON.stringify(encrypted),
-              status: "active"
+              encryptedCredentials,
+              status: "active",
+              metadata
             });
 
             await recordAuditEvent(db, {
@@ -197,8 +241,9 @@ export function createChannelsRouter(options: ChannelsRouterOptions): Router {
       try {
         const orgId = getParam(request.params, "orgId");
         const channelId = getParam(request.params, "channelId");
-
-        const channel = await getChannelById(options.db, channelId, orgId);
+        const channel = await runInTenantTransaction(options.db, { organizationId: orgId }, (db) =>
+          getChannelById(db, channelId, orgId)
+        );
         if (!channel) {
           return sendProblem(
             response,
@@ -209,47 +254,139 @@ export function createChannelsRouter(options: ChannelsRouterOptions): Router {
           );
         }
 
-        let verified = false;
-        let message = "Verification failed";
+        let credentials;
+        try {
+          credentials = decryptWhatsAppChannelCredentials(
+            channel.encryptedCredentials,
+            getEncryptionKey(options),
+            { phoneNumberId: channel.phoneNumberId, wabaId: channel.wabaId }
+          );
+        } catch (error) {
+          if (!(error instanceof WhatsAppCredentialError)) throw error;
+          return response.status(200).json({
+            channelId,
+            verified: false,
+            state: "credential_error" satisfies ChannelVerificationState,
+            status: channel.status,
+            message: "Stored channel credentials could not be decrypted or parsed."
+          });
+        }
 
         try {
-          const encryptionKey = getEncryptionKey(options);
-          const parsedEncrypted = JSON.parse(channel.encryptedCredentials) as Parameters<
-            typeof decryptSecret
-          >[0];
-          const decryptedJson = decryptSecret(parsedEncrypted, encryptionKey);
-          const creds = JSON.parse(decryptedJson) as { accessToken: string };
-
-          if (creds.accessToken) {
-            verified = true;
-            message = "Meta WhatsApp Business Account credentials verified successfully";
-          }
-        } catch {
-          verified = false;
-          message = "Failed to decrypt or validate access token credentials";
-        }
-
-        if (verified && channel.status !== "active") {
-          await updateChannelStatus(
-            options.db,
+          const result = await getProvider(options).verifyPhoneNumber({
+            phoneNumberId: channel.phoneNumberId,
+            wabaId: channel.wabaId,
+            accessToken: credentials.accessToken
+          });
+          return response.status(200).json({
             channelId,
-            "active",
-            "Verified successfully via UI"
-          );
+            verified: true,
+            state: "valid" satisfies ChannelVerificationState,
+            status: channel.status,
+            message: "Meta confirmed the access token and channel identifiers.",
+            displayPhoneNumber: result.displayPhoneNumber,
+            verifiedName: result.verifiedName
+          });
+        } catch (error) {
+          if (!(error instanceof WhatsAppProviderError)) throw error;
+          const failure = verificationFailure(error);
+          return response.status(200).json({
+            channelId,
+            verified: false,
+            state: failure.state,
+            status: channel.status,
+            message: failure.message
+          });
         }
-
-        return response.status(200).json({
-          channelId,
-          verified,
-          status: verified ? "active" : channel.status,
-          message
-        });
       } catch (err) {
         return sendProblem(
           response,
           500,
           "INTERNAL_ERROR",
           "Verification error",
+          err instanceof Error ? err.message : "Internal error"
+        );
+      }
+    }
+  );
+
+  // PATCH /api/v1/organizations/:orgId/channels/:channelId/credentials
+  router.patch(
+    "/:channelId/credentials",
+    requireAuth,
+    requireWritePermission,
+    async (request: Request, response: Response) => {
+      try {
+        const orgId = getParam(request.params, "orgId");
+        const channelId = getParam(request.params, "channelId");
+        const parsed = RotateChannelCredentialsRequestSchema.safeParse(request.body);
+        if (!parsed.success) {
+          return sendProblem(
+            response,
+            400,
+            "VALIDATION_ERROR",
+            "Invalid credential rotation input",
+            parsed.error.issues.map((issue) => issue.message).join("; ")
+          );
+        }
+
+        const rotated = await runInTenantTransaction(
+          options.db,
+          { organizationId: orgId },
+          async (db) => {
+            const existing = await getChannelById(db, channelId, orgId);
+            if (!existing) return null;
+            const encryptedCredentials = encryptWhatsAppChannelCredentials(
+              {
+                accessToken: parsed.data.accessToken,
+                phoneNumberId: existing.phoneNumberId,
+                wabaId: existing.wabaId
+              },
+              getEncryptionKey(options)
+            );
+            const updated = await updateChannelCredentials(db, {
+              id: channelId,
+              organizationId: orgId,
+              encryptedCredentials
+            });
+            if (!updated) return null;
+            await recordAuditEvent(db, {
+              organizationId: orgId,
+              actorUserId: request.user!.id,
+              action: "channel.credentials_rotated",
+              targetType: "channel",
+              targetId: channelId,
+              result: "allowed",
+              metadata: {
+                phoneNumberId: existing.phoneNumberId,
+                wabaId: existing.wabaId
+              }
+            });
+            return updated;
+          }
+        );
+
+        if (!rotated) {
+          return sendProblem(
+            response,
+            404,
+            "NOT_FOUND",
+            "Channel not found",
+            "Channel does not exist"
+          );
+        }
+
+        return response.status(200).json({
+          channelId: rotated.id,
+          organizationId: rotated.organizationId,
+          updatedAt: rotated.updatedAt
+        });
+      } catch (err) {
+        return sendProblem(
+          response,
+          500,
+          "INTERNAL_ERROR",
+          "Failed to rotate channel credentials",
           err instanceof Error ? err.message : "Internal error"
         );
       }
@@ -265,18 +402,27 @@ export function createChannelsRouter(options: ChannelsRouterOptions): Router {
       try {
         const orgId = getParam(request.params, "orgId");
         const channelId = getParam(request.params, "channelId");
-        const body = (
-          request.body && typeof request.body === "object" ? request.body : {}
-        ) as Record<string, unknown>;
-        const statusVal: unknown = body["status"];
-        const targetStatus: ChannelStatus | undefined =
-          typeof statusVal === "string" ? (statusVal as ChannelStatus) : undefined;
-        const reasonVal: unknown = body["statusReason"];
-        const statusReason: string | undefined =
-          typeof reasonVal === "string" ? reasonVal : undefined;
+        const parsed = UpdateChannelStatusRequestSchema.safeParse(request.body);
+        if (!parsed.success) {
+          return sendProblem(
+            response,
+            400,
+            "VALIDATION_ERROR",
+            "Invalid channel status input",
+            parsed.error.issues.map((issue) => issue.message).join("; ")
+          );
+        }
 
-        const existing = await getChannelById(options.db, channelId, orgId);
-        if (!existing) {
+        const updated = await runInTenantTransaction(
+          options.db,
+          { organizationId: orgId },
+          async (db) => {
+            const existing = await getChannelById(db, channelId, orgId);
+            if (!existing) return null;
+            return updateChannelStatus(db, channelId, parsed.data.status, parsed.data.statusReason);
+          }
+        );
+        if (!updated) {
           return sendProblem(
             response,
             404,
@@ -284,11 +430,6 @@ export function createChannelsRouter(options: ChannelsRouterOptions): Router {
             "Channel not found",
             "Channel does not exist"
           );
-        }
-
-        let updated = existing;
-        if (targetStatus) {
-          updated = await updateChannelStatus(options.db, channelId, targetStatus, statusReason);
         }
 
         return response.status(200).json({
@@ -324,7 +465,25 @@ export function createChannelsRouter(options: ChannelsRouterOptions): Router {
         const orgId = getParam(request.params, "orgId");
         const channelId = getParam(request.params, "channelId");
 
-        const deleted = await deleteChannel(options.db, channelId, orgId);
+        const deleted = await runInTenantTransaction(
+          options.db,
+          { organizationId: orgId },
+          async (db) => {
+            const wasDeleted = await deleteChannel(db, channelId, orgId);
+            if (wasDeleted) {
+              await recordAuditEvent(db, {
+                organizationId: orgId,
+                actorUserId: request.user!.id,
+                action: "channel.deleted",
+                targetType: "channel",
+                targetId: channelId,
+                result: "allowed",
+                metadata: {}
+              });
+            }
+            return wasDeleted;
+          }
+        );
         if (!deleted) {
           return sendProblem(
             response,
@@ -334,16 +493,6 @@ export function createChannelsRouter(options: ChannelsRouterOptions): Router {
             "Channel does not exist"
           );
         }
-
-        await recordAuditEvent(options.db, {
-          organizationId: orgId,
-          actorUserId: request.user?.id ?? "unknown",
-          action: "channel.deleted",
-          targetType: "channel",
-          targetId: channelId,
-          result: "allowed",
-          metadata: {}
-        });
 
         return response.status(200).json({ success: true, channelId });
       } catch (err) {

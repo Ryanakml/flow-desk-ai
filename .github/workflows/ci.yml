@@ -111,7 +111,11 @@ jobs:
       - name: Smoke test image
         if: matrix.smoke
         run: |
-          docker run -d --name app -e PORT=${{ matrix.port }} -p ${{ matrix.port }}:${{ matrix.port }} flowdesk/${{ matrix.app }}:${{ github.sha }}
+          docker run -d --name app \
+            -e PORT=${{ matrix.port }} \
+            -e ENCRYPTION_KEY=ci-image-smoke-encryption-key \
+            -p ${{ matrix.port }}:${{ matrix.port }} \
+            flowdesk/${{ matrix.app }}:${{ github.sha }}
           for attempt in {1..30}; do curl --fail --silent http://127.0.0.1:${{ matrix.port }}/livez && exit 0; sleep 1; done
           docker logs app
           exit 1

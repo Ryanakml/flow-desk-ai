@@ -17,7 +17,7 @@ import {
   WhatsAppProviderError
 } from "@flowdesk/providers";
 import { recordWhatsAppOutboundDispatch } from "@flowdesk/observability";
-import { decryptSecret, type EncryptedEnvelope } from "@flowdesk/security";
+import { decryptWhatsAppChannelCredentials, WhatsAppCredentialError } from "@flowdesk/security";
 
 export interface OutboundMessagePayload {
   messageId: string;
@@ -63,6 +63,7 @@ interface PreparedDispatch {
   messageId: string;
   channelId: string;
   phoneNumberId: string;
+  wabaId: string;
   encryptedCredentials: string;
   content: string;
   customerPhone: string;
@@ -85,22 +86,18 @@ function mediaTypeFor(contentType: string): "image" | "video" | "document" | "au
   return "document";
 }
 
-function resolveAccessToken(rawCredentials: string, encryptionKey?: string): string {
-  try {
-    const parsed = JSON.parse(rawCredentials) as Record<string, unknown>;
-    if (parsed["ciphertext"] && parsed["iv"] && parsed["tag"]) {
-      if (!encryptionKey) {
-        throw new Error("Missing encryption key for credential decryption");
-      }
-      return decryptSecret(parsed as unknown as EncryptedEnvelope, encryptionKey);
-    }
-    if (typeof parsed["accessToken"] === "string") {
-      return parsed["accessToken"];
-    }
-  } catch {
-    // Non-JSON string, treat as raw token
+export function resolveAccessToken(
+  rawCredentials: string,
+  encryptionKey: string | undefined,
+  channel: { phoneNumberId: string; wabaId: string }
+): string {
+  if (!encryptionKey) {
+    throw new WhatsAppCredentialError(
+      "DECRYPTION_FAILED",
+      "Channel credentials cannot be decrypted because ENCRYPTION_KEY is not configured."
+    );
   }
-  return rawCredentials;
+  return decryptWhatsAppChannelCredentials(rawCredentials, encryptionKey, channel).accessToken;
 }
 
 /**
@@ -158,7 +155,10 @@ export async function dispatchOutboundMessage(
 
   let accessToken: string;
   try {
-    accessToken = resolveAccessToken(channel.encryptedCredentials, options.encryptionKey);
+    accessToken = resolveAccessToken(channel.encryptedCredentials, options.encryptionKey, {
+      phoneNumberId: channel.phoneNumberId,
+      wabaId: channel.wabaId
+    });
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     await updateMessageStatus(client, orgId, message.id, "failed", {
@@ -331,13 +331,14 @@ async function dispatchOutboundMessageCrashSafe(
         content: string;
         channel_id: string;
         phone_number_id: string;
+        waba_id: string;
         encrypted_credentials: string;
         channel_status: string;
         intent_state: string;
       }>(
         `SELECT message.id AS message_id, message.status AS message_status,
                 message.provider_message_id, message.content,
-                channel.id AS channel_id, channel.phone_number_id,
+                channel.id AS channel_id, channel.phone_number_id, channel.waba_id,
                 channel.encrypted_credentials, channel.status AS channel_status,
                 intent.state AS intent_state
          FROM flowdesk.messages AS message
@@ -447,6 +448,7 @@ async function dispatchOutboundMessageCrashSafe(
         messageId: row.message_id,
         channelId: row.channel_id,
         phoneNumberId: row.phone_number_id,
+        wabaId: row.waba_id,
         encryptedCredentials: row.encrypted_credentials,
         content: row.content,
         customerPhone: event.payload.customerPhone,
@@ -461,7 +463,10 @@ async function dispatchOutboundMessageCrashSafe(
   const provider = options.provider ?? new FakeWhatsAppProvider();
   let accessToken: string;
   try {
-    accessToken = resolveAccessToken(prepared.encryptedCredentials, options.encryptionKey);
+    accessToken = resolveAccessToken(prepared.encryptedCredentials, options.encryptionKey, {
+      phoneNumberId: prepared.phoneNumberId,
+      wabaId: prepared.wabaId
+    });
   } catch (error: unknown) {
     const detail = error instanceof Error ? error.message : String(error);
     return runInTenantTransaction(client, { organizationId: event.organizationId }, async (db) => {

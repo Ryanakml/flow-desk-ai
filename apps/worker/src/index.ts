@@ -1,4 +1,4 @@
-import { loadHttpConfig, loadMediaConfig } from "@flowdesk/config";
+import { loadChannelEncryptionConfig, loadHttpConfig, loadMediaConfig } from "@flowdesk/config";
 import {
   createLogger,
   createProcessHealthServer,
@@ -21,6 +21,7 @@ import { processAttachmentRetentionBatch } from "./media-retention.js";
 export { processOutboxOutboundBatch, dispatchOutboundMessage };
 
 const config = loadHttpConfig("worker", Number(process.env["WORKER_HEALTH_PORT"] ?? 4002));
+const channelEncryptionConfig = loadChannelEncryptionConfig();
 const logger = createLogger({
   service: config.SERVICE_NAME,
   environment: config.APP_ENV,
@@ -76,7 +77,15 @@ if (dbPool) {
     const retentionDue = Date.now() - lastRetentionRun >= 60 * 60 * 1000;
     void Promise.all([
       processOutboxWebhookBatch(dbPool, 10),
-      processOutboxOutboundBatch(dbPool, { provider, ...(storage ? { storage } : {}) }, 10),
+      processOutboxOutboundBatch(
+        dbPool,
+        {
+          provider,
+          encryptionKey: channelEncryptionConfig.ENCRYPTION_KEY,
+          ...(storage ? { storage } : {})
+        },
+        10
+      ),
       ...(storage
         ? [
             processAttachmentScanBatch(dbPool, { storage, scanner, logger: mediaLogger }, 10),

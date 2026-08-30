@@ -4,11 +4,17 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { loadAuthConfig } from "@flowdesk/config";
 import { createChannel, withTenantTransaction } from "@flowdesk/db";
-import { hashSessionToken, serializeSessionCookie } from "@flowdesk/security";
+import {
+  decryptWhatsAppChannelCredentials,
+  hashSessionToken,
+  serializeSessionCookie
+} from "@flowdesk/security";
+import { FakeWhatsAppProvider, WhatsAppProviderError } from "@flowdesk/providers";
 import { Pool } from "pg";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApiApp } from "./app.js";
+import { resolveAccessToken } from "../../worker/src/dispatch.js";
 
 const executeFile = promisify(execFile);
 const connectionString = process.env["DATABASE_MIGRATOR_URL"];
@@ -21,8 +27,16 @@ const pool = connectionString ? new Pool({ connectionString, max: 4 }) : undefin
 const ownerUserId = randomUUID();
 const otherOwnerUserId = randomUUID();
 const sessionToken = `channel-integration-${randomUUID()}`;
+const encryptionKey = "channel-api-worker-integration-key";
+const initialAccessToken = "EAAG_INTEGRATION_INITIAL";
+const rotatedAccessToken = "EAAG_INTEGRATION_ROTATED";
+const phoneNumberId = `phone-${randomUUID()}`;
+const wabaId = `waba-${randomUUID()}`;
 let organizationA = "";
 let organizationB = "";
+let channelId = "";
+let conversationId = "";
+let messageId = "";
 
 beforeAll(async () => {
   if (!pool) return;
@@ -61,12 +75,29 @@ beforeAll(async () => {
 afterAll(async () => {
   if (!pool) return;
 
+  await pool.query(
+    "DELETE FROM flowdesk.outbound_intents WHERE organization_id = ANY($1::uuid[])",
+    [[organizationA, organizationB]]
+  );
+  await pool.query("DELETE FROM flowdesk.messages WHERE organization_id = ANY($1::uuid[])", [
+    [organizationA, organizationB]
+  ]);
+  await pool.query("DELETE FROM flowdesk.conversations WHERE organization_id = ANY($1::uuid[])", [
+    [organizationA, organizationB]
+  ]);
+  await pool.query("DELETE FROM flowdesk.contacts WHERE organization_id = ANY($1::uuid[])", [
+    [organizationA, organizationB]
+  ]);
   await pool.query("DELETE FROM flowdesk.channels WHERE organization_id = ANY($1::uuid[])", [
     [organizationA, organizationB]
   ]);
   await pool.query("DELETE FROM flowdesk.audit_logs WHERE organization_id = ANY($1::uuid[])", [
     [organizationA, organizationB]
   ]);
+  await pool.query(
+    "DELETE FROM flowdesk.realtime_versions WHERE organization_id = ANY($1::uuid[])",
+    [[organizationA, organizationB]]
+  );
   await pool.query(
     "DELETE FROM flowdesk.organization_settings WHERE organization_id = ANY($1::uuid[])",
     [[organizationA, organizationB]]
@@ -91,13 +122,14 @@ afterAll(async () => {
 
 integration("POST /api/v1/organizations/:orgId/channels with PostgreSQL RLS", () => {
   const config = loadAuthConfig({ NODE_ENV: "test" });
+  const provider = new FakeWhatsAppProvider();
   const app = pool
     ? createApiApp({
         service: "api",
         version: "integration",
         gitSha: "integration",
         environment: "local",
-        auth: { db: pool, config }
+        auth: { db: pool, config, encryptionKey, whatsappProvider: provider }
       })
     : undefined;
   const ownerCookie = serializeSessionCookie(sessionToken, false);
@@ -117,17 +149,41 @@ integration("POST /api/v1/organizations/:orgId/channels with PostgreSQL RLS", ()
       .set("Cookie", ownerCookie)
       .send({
         name: "Authorized WhatsApp",
-        phoneNumberId: `phone-${randomUUID()}`,
-        wabaId: `waba-${randomUUID()}`,
-        accessToken: "integration-access-token"
+        phoneNumberId,
+        wabaId,
+        accessToken: initialAccessToken
       });
 
     expect(response.status).toBe(201);
-    expect(response.body).toMatchObject({
+    const responseBody: unknown = response.body;
+    expect(responseBody).toMatchObject({
       organizationId: organizationA,
       name: "Authorized WhatsApp",
       status: "active"
     });
+    if (
+      typeof responseBody !== "object" ||
+      responseBody === null ||
+      !("id" in responseBody) ||
+      typeof responseBody.id !== "string"
+    ) {
+      throw new Error("Channel creation response did not contain a string ID");
+    }
+    channelId = responseBody.id;
+    const stored = await pool.query<{ encrypted_credentials: string }>(
+      "SELECT encrypted_credentials FROM flowdesk.channels WHERE id = $1",
+      [channelId]
+    );
+    expect(stored.rows[0]?.encrypted_credentials).not.toContain(initialAccessToken);
+    expect(
+      decryptWhatsAppChannelCredentials(stored.rows[0]!.encrypted_credentials, encryptionKey)
+    ).toEqual({ accessToken: initialAccessToken, phoneNumberId, wabaId });
+    expect(
+      resolveAccessToken(stored.rows[0]!.encrypted_credentials, encryptionKey, {
+        phoneNumberId,
+        wabaId
+      })
+    ).toBe(initialAccessToken);
     expect(
       (
         await pool.query<{ count: string }>(
@@ -136,6 +192,126 @@ integration("POST /api/v1/organizations/:orgId/channels with PostgreSQL RLS", ()
         )
       ).rows[0]?.count
     ).toBe("1");
+  });
+
+  it("rotates credentials in place and preserves conversation/message links", async () => {
+    if (!pool || !app) throw new Error("integration database unavailable");
+
+    const contact = await pool.query<{ id: string }>(
+      `INSERT INTO flowdesk.contacts (organization_id, channel_id, phone_number)
+       VALUES ($1, $2, '+628123456789') RETURNING id`,
+      [organizationA, channelId]
+    );
+    const conversation = await pool.query<{ id: string }>(
+      `INSERT INTO flowdesk.conversations
+         (organization_id, channel_id, contact_id, customer_phone, customer_name)
+       VALUES ($1, $2, $3, '+628123456789', 'Credential Rotation Customer') RETURNING id`,
+      [organizationA, channelId, contact.rows[0]!.id]
+    );
+    conversationId = conversation.rows[0]!.id;
+    const message = await pool.query<{ id: string }>(
+      `INSERT INTO flowdesk.messages
+         (organization_id, conversation_id, channel_id, direction, sender_type, content, status)
+       VALUES ($1, $2, $3, 'inbound', 'customer', 'Preserve me', 'delivered') RETURNING id`,
+      [organizationA, conversationId, channelId]
+    );
+    messageId = message.rows[0]!.id;
+
+    const response = await request(app)
+      .patch(`/api/v1/organizations/${organizationA}/channels/${channelId}/credentials`)
+      .set("Cookie", ownerCookie)
+      .send({ accessToken: rotatedAccessToken });
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ channelId, organizationId: organizationA });
+
+    const persisted = await pool.query<{
+      id: string;
+      encrypted_credentials: string;
+    }>("SELECT id, encrypted_credentials FROM flowdesk.channels WHERE id = $1", [channelId]);
+    expect(persisted.rows[0]?.id).toBe(channelId);
+    expect(
+      resolveAccessToken(persisted.rows[0]!.encrypted_credentials, encryptionKey, {
+        phoneNumberId,
+        wabaId
+      })
+    ).toBe(rotatedAccessToken);
+    expect(
+      (
+        await pool.query<{ channel_id: string }>(
+          "SELECT channel_id FROM flowdesk.conversations WHERE id = $1",
+          [conversationId]
+        )
+      ).rows[0]?.channel_id
+    ).toBe(channelId);
+    expect(
+      (
+        await pool.query<{ channel_id: string; conversation_id: string }>(
+          "SELECT channel_id, conversation_id FROM flowdesk.messages WHERE id = $1",
+          [messageId]
+        )
+      ).rows[0]
+    ).toEqual({ channel_id: channelId, conversation_id: conversationId });
+  });
+
+  it("denies cross-tenant credential rotation", async () => {
+    if (!pool || !app) throw new Error("integration database unavailable");
+    const response = await request(app)
+      .patch(`/api/v1/organizations/${organizationB}/channels/${channelId}/credentials`)
+      .set("Cookie", ownerCookie)
+      .send({ accessToken: "must-not-be-written" });
+    expect(response.status).toBe(403);
+    expect(response.body).toMatchObject({ code: "NOT_A_MEMBER" });
+  });
+
+  it("denies every cross-tenant read, verify, status update, and delete operation", async () => {
+    if (!pool || !app) throw new Error("integration database unavailable");
+
+    const responses = await Promise.all([
+      request(app)
+        .get(`/api/v1/organizations/${organizationB}/channels`)
+        .set("Cookie", ownerCookie),
+      request(app)
+        .post(`/api/v1/organizations/${organizationB}/channels/${channelId}/verify`)
+        .set("Cookie", ownerCookie),
+      request(app)
+        .patch(`/api/v1/organizations/${organizationB}/channels/${channelId}`)
+        .set("Cookie", ownerCookie)
+        .send({ status: "inactive", statusReason: "must not be written" }),
+      request(app)
+        .delete(`/api/v1/organizations/${organizationB}/channels/${channelId}`)
+        .set("Cookie", ownerCookie)
+    ]);
+
+    for (const response of responses) {
+      expect(response.status).toBe(403);
+      expect(response.body).toMatchObject({ code: "NOT_A_MEMBER" });
+    }
+
+    const persisted = await pool.query<{ status: string }>(
+      "SELECT status FROM flowdesk.channels WHERE id = $1",
+      [channelId]
+    );
+    expect(persisted.rows[0]?.status).toBe("active");
+  });
+
+  it("uses Meta verification and returns revoked/expired state", async () => {
+    if (!app) throw new Error("integration database unavailable");
+    provider.simulateFailure = () =>
+      new WhatsAppProviderError({
+        message: "token redacted",
+        classification: "AUTH_FAILED",
+        statusCode: 401,
+        providerCode: 190
+      });
+    const response = await request(app)
+      .post(`/api/v1/organizations/${organizationA}/channels/${channelId}/verify`)
+      .set("Cookie", ownerCookie);
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      verified: false,
+      state: "revoked_or_expired"
+    });
+    provider.simulateFailure = undefined;
   });
 
   it("denies cross-tenant creation before the handler and at the RLS boundary", async () => {

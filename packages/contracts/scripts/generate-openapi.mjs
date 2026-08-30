@@ -526,6 +526,178 @@ export function buildOpenApiSpec() {
           }
         }
       },
+      "/api/v1/organizations/{orgId}/channels": {
+        get: {
+          summary: "List WhatsApp channels",
+          operationId: "listChannels",
+          parameters: [
+            {
+              name: "orgId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" }
+            }
+          ],
+          responses: {
+            200: {
+              description: "Tenant channels without stored credentials",
+              content: {
+                "application/json": {
+                  schema: { type: "array", items: { $ref: "#/components/schemas/Channel" } }
+                }
+              }
+            },
+            403: { description: "Forbidden" }
+          }
+        },
+        post: {
+          summary: "Create a WhatsApp channel",
+          operationId: "createChannel",
+          parameters: [
+            {
+              name: "orgId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" }
+            }
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/CreateChannelRequest" } }
+            }
+          },
+          responses: {
+            201: {
+              description: "Channel created; credentials are never returned",
+              content: { "application/json": { schema: { $ref: "#/components/schemas/Channel" } } }
+            },
+            400: { description: "Invalid channel input" },
+            403: { description: "Forbidden" }
+          }
+        }
+      },
+      "/api/v1/organizations/{orgId}/channels/{channelId}": {
+        patch: {
+          summary: "Update channel status",
+          operationId: "updateChannelStatus",
+          parameters: [
+            {
+              name: "orgId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" }
+            },
+            {
+              name: "channelId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" }
+            }
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/UpdateChannelStatusRequest" }
+              }
+            }
+          },
+          responses: { 200: { description: "Updated channel" }, 403: { description: "Forbidden" } }
+        },
+        delete: {
+          summary: "Delete an unused channel",
+          operationId: "deleteChannel",
+          parameters: [
+            {
+              name: "orgId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" }
+            },
+            {
+              name: "channelId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" }
+            }
+          ],
+          responses: { 200: { description: "Channel deleted" }, 403: { description: "Forbidden" } }
+        }
+      },
+      "/api/v1/organizations/{orgId}/channels/{channelId}/credentials": {
+        patch: {
+          summary: "Rotate a channel access token in place",
+          operationId: "rotateChannelCredentials",
+          parameters: [
+            {
+              name: "orgId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" }
+            },
+            {
+              name: "channelId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" }
+            }
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/RotateChannelCredentialsRequest" }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: "Credentials rotated without replacing the channel",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/RotateChannelCredentialsResponse" }
+                }
+              }
+            },
+            400: { description: "Invalid credential input" },
+            403: { description: "Forbidden" },
+            404: { description: "Channel not found" }
+          }
+        }
+      },
+      "/api/v1/organizations/{orgId}/channels/{channelId}/verify": {
+        post: {
+          summary: "Verify stored channel credentials against Meta",
+          operationId: "verifyChannel",
+          parameters: [
+            {
+              name: "orgId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" }
+            },
+            {
+              name: "channelId",
+              in: "path",
+              required: true,
+              schema: { type: "string", format: "uuid" }
+            }
+          ],
+          responses: {
+            200: {
+              description: "Meta credential verification result",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/VerifyChannelResponse" }
+                }
+              }
+            },
+            403: { description: "Forbidden" },
+            404: { description: "Channel not found" }
+          }
+        }
+      },
       "/api/v1/organizations/{orgId}/conversations": {
         get: {
           summary: "List conversations with filters and pagination",
@@ -929,6 +1101,100 @@ export function buildOpenApiSpec() {
             environment: { type: "string", enum: ["local", "preview", "staging", "production"] }
           },
           required: ["service", "version", "gitSha", "environment"]
+        },
+        Channel: {
+          type: "object",
+          properties: {
+            id: { type: "string", format: "uuid" },
+            organizationId: { type: "string", format: "uuid" },
+            type: { type: "string", enum: ["whatsapp"] },
+            name: { type: "string" },
+            phoneNumberId: { type: "string" },
+            wabaId: { type: "string" },
+            status: {
+              type: "string",
+              enum: ["draft", "connecting", "active", "degraded", "disconnected"]
+            },
+            statusReason: { type: ["string", "null"] },
+            createdAt: { type: "string", format: "date-time" },
+            updatedAt: { type: "string", format: "date-time" }
+          },
+          required: [
+            "id",
+            "organizationId",
+            "type",
+            "name",
+            "phoneNumberId",
+            "wabaId",
+            "status",
+            "createdAt",
+            "updatedAt"
+          ]
+        },
+        CreateChannelRequest: {
+          type: "object",
+          properties: {
+            type: { type: "string", enum: ["whatsapp"], default: "whatsapp" },
+            name: { type: "string", minLength: 1, maxLength: 100 },
+            phoneNumberId: { type: "string", minLength: 1 },
+            wabaId: { type: "string", minLength: 1 },
+            accessToken: { type: "string", minLength: 1, maxLength: 8192, writeOnly: true },
+            metadata: { type: "object", additionalProperties: true }
+          },
+          required: ["name", "phoneNumberId", "wabaId", "accessToken"]
+        },
+        UpdateChannelStatusRequest: {
+          type: "object",
+          properties: {
+            status: {
+              type: "string",
+              enum: ["draft", "connecting", "active", "degraded", "disconnected"]
+            },
+            statusReason: { type: "string", maxLength: 500 }
+          },
+          required: ["status"]
+        },
+        RotateChannelCredentialsRequest: {
+          type: "object",
+          properties: {
+            accessToken: { type: "string", minLength: 1, maxLength: 8192, writeOnly: true }
+          },
+          required: ["accessToken"]
+        },
+        RotateChannelCredentialsResponse: {
+          type: "object",
+          properties: {
+            channelId: { type: "string", format: "uuid" },
+            organizationId: { type: "string", format: "uuid" },
+            updatedAt: { type: "string", format: "date-time" }
+          },
+          required: ["channelId", "organizationId", "updatedAt"]
+        },
+        VerifyChannelResponse: {
+          type: "object",
+          properties: {
+            channelId: { type: "string", format: "uuid" },
+            verified: { type: "boolean" },
+            state: {
+              type: "string",
+              enum: [
+                "valid",
+                "revoked_or_expired",
+                "permission_failure",
+                "identifier_mismatch",
+                "meta_unavailable",
+                "credential_error"
+              ]
+            },
+            status: {
+              type: "string",
+              enum: ["draft", "connecting", "active", "degraded", "disconnected"]
+            },
+            message: { type: "string" },
+            displayPhoneNumber: { type: ["string", "null"] },
+            verifiedName: { type: ["string", "null"] }
+          },
+          required: ["channelId", "verified", "state", "status", "message"]
         },
         SessionUser: {
           type: "object",

@@ -61,9 +61,11 @@ export {
   getChannelByPhoneNumberId,
   listChannels,
   updateChannelStatus,
+  updateChannelCredentials,
   deleteChannel,
   type ChannelRecord,
-  type CreateChannelInput
+  type CreateChannelInput,
+  type UpdateChannelCredentialsInput
 } from "./channels.js";
 export {
   recordWebhookEvent,

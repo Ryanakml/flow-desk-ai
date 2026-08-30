@@ -8,13 +8,31 @@ import {
 import {
   dispatchOutboundMessage,
   processOutboxOutboundBatch,
+  resolveAccessToken,
   type OutboundMessagePayload
 } from "./dispatch.js";
 import { processWebhookPayload } from "./normalization.js";
+import {
+  encryptWhatsAppChannelCredentials,
+  WhatsAppCredentialError,
+  type WhatsAppCredentialErrorCode
+} from "@flowdesk/security";
 
 const orgId = "00000000-0000-7000-8000-000000000001";
 const channelId = "00000000-0000-7000-8000-000000000002";
 const convId = "00000000-0000-7000-8000-000000000010";
+const encryptionKey = "worker-dispatch-test-encryption-key";
+
+function expectCredentialError(action: () => unknown, code: WhatsAppCredentialErrorCode): void {
+  try {
+    action();
+    throw new Error(`Expected WhatsApp credential error ${code}`);
+  } catch (error) {
+    expect(error).toBeInstanceOf(WhatsAppCredentialError);
+    if (!(error instanceof WhatsAppCredentialError)) throw error;
+    expect(error.code).toBe(code);
+  }
+}
 
 interface MockDbMessage {
   id: string;
@@ -107,7 +125,14 @@ function createDispatchMockDb() {
     name: "Customer Support",
     phone_number_id: "10987654321",
     waba_id: "waba-12345",
-    encrypted_credentials: JSON.stringify({ accessToken: "mock-token-abc" }),
+    encrypted_credentials: encryptWhatsAppChannelCredentials(
+      {
+        accessToken: "mock-token-abc",
+        phoneNumberId: "10987654321",
+        wabaId: "waba-12345"
+      },
+      encryptionKey
+    ),
     status: "active",
     status_reason: null,
     metadata: {},
@@ -354,7 +379,7 @@ describe("Outbound Dispatch Worker (M2-08)", () => {
       last_error: null
     });
 
-    const processedCount = await processOutboxOutboundBatch(db, { provider }, 10);
+    const processedCount = await processOutboxOutboundBatch(db, { provider, encryptionKey }, 10);
     expect(processedCount).toBe(1);
 
     // Verify message status was updated to sent with providerMessageId
@@ -367,6 +392,33 @@ describe("Outbound Dispatch Worker (M2-08)", () => {
     // Verify outbox event is published
     const updatedEvent = outboxEvents.get(eventId)!;
     expect(updatedEvent.published_at).toBeInstanceOf(Date);
+    expect(provider.getSentMessages()[0]?.accessToken).toBe("mock-token-abc");
+    expect(provider.getSentMessages()[0]?.accessToken).not.toContain("ciphertext");
+    expect(provider.getSentMessages()[0]?.accessToken).not.toContain("accessToken");
+  });
+
+  it("fails closed when the encryption key is missing or wrong", () => {
+    const encrypted = encryptWhatsAppChannelCredentials(
+      {
+        accessToken: "EAAG_should_never_fallback",
+        phoneNumberId: "10987654321",
+        wabaId: "waba-12345"
+      },
+      encryptionKey
+    );
+    const channel = { phoneNumberId: "10987654321", wabaId: "waba-12345" };
+    expectCredentialError(
+      () => resolveAccessToken(encrypted, undefined, channel),
+      "DECRYPTION_FAILED"
+    );
+    expectCredentialError(
+      () => resolveAccessToken(encrypted, "wrong-key", channel),
+      "DECRYPTION_FAILED"
+    );
+    expectCredentialError(
+      () => resolveAccessToken("EAAG_plaintext", encryptionKey, channel),
+      "MALFORMED_ENVELOPE"
+    );
   });
 
   it("skips calling provider if message is already sent (idempotent)", async () => {
@@ -412,7 +464,7 @@ describe("Outbound Dispatch Worker (M2-08)", () => {
       attempts: 0
     };
 
-    const result = await dispatchOutboundMessage(db, event, { provider });
+    const result = await dispatchOutboundMessage(db, event, { provider, encryptionKey });
     expect(result.status).toBe("skipped");
     expect(result.providerMessageId).toBe("wamid.already.sent");
 
@@ -470,7 +522,11 @@ describe("Outbound Dispatch Worker (M2-08)", () => {
       attempts: 1
     };
 
-    const result = await dispatchOutboundMessage(db, event, { provider, maxRetries: 5 });
+    const result = await dispatchOutboundMessage(db, event, {
+      provider,
+      encryptionKey,
+      maxRetries: 5
+    });
     expect(result.status).toBe("failed");
     expect(result.error).toBe("Meta rate limit exceeded");
 
@@ -530,7 +586,11 @@ describe("Outbound Dispatch Worker (M2-08)", () => {
     };
     outboxEvents.set(eventId, toMockOutboxEvent(event));
 
-    const result = await dispatchOutboundMessage(db, event, { provider, maxRetries: 5 });
+    const result = await dispatchOutboundMessage(db, event, {
+      provider,
+      encryptionKey,
+      maxRetries: 5
+    });
     expect(result.status).toBe("failed");
     expect(result.error).toContain("Max retries exceeded (5)");
 
@@ -595,7 +655,7 @@ describe("Outbound Dispatch Worker (M2-08)", () => {
     };
     outboxEvents.set(eventId, toMockOutboxEvent(event));
 
-    const result = await dispatchOutboundMessage(db, event, { provider });
+    const result = await dispatchOutboundMessage(db, event, { provider, encryptionKey });
     expect(result.status).toBe("failed");
     expect(result.error).toBe("Invalid OAuth access token");
 
@@ -655,7 +715,7 @@ describe("Outbound Dispatch Worker (M2-08)", () => {
     };
     outboxEvents.set(eventId, toMockOutboxEvent(event));
 
-    const result = await dispatchOutboundMessage(db, event, { provider });
+    const result = await dispatchOutboundMessage(db, event, { provider, encryptionKey });
     expect(result.status).toBe("failed");
     expect(result.error).toContain("is disconnected");
 
@@ -730,7 +790,7 @@ describe("Outbound Dispatch Worker (M2-08)", () => {
         occurredAt: new Date(),
         attempts: 0
       },
-      { provider }
+      { provider, encryptionKey }
     );
 
     expect(dispatchResult.status).toBe("sent");
@@ -865,7 +925,7 @@ describe("Outbound Dispatch Worker (M2-08)", () => {
       attempts: 0
     };
 
-    const result = await dispatchOutboundMessage(db, claimedEvent, { provider });
+    const result = await dispatchOutboundMessage(db, claimedEvent, { provider, encryptionKey });
     expect(result.status).toBe("sent");
     expect(result.providerMessageId).toContain("wamid.HBgL");
 
@@ -950,11 +1010,11 @@ describe("Outbound Dispatch Worker (M2-08)", () => {
     };
     outboxEvents.set(event.id, toMockOutboxEvent(event));
 
-    const first = await dispatchOutboundMessage(db, event, { provider, storage });
+    const first = await dispatchOutboundMessage(db, event, { provider, encryptionKey, storage });
     expect(first.status).toBe("sent");
     expect(provider.getSentMessages()).toHaveLength(1);
 
-    const retry = await dispatchOutboundMessage(db, event, { provider, storage });
+    const retry = await dispatchOutboundMessage(db, event, { provider, encryptionKey, storage });
     expect(retry.status).toBe("skipped");
     expect(provider.getSentMessages()).toHaveLength(1);
   });
@@ -1037,7 +1097,7 @@ describe("Outbound Dispatch Worker (M2-08)", () => {
       attempts: 0
     };
 
-    const result = await dispatchOutboundMessage(db, claimedEvent, { provider });
+    const result = await dispatchOutboundMessage(db, claimedEvent, { provider, encryptionKey });
     expect(result.status).toBe("failed");
     expect(result.error).toContain("PAUSED, not approved for sending");
 

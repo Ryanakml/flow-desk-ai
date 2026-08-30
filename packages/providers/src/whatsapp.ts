@@ -1,5 +1,7 @@
 export type WhatsAppErrorClassification =
   | "AUTH_FAILED"
+  | "PERMISSION_DENIED"
+  | "RESOURCE_MISMATCH"
   | "RATE_LIMIT_EXCEEDED"
   | "USER_NOT_OPTED_IN"
   | "OUTSIDE_WINDOW"
@@ -158,6 +160,19 @@ export interface FetchTemplatesResult {
     | undefined;
 }
 
+export interface VerifyPhoneNumberInput {
+  phoneNumberId: string;
+  wabaId: string;
+  accessToken: string;
+}
+
+export interface VerifyPhoneNumberResult {
+  phoneNumberId: string;
+  wabaId: string;
+  displayPhoneNumber: string | null;
+  verifiedName: string | null;
+}
+
 export interface WhatsAppProvider {
   readonly name: string;
   sendTextMessage(input: SendTextMessageInput): Promise<SendTextMessageResult>;
@@ -166,11 +181,15 @@ export interface WhatsAppProvider {
   downloadMedia(input: DownloadMediaInput): Promise<DownloadMediaResult>;
   sendMediaMessage(input: SendMediaMessageInput): Promise<SendMediaMessageResult>;
   fetchMessageTemplates(input: FetchTemplatesInput): Promise<FetchTemplatesResult>;
+  verifyPhoneNumber(input: VerifyPhoneNumberInput): Promise<VerifyPhoneNumberResult>;
 }
 
 export function classifyMetaError(status: number, code?: number): WhatsAppErrorClassification {
   if (status === 401 || code === 190) {
     return "AUTH_FAILED";
+  }
+  if (status === 403 || code === 10 || code === 200) {
+    return "PERMISSION_DENIED";
   }
   if (status === 429 || code === 80007 || code === 130429) {
     return "RATE_LIMIT_EXCEEDED";
@@ -206,6 +225,129 @@ export class MetaWhatsAppProvider implements WhatsAppProvider {
       ""
     );
     this.fetcher = options?.fetchFn ?? fetch;
+  }
+
+  private async verificationGet(url: string, accessToken: string): Promise<unknown> {
+    let response: Response;
+    try {
+      response = await this.fetcher(url, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+    } catch {
+      throw new WhatsAppProviderError({
+        message: "Meta WhatsApp verification is temporarily unavailable.",
+        classification: "TRANSIENT",
+        statusCode: 503
+      });
+    }
+
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      throw new WhatsAppProviderError({
+        message: "Meta WhatsApp verification returned a malformed response.",
+        classification: "TRANSIENT",
+        statusCode: response.ok ? 502 : response.status
+      });
+    }
+
+    if (!response.ok) {
+      const error =
+        typeof body === "object" && body !== null && "error" in body ? body.error : undefined;
+      const code =
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        typeof error.code === "number"
+          ? error.code
+          : undefined;
+      const subcode =
+        typeof error === "object" &&
+        error !== null &&
+        "error_subcode" in error &&
+        typeof error.error_subcode === "number"
+          ? error.error_subcode
+          : undefined;
+      throw new WhatsAppProviderError({
+        message: "Meta WhatsApp rejected the credential verification request.",
+        classification: classifyMetaError(response.status, code),
+        statusCode: response.status,
+        providerCode: code,
+        providerSubcode: subcode
+      });
+    }
+
+    return body;
+  }
+
+  async verifyPhoneNumber(input: VerifyPhoneNumberInput): Promise<VerifyPhoneNumberResult> {
+    const phoneFields = "id,display_phone_number,verified_name";
+    const phoneUrl = `${this.baseUrl}/${encodeURIComponent(input.phoneNumberId)}?fields=${encodeURIComponent(phoneFields)}`;
+    const phoneBody = await this.verificationGet(phoneUrl, input.accessToken);
+    if (typeof phoneBody !== "object" || phoneBody === null) {
+      throw new WhatsAppProviderError({
+        message: "Meta WhatsApp verification returned a malformed phone-number response.",
+        classification: "TRANSIENT",
+        statusCode: 502
+      });
+    }
+    const returnedPhoneId =
+      "id" in phoneBody && typeof phoneBody.id === "string" ? phoneBody.id : undefined;
+    if (returnedPhoneId !== input.phoneNumberId) {
+      throw new WhatsAppProviderError({
+        message: "Meta returned a different WhatsApp phone number identifier.",
+        classification: "RESOURCE_MISMATCH",
+        statusCode: 409
+      });
+    }
+
+    const wabaFields = "id";
+    const wabaUrl = `${this.baseUrl}/${encodeURIComponent(input.wabaId)}/phone_numbers?fields=${encodeURIComponent(wabaFields)}&limit=100`;
+    const wabaBody = await this.verificationGet(wabaUrl, input.accessToken);
+    const wabaPhoneNumbers =
+      typeof wabaBody === "object" &&
+      wabaBody !== null &&
+      "data" in wabaBody &&
+      Array.isArray(wabaBody.data)
+        ? wabaBody.data
+        : undefined;
+    if (!wabaPhoneNumbers) {
+      throw new WhatsAppProviderError({
+        message: "Meta WhatsApp verification returned a malformed WABA response.",
+        classification: "TRANSIENT",
+        statusCode: 502
+      });
+    }
+    const belongsToWaba = wabaPhoneNumbers.some(
+      (phone: unknown) =>
+        typeof phone === "object" &&
+        phone !== null &&
+        "id" in phone &&
+        phone.id === input.phoneNumberId
+    );
+    if (!belongsToWaba) {
+      throw new WhatsAppProviderError({
+        message:
+          "The Meta phone number does not belong to the configured WhatsApp Business Account.",
+        classification: "RESOURCE_MISMATCH",
+        statusCode: 409
+      });
+    }
+
+    return {
+      phoneNumberId: returnedPhoneId,
+      wabaId: input.wabaId,
+      displayPhoneNumber:
+        "display_phone_number" in phoneBody && typeof phoneBody.display_phone_number === "string"
+          ? phoneBody.display_phone_number
+          : null,
+      verifiedName:
+        "verified_name" in phoneBody && typeof phoneBody.verified_name === "string"
+          ? phoneBody.verified_name
+          : null
+    };
   }
 
   async sendTextMessage(input: SendTextMessageInput): Promise<SendTextMessageResult> {
@@ -752,6 +894,25 @@ export class FakeWhatsAppProvider implements WhatsAppProvider {
             next: `https://fake.graph.facebook.com/v21.0/${input.wabaId}/message_templates?after=${nextCursor}`
           }
         : undefined
+    };
+  }
+
+  async verifyPhoneNumber(input: VerifyPhoneNumberInput): Promise<VerifyPhoneNumberResult> {
+    await Promise.resolve();
+    if (this.simulateFailure) {
+      const error = this.simulateFailure({
+        phoneNumberId: input.phoneNumberId,
+        to: "provider-verification",
+        text: "",
+        accessToken: input.accessToken
+      });
+      if (error) throw error;
+    }
+    return {
+      phoneNumberId: input.phoneNumberId,
+      wabaId: input.wabaId,
+      displayPhoneNumber: null,
+      verifiedName: null
     };
   }
 
