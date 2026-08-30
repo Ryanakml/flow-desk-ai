@@ -36,7 +36,7 @@ CREATE TABLE flowdesk.whatsapp_business_accounts (
 );
 
 INSERT INTO flowdesk.whatsapp_business_accounts (waba_id, organization_id)
-SELECT waba_id, min(organization_id)
+SELECT waba_id, min(organization_id::text)::uuid
 FROM flowdesk.channels
 GROUP BY waba_id
 ON CONFLICT (waba_id) DO NOTHING;

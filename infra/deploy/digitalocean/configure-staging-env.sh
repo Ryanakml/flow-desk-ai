@@ -48,6 +48,13 @@ printf '%s\n' \
   "MINIO_ROOT_PASSWORD=${minio_password}" \
   "WEBHOOK_VERIFY_TOKEN=${webhook_token}" \
   "WEBHOOK_APP_SECRET=${webhook_secret}" \
+  "META_APP_ID=replace-with-flowdesk-meta-app-id" \
+  "META_APP_SECRET=replace-with-flowdesk-meta-app-secret" \
+  "META_EMBEDDED_SIGNUP_CONFIG_ID=replace-with-meta-embedded-signup-config-id" \
+  "META_SYSTEM_USER_ACCESS_TOKEN=replace-with-flowdesk-system-user-access-token" \
+  "META_SYSTEM_USER_ID=replace-with-flowdesk-system-user-id" \
+  "META_ADMIN_SYSTEM_USER_ACCESS_TOKEN=replace-with-business-admin-system-user-access-token" \
+  "META_GRAPH_API_BASE_URL=https://graph.facebook.com/v25.0" \
   "AUTH_OIDC_ISSUER=https://flowdesk.local.auth0.com/" \
   "AUTH_OIDC_CLIENT_ID=flowdesk-staging-client" \
   "AUTH_OIDC_CLIENT_SECRET=${oidc_secret}" \
