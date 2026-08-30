@@ -253,7 +253,7 @@ The arrows are capability dependencies, not a ban on parallel preparation. Desig
 | M3 | A team operates a reliable, real-time inbox with templates/media. | Production operator workflow. |
 | M4 | Admin-approved knowledge produces safe, cited agent drafts. | AI value without unsafe autonomy. |
 | M5 | Approved automation can route/auto-send under policy, with production-grade delivery/release controls. | Controlled automation revenue proposition. |
-| M6 | Customers can pay, integrate, report, and self-manage. | Commercial SaaS operation. |
+| M6 | Customers can self-manage channels/API keys, view analytics, and operate for free (Billing optional/on-hold). | Commercial self-service operation & analytics. |
 | M7 | Design partners operate safely under enterprise controls and support. | GA confidence. |
 | M8 | Public selling and ongoing SLO-driven operation. | Scale and roadmap delivery. |
 
@@ -504,36 +504,34 @@ A controlled beta tenant enables auto-send for an approved FAQ. A qualifying mes
 
 ---
 
-## 11. M6 — Billing, integrations, analytics, and customer self-service
+## 11. M6 — Customer self-service, integrations, analytics, and optional billing
 
 ### Goal
 
-Make FlowDesk commercially operable: customers understand entitlements/usage, administrators self-manage, developers integrate safely, and teams receive actionable analytics.
+Make FlowDesk self-service and production-operable for all customers: administrators self-manage channels and seats for free, developers integrate safely via scoped API keys/webhooks, and operational analytics provide rich team performance insights. (Stripe/Paid Billing is held as an optional modular extension for later).
 
 ### Ordered work
 
-1. **Entitlements and billing foundation**
-   - Add plan catalog/version, entitlements, subscription state, immutable usage ledger, invoice/provider references, grace/suspension policy, adjustments, and reconciliation jobs.
-   - Billing provider adapter verifies raw webhook signatures, persists/deduplicates event before projection, and never makes a card-data boundary part of FlowDesk.
-   - Gate channels/seats/AI/retention/API limits through one entitlement service. During billing-provider outage apply documented grace behavior—not inconsistent scattered denials.
-2. **Customer self-service**
-   - Deliver billing portal handoff, invoices/usage/plan display, seat/team/channel management, API-key lifecycle (prefix + hash only), scoped integration webhooks, endpoint verification, signed deliveries, retry/history/DLQ, and audit trail.
-3. **Analytics and reporting**
-   - Define metrics glossary first: inbound/outbound, first response, resolution, queue/SLA, agent workload, bot draft/accept/escalation, knowledge health, cost/usage. Specify time zone, filters, permission/privacy behavior, and late-event correction.
-   - Create read models/aggregates via asynchronous jobs; do not run unbounded analytical queries on inbox transactions. Provide exports with authorization, rate limits, watermark, audit/logged download, and retention.
-4. **Quality/ops expansion**
-   - Contract-test billing/integration providers; test entitlement races/idempotency; add integration delivery dashboard, finance reconciliation alerts, analytics freshness metrics, export/deletion security tests, customer admin/API documentation, and support scripts.
+1. **Customer self-service & Channel Onboarding**
+   - Deliver self-service channel management (Meta WhatsApp Business connection UI), seat/team administration, API-key lifecycle (prefix + hash only), scoped integration webhooks, endpoint verification, signed deliveries, retry/history/DLQ, and audit trail.
+   - FlowDesk runs as a **Free & Open Community Tier** by default with zero paywalls.
+2. **Analytics and reporting**
+   - Define metrics glossary: inbound/outbound volume, first response time, resolution rates, queue/SLA compliance, agent workload, bot draft/accept/escalation metrics, knowledge health, and system telemetry.
+   - Create asynchronous aggregate read models; provide exports with authorization, rate limits, watermarks, audit log tracking, and retention.
+3. **[OPTIONAL / ON-HOLD FOR LATER] Billing & Entitlements Foundation**
+   - Modular plan catalog/version, paid tier entitlements, subscription state, usage ledger, and billing provider (Stripe) webhook adapter. Held on standby for future monetization needs.
+4. **Quality & documentation expansion**
+   - Integration delivery dashboard, analytics freshness metrics, export/deletion security tests, customer API documentation, and support scripts.
 
 ### M6 exit demonstration
 
-Sandbox billing lifecycle changes entitlement exactly once despite duplicate/out-of-order callbacks. Owner sees subscription/usage, can rotate a scoped API key and inspect signed integration webhook retries. Supervisor sees a correct filtered metric report; export is authorized/audited; product limits are enforced consistently during an upstream billing outage.
+Administrator self-connects a WhatsApp channel in the UI, rotates a scoped API key, and inspects signed integration webhook retries. Supervisor views a live metric report and exports authorized CSV reports; customer operates 100% free with full self-service controls.
 
 ### M6 DoD
 
-- [ ] Usage and money-related records are immutable, idempotent, reconcilable, and never use floating point.
-- [ ] Every entitlement decision is centralized, tested, explainable, and represented in UI/support tools.
-- [ ] External developer API/webhooks have scopes, rotation/revocation, signing, replay protection, observability, docs, and delivery recovery.
-- [ ] Analytics has metric definitions, privacy/RBAC, freshness/error behavior, scalable read path, export controls, and customer-facing documentation.
+- [ ] All customer self-service channel onboarding, API keys, and webhooks are fully functional and audited in the UI.
+- [ ] Analytics engine provides metric definitions, privacy/RBAC, freshness/error behavior, scalable read paths, export controls, and customer documentation.
+- [ ] Billing architecture is documented as an optional on-hold module without blocking free customer usage.
 
 ---
 
