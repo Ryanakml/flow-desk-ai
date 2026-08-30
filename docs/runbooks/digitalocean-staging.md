@@ -71,9 +71,11 @@ route, error class, and PostgreSQL error code/constraint when available. Respons
 generic so database details are not exposed to the browser. A duplicate organization slug is an
 expected conflict and returns `409 ORGANIZATION_SLUG_CONFLICT` instead of an opaque `500`.
 
-Every successful staging deployment now performs a mock login, callback, authenticated session
-read, and logout. On a failed health gate, the deploy job prints the most recent application logs
-to the protected GitHub Actions run before rolling application containers back.
+Every successful staging deployment verifies the canonical public liveness endpoint and matching
+API build SHA. Authentication flows are validated by their API coverage and should be exercised
+separately with the configured staging identity provider. On a failed health gate, the deploy job
+prints the most recent application logs to the protected GitHub Actions run before rolling
+application containers back.
 
 ## Rollback and recovery
 
