@@ -4,7 +4,8 @@ import {
   runWithRequestContext,
   recordHttpRequest,
   recordRateLimitExceeded,
-  getPrometheusMetrics
+  getPrometheusMetrics,
+  redactEmail
 } from "@flowdesk/observability";
 import {
   getSecurityHeaders,
@@ -53,6 +54,42 @@ export interface ApiAppOptions {
     statusCode: number;
     durationMs: number;
   }) => void;
+  logError?: (event: {
+    requestId: string;
+    correlationId: string;
+    method: string;
+    path: string;
+    errorName: string;
+    errorMessage: string;
+    errorCode?: string;
+    errorConstraint?: string;
+    stack?: string;
+  }) => void;
+}
+
+function describeError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return { errorName: "UnknownError", errorMessage: "Non-Error value thrown" };
+  }
+
+  const databaseError = error as Error & { code?: unknown; constraint?: unknown };
+  const sanitize = (value: string) =>
+    value
+      .replace(
+        /([?&](?:access_token|refresh_token|token|password|secret|api[_-]?key)=)[^&\s]+/gi,
+        "$1[REDACTED]"
+      )
+      .replace(/([a-z][a-z0-9+.-]*:\/\/)[^@\s/]+@/gi, "$1[REDACTED]@")
+      .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, (email) => redactEmail(email));
+  return {
+    errorName: error.name,
+    errorMessage: sanitize(error.message),
+    ...(typeof databaseError.code === "string" ? { errorCode: databaseError.code } : {}),
+    ...(typeof databaseError.constraint === "string"
+      ? { errorConstraint: databaseError.constraint }
+      : {}),
+    ...(error.stack ? { stack: sanitize(error.stack) } : {})
+  };
 }
 
 export function createApiApp(options: ApiAppOptions) {
@@ -204,16 +241,24 @@ export function createApiApp(options: ApiAppOptions) {
     response.status(404).type("application/problem+json").json(problem);
   }) satisfies RequestHandler);
 
-  app.use(((error: unknown, _request, response, next) => {
+  app.use(((error: unknown, request, response, next) => {
+    const requestId = response.getHeader("x-request-id")?.toString() ?? "unknown";
+    const correlationId = request.header("x-correlation-id") ?? requestId;
+    options.logError?.({
+      requestId,
+      correlationId,
+      method: request.method,
+      path: request.path,
+      ...describeError(error)
+    });
     const problem: Problem = {
       type: "https://flowdesk.dev/problems/internal-error",
       title: "Internal server error",
       status: 500,
       code: "INTERNAL_ERROR",
       detail: "The request could not be completed.",
-      requestId: response.getHeader("x-request-id")?.toString() ?? "unknown"
+      requestId
     };
-    void error;
     void next;
     response.status(500).type("application/problem+json").json(problem);
   }) satisfies ErrorRequestHandler);

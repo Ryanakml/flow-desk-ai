@@ -44,7 +44,8 @@ const app = createApiApp({
   environment: config.APP_ENV,
   ...(dbPool ? { auth: { db: dbPool, config: authConfig } } : {}),
   ...(storage ? { storage } : {}),
-  logRequest: (event) => logger.info(event, "http.request.completed")
+  logRequest: (event) => logger.info(event, "http.request.completed"),
+  logError: (event) => logger.error(event, "http.request.failed")
 });
 const server = app.listen(config.PORT, () => logger.info({ port: config.PORT }, "api.started"));
 

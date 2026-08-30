@@ -72,6 +72,15 @@ function getParam(params: Record<string, string | string[] | undefined>, key: st
   return typeof val === "string" ? val : "";
 }
 
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "23505"
+  );
+}
+
 export function createRequireOrgPermissionMiddleware(
   db: DbClient,
   permission: Permission
@@ -201,6 +210,15 @@ export function createOrganizationsRouter(options: OrganizationRouterOptions): R
         }
       });
     } catch (error) {
+      if (isUniqueViolation(error)) {
+        return sendProblem(
+          response,
+          409,
+          "ORGANIZATION_SLUG_CONFLICT",
+          "Organization slug already in use",
+          "Choose a different organization slug and try again."
+        );
+      }
       return next(error);
     }
   });

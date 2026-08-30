@@ -51,6 +51,27 @@ docker compose --env-file /opt/flowdesk/shared/staging.env -f compose.yaml ps
 docker compose --env-file /opt/flowdesk/shared/staging.env -f compose.yaml logs --since 15m api worker ingress
 ```
 
+For a faster incident snapshot, run the helper from the active release as the `flowdesk`
+user. It prints container state plus timestamped, bounded logs; arguments limit the output to
+specific services:
+
+```bash
+cd "/opt/flowdesk/releases/$(cat /opt/flowdesk/shared/current-image)"
+chmod 0750 diagnose.sh
+./diagnose.sh api web caddy
+SINCE=1h TAIL_LINES=500 ./diagnose.sh api
+```
+
+Copy the `x-request-id` value from a failed browser response and search the API output for it.
+Unexpected API failures are emitted as `http.request.failed` with the request/correlation ID,
+route, error class, and PostgreSQL error code/constraint when available. Response bodies remain
+generic so database details are not exposed to the browser. A duplicate organization slug is an
+expected conflict and returns `409 ORGANIZATION_SLUG_CONFLICT` instead of an opaque `500`.
+
+Every successful staging deployment now performs a mock login, callback, authenticated session
+read, and logout. On a failed health gate, the deploy job prints the most recent application logs
+to the protected GitHub Actions run before rolling application containers back.
+
 ## Rollback and recovery
 
 If the release health gate fails, `deploy.sh` restores the previous SHA for application containers. Database migrations are not rolled back automatically: migrations are expand-compatible and recovery uses a compensating roll-forward migration. The operator can manually redeploy the recorded previous SHA:

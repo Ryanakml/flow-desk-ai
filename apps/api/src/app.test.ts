@@ -1,8 +1,9 @@
 import request from "supertest";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { loadAuthConfig } from "@flowdesk/config";
 import type { DbClient } from "@flowdesk/db";
 import { MockIdentityProvider } from "@flowdesk/providers";
+import { serializeSessionCookie } from "@flowdesk/security";
 import { createApiApp } from "./app.js";
 
 const app = createApiApp({
@@ -23,6 +24,55 @@ describe("API foundation & security (M1-08)", () => {
     const response = await request(app).get("/missing").expect(404);
     expect(response.headers["content-type"]).toContain("application/problem+json");
     expect(response.body).toMatchObject({ code: "RESOURCE_NOT_FOUND", status: 404 });
+  });
+
+  it("logs unexpected errors with request context while returning a safe response", async () => {
+    const logError = vi.fn();
+    const databaseError = Object.assign(
+      new Error("database unavailable for alice@example.com?token=secret-value"),
+      {
+        code: "57P01"
+      }
+    );
+    const failingDb = {
+      query: async () => {
+        await Promise.resolve();
+        throw databaseError;
+      }
+    } as unknown as DbClient;
+    const errorApp = createApiApp({
+      service: "api",
+      version: "test",
+      gitSha: "test-sha",
+      environment: "local",
+      auth: {
+        db: failingDb,
+        config: loadAuthConfig({ AUTH_COOKIE_SECURE: "false", AUTH_MOCK_ENABLED: "true" }),
+        identityProvider: new MockIdentityProvider()
+      },
+      logError
+    });
+
+    const response = await request(errorApp)
+      .get("/api/v1/auth/session")
+      .set("Cookie", serializeSessionCookie("diagnostic-session", false))
+      .set("x-correlation-id", "correlation-test")
+      .expect(500);
+
+    const body = response.body as { code: string; status: number; detail: string };
+    expect(body).toMatchObject({ code: "INTERNAL_ERROR", status: 500 });
+    expect(body.detail).not.toContain("database unavailable");
+    expect(logError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: response.headers["x-request-id"],
+        correlationId: "correlation-test",
+        method: "GET",
+        path: "/api/v1/auth/session",
+        errorName: "Error",
+        errorMessage: "database unavailable for a***e@example.com?token=[REDACTED]",
+        errorCode: "57P01"
+      })
+    );
   });
 
   it("sets hardened security headers", async () => {

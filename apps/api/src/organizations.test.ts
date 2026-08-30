@@ -106,6 +106,12 @@ function createMockDb(): DbClient {
       // SELECT * FROM flowdesk.bootstrap_organization($1, $2, $3)
       if (sql.includes("bootstrap_organization")) {
         const [slug, name, userId] = values as [string, string, string];
+        if ([...orgs.values()].some((organization) => organization.slug === slug)) {
+          throw Object.assign(new Error("duplicate key value violates unique constraint"), {
+            code: "23505",
+            constraint: "organizations_slug_key"
+          });
+        }
         const orgId = `00000000-0000-7000-8000-${String(orgs.size + 1).padStart(12, "0")}`;
         orgs.set(orgId, { id: orgId, slug, name });
 
@@ -436,6 +442,21 @@ describe("API Organizations and Memberships (M1-05)", () => {
 
     orgId = body.organization.id;
     aliceMemberId = body.organization.membershipId;
+  });
+
+  it("POST /api/v1/organizations returns a useful conflict for a duplicate slug", async () => {
+    const res = await request(app)
+      .post("/api/v1/organizations")
+      .set("Cookie", aliceCookie)
+      .send({ name: "Another Acme", slug: "acme-corp" })
+      .expect(409);
+
+    expect(res.headers["content-type"]).toContain("application/problem+json");
+    expect(res.body).toMatchObject({
+      code: "ORGANIZATION_SLUG_CONFLICT",
+      status: 409,
+      detail: "Choose a different organization slug and try again."
+    });
   });
 
   it("POST /api/v1/organizations/:orgId/invitations denies non-member", async () => {
