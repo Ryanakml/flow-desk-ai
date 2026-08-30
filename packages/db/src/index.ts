@@ -61,6 +61,7 @@ export {
   getChannelByPhoneNumberId,
   listChannels,
   updateChannelStatus,
+  deleteChannel,
   type ChannelRecord,
   type CreateChannelInput
 } from "./channels.js";
