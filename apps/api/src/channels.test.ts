@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { loadAuthConfig } from "@flowdesk/config";
 import type { DbClient } from "@flowdesk/db";
 import { hashSessionToken, serializeSessionCookie, encryptSecret } from "@flowdesk/security";
-import { FakeWhatsAppProvider } from "@flowdesk/providers";
+import { FakeWhatsAppProvider, WhatsAppProviderError } from "@flowdesk/providers";
 import { createApiApp } from "./app.js";
 
 const orgId = "a0000000-0000-4000-8000-000000000001";
@@ -278,6 +278,21 @@ function createMockDb(): DbClient {
         return { rows: [channel], rowCount: 1, command: "UPDATE", oid: 0, fields: [] };
       }
 
+      if (sql.includes("SET metadata = metadata || $3::jsonb")) {
+        const idParam = params[0] as string;
+        const orgIdParam = params[1] as string;
+        const channel = channels.get(idParam);
+        if (!channel || channel.organization_id !== orgIdParam) {
+          return { rows: [], rowCount: 0, command: "UPDATE", oid: 0, fields: [] };
+        }
+        channel.metadata = {
+          ...channel.metadata,
+          ...(JSON.parse(params[2] as string) as Record<string, unknown>)
+        };
+        channel.updated_at = new Date();
+        return { rows: [channel], rowCount: 1, command: "UPDATE", oid: 0, fields: [] };
+      }
+
       if (sql.includes("UPDATE flowdesk.channels")) {
         const idParam = params[0] as string;
         const statusParam = params[1] as string;
@@ -383,7 +398,7 @@ describe("Self-Service Channels REST API (M6-01)", () => {
         wabaId: "9876543299"
       })) as unknown as { status: number; body: unknown };
 
-    expect(complete.status).toBe(201);
+    expect(complete.status, JSON.stringify(complete.body)).toBe(201);
     expect(complete.body).toMatchObject({
       channel: { status: "active", phoneNumberId: "10987654399" }
     });
@@ -424,17 +439,136 @@ describe("Self-Service Channels REST API (M6-01)", () => {
     expect(replay.status).toBe(409);
   });
 
-  it("retires the manual credential endpoint", async () => {
+  it("verifies, subscribes, and stores the exact submitted token for manual connection", async () => {
+    const subscribe = vi.spyOn(provider, "subscribeWhatsAppBusinessAccount");
     const response = await request(app)
       .post(`/api/v1/organizations/${orgId}/channels`)
       .set("Cookie", adminCookie)
       .send({
-        name: "No longer accepted",
-        phoneNumberId: "10987654399",
-        wabaId: "9876543299",
+        name: "Verified manual channel",
+        phoneNumberId: "10987654377",
+        wabaId: "9876543277",
         accessToken: "EAAG_TEST_TOKEN_XYZ"
       });
-    expect(response.status).toBe(410);
+    expect(response.status, JSON.stringify(response.body)).toBe(201);
+    expect(response.body).toMatchObject({
+      channel: {
+        name: "Verified manual channel",
+        status: "active",
+        metadata: {
+          connectionMethod: "manual_verified",
+          subscriptionStatus: "subscribed"
+        }
+      }
+    });
+    expect(verifyPhoneNumber).toHaveBeenCalledWith({
+      phoneNumberId: "10987654377",
+      wabaId: "9876543277",
+      accessToken: "EAAG_TEST_TOKEN_XYZ"
+    });
+    expect(subscribe).toHaveBeenCalledWith({
+      wabaId: "9876543277",
+      accessToken: "EAAG_TEST_TOKEN_XYZ"
+    });
+
+    const created = response.body as { channel: { id: string } };
+    await request(app)
+      .post(`/api/v1/organizations/${orgId}/channels/${created.channel.id}/verify`)
+      .set("Cookie", adminCookie);
+    expect(verifyPhoneNumber).toHaveBeenLastCalledWith({
+      phoneNumberId: "10987654377",
+      wabaId: "9876543277",
+      accessToken: "EAAG_TEST_TOKEN_XYZ"
+    });
+  });
+
+  it("rotates credentials in place using the exact replacement token", async () => {
+    const subscribe = vi.spyOn(provider, "subscribeWhatsAppBusinessAccount");
+    const response = await request(app)
+      .patch(`/api/v1/organizations/${orgId}/channels/c1/credentials`)
+      .set("Cookie", adminCookie)
+      .send({ accessToken: "EAAG_REPLACEMENT_TOKEN" });
+
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    expect(response.body).toMatchObject({ channelId: "c1", organizationId: orgId });
+    expect(verifyPhoneNumber).toHaveBeenCalledWith({
+      phoneNumberId: "10987654321",
+      wabaId: "9876543210",
+      accessToken: "EAAG_REPLACEMENT_TOKEN"
+    });
+    expect(subscribe).toHaveBeenCalledWith({
+      wabaId: "9876543210",
+      accessToken: "EAAG_REPLACEMENT_TOKEN"
+    });
+  });
+
+  it("does not persist a channel when token verification fails", async () => {
+    provider.simulateFailure = (input) =>
+      input.to === "provider-verification"
+        ? new WhatsAppProviderError({
+            message: "token rejected",
+            classification: "AUTH_FAILED",
+            statusCode: 401
+          })
+        : null;
+    const response = await request(app)
+      .post(`/api/v1/organizations/${orgId}/channels`)
+      .set("Cookie", adminCookie)
+      .send({
+        name: "Rejected channel",
+        phoneNumberId: "10987654355",
+        wabaId: "9876543255",
+        accessToken: "EAAG_REJECTED_TOKEN"
+      });
+    provider.simulateFailure = undefined;
+
+    expect(response.status).toBe(422);
+    expect(response.body).toMatchObject({ code: "META_CONNECTION_FAILED" });
+    const listed = await request(app)
+      .get(`/api/v1/organizations/${orgId}/channels`)
+      .set("Cookie", adminCookie);
+    expect(
+      (listed.body as Array<{ phoneNumberId: string }>).some(
+        (candidate) => candidate.phoneNumberId === "10987654355"
+      )
+    ).toBe(false);
+  });
+
+  it("marks a verified channel degraded when WABA subscription fails", async () => {
+    provider.simulateFailure = (input) =>
+      input.to === "waba-subscription"
+        ? new WhatsAppProviderError({
+            message: "subscription unavailable",
+            classification: "TRANSIENT",
+            statusCode: 503
+          })
+        : null;
+    const response = await request(app)
+      .post(`/api/v1/organizations/${orgId}/channels`)
+      .set("Cookie", adminCookie)
+      .send({
+        name: "Subscription failure",
+        phoneNumberId: "10987654366",
+        wabaId: "9876543266",
+        accessToken: "EAAG_SUBSCRIPTION_TOKEN"
+      });
+    provider.simulateFailure = undefined;
+
+    expect(response.status).toBe(422);
+    const listed = await request(app)
+      .get(`/api/v1/organizations/${orgId}/channels`)
+      .set("Cookie", adminCookie);
+    const failedChannel = (
+      listed.body as Array<{
+        phoneNumberId: string;
+        status: string;
+        metadata: Record<string, unknown>;
+      }>
+    ).find((candidate) => candidate.phoneNumberId === "10987654366");
+    expect(failedChannel).toMatchObject({
+      status: "degraded",
+      metadata: { subscriptionStatus: "failed" }
+    });
   });
 
   it("POST /api/v1/organizations/:orgId/channels/:channelId/verify verifies credentials", async () => {
@@ -449,7 +583,7 @@ describe("Self-Service Channels REST API (M6-01)", () => {
     expect(verifyPhoneNumber).toHaveBeenCalledWith({
       phoneNumberId: "10987654321",
       wabaId: "9876543210",
-      accessToken: "EAAG123456789"
+      accessToken: "EAAG_REPLACEMENT_TOKEN"
     });
   });
 

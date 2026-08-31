@@ -199,6 +199,24 @@ export async function updateChannelCredentials(
   return row ? mapChannelRow(row) : null;
 }
 
+export async function updateChannelMetadata(
+  db: DbClient,
+  id: string,
+  organizationId: string,
+  metadata: Record<string, unknown>
+): Promise<ChannelRecord | null> {
+  const res = await db.query<RawChannelRow>(
+    `UPDATE flowdesk.channels
+     SET metadata = metadata || $3::jsonb,
+         updated_at = clock_timestamp()
+     WHERE id = $1 AND organization_id = $2
+     RETURNING *`,
+    [id, organizationId, JSON.stringify(metadata)]
+  );
+  const row = res.rows[0];
+  return row ? mapChannelRow(row) : null;
+}
+
 export async function deleteChannel(
   db: DbClient,
   id: string,

@@ -551,7 +551,7 @@ export function buildOpenApiSpec() {
           }
         },
         post: {
-          summary: "Create a WhatsApp channel",
+          summary: "Verify and connect a WhatsApp channel with a customer access token",
           operationId: "createChannel",
           parameters: [
             {
@@ -569,11 +569,18 @@ export function buildOpenApiSpec() {
           },
           responses: {
             201: {
-              description: "Channel created; credentials are never returned",
-              content: { "application/json": { schema: { $ref: "#/components/schemas/Channel" } } }
+              description:
+                "Phone/WABA ownership verified, WABA subscribed, and channel activated; credentials are never returned",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/VerifiedChannelConnectionResponse" }
+                }
+              }
             },
             400: { description: "Invalid channel input" },
-            403: { description: "Forbidden" }
+            403: { description: "Forbidden" },
+            409: { description: "WABA ownership or identifier conflict" },
+            422: { description: "Meta verification or WABA subscription failed" }
           }
         }
       },
@@ -1142,6 +1149,15 @@ export function buildOpenApiSpec() {
             metadata: { type: "object", additionalProperties: true }
           },
           required: ["name", "phoneNumberId", "wabaId", "accessToken"]
+        },
+        VerifiedChannelConnectionResponse: {
+          type: "object",
+          properties: {
+            channel: { $ref: "#/components/schemas/Channel" },
+            displayPhoneNumber: { type: "string", nullable: true },
+            verifiedName: { type: "string", nullable: true }
+          },
+          required: ["channel", "displayPhoneNumber", "verifiedName"]
         },
         UpdateChannelStatusRequest: {
           type: "object",

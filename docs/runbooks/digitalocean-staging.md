@@ -18,7 +18,14 @@ To move staging to a new domain, update only `PUBLIC_BASE_URL` and `SITE_ADDRESS
 
 Run `bootstrap-host.sh` once as root with a dedicated Ed25519 public key. The script installs Docker Engine and Compose, creates the unprivileged `flowdesk` deployment user, configures bounded Docker logs, enables Fail2ban, and enables UFW with only 22/tcp, 80/tcp, 443/tcp, and 443/udp inbound.
 
-`configure-staging-env.sh` creates `/opt/flowdesk/shared/staging.env` once with mode `0600`. It refuses to overwrite existing secrets. The tracked `environment.example` documents its contract without containing usable credentials.
+`configure-staging-env.sh` creates `/opt/flowdesk/shared/staging.env` once with mode `0600`. It refuses to overwrite existing secrets. Export the real FlowDesk Meta App secret as `WEBHOOK_APP_SECRET` before running it; the script deliberately refuses to invent this value because a random secret would make every real Meta webhook fail HMAC validation. The tracked `environment.example` documents its contract without containing usable credentials.
+
+```bash
+read -rsp "FlowDesk Meta App secret: " WEBHOOK_APP_SECRET
+export WEBHOOK_APP_SECRET
+sudo --preserve-env=WEBHOOK_APP_SECRET ./configure-staging-env.sh https://staging.example.com
+unset WEBHOOK_APP_SECRET
+```
 
 ## Automated release
 

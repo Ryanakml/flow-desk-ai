@@ -515,6 +515,30 @@ export async function listChannelsApi(
   return (await handleResponse<unknown>(res)) as ChannelClientRecord[];
 }
 
+export async function connectWhatsAppWithTokenApi(
+  orgId: string,
+  body: { name: string; phoneNumberId: string; wabaId: string; accessToken: string },
+  fetcher: typeof fetch = fetch
+): Promise<{
+  channel: ChannelClientRecord;
+  displayPhoneNumber: string | null;
+  verifiedName: string | null;
+}> {
+  const res = await fetcher(`/api/v1/organizations/${orgId}/channels`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "whatsapp", ...body })
+  });
+  const parsed = CompleteWhatsAppEmbeddedSignupResponseSchema.parse(
+    await handleResponse<unknown>(res)
+  );
+  return {
+    channel: { ...parsed.channel, statusReason: parsed.channel.statusReason ?? null },
+    displayPhoneNumber: parsed.displayPhoneNumber,
+    verifiedName: parsed.verifiedName
+  };
+}
+
 export async function startWhatsAppEmbeddedSignupApi(
   orgId: string,
   fetcher: typeof fetch = fetch

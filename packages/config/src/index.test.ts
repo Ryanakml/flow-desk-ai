@@ -6,7 +6,9 @@ import {
   loadChannelEncryptionConfig,
   loadHttpConfig,
   loadMetaEmbeddedSignupConfig,
-  loadMediaConfig
+  loadMediaConfig,
+  loadWebhookConfig,
+  loadWhatsAppGraphApiConfig
 } from "./index.js";
 
 describe("loadHttpConfig", () => {
@@ -56,6 +58,13 @@ describe("loadChannelEncryptionConfig", () => {
     expect(() =>
       loadChannelEncryptionConfig({ NODE_ENV: "production", APP_ENV: "staging" })
     ).toThrow();
+    expect(() =>
+      loadChannelEncryptionConfig({
+        NODE_ENV: "production",
+        APP_ENV: "staging",
+        ENCRYPTION_KEY: "replace-with-random-encryption-key"
+      })
+    ).toThrow();
   });
 
   it("uses the canonical ENCRYPTION_KEY in staging and production", () => {
@@ -69,10 +78,50 @@ describe("loadChannelEncryptionConfig", () => {
   });
 });
 
+describe("loadWebhookConfig", () => {
+  it("allows local defaults but rejects defaults and placeholders in staging", () => {
+    expect(loadWebhookConfig({})).toEqual({
+      WEBHOOK_VERIFY_TOKEN: "flowdesk_webhook_verify_token_default",
+      WEBHOOK_APP_SECRET: "flowdesk_webhook_app_secret_default"
+    });
+    expect(() => loadWebhookConfig({ APP_ENV: "staging" })).toThrow();
+    expect(() =>
+      loadWebhookConfig({
+        APP_ENV: "staging",
+        WEBHOOK_VERIFY_TOKEN: "real-verify-token",
+        WEBHOOK_APP_SECRET: "replace-with-meta-app-secret"
+      })
+    ).toThrow();
+    expect(
+      loadWebhookConfig({
+        APP_ENV: "staging",
+        WEBHOOK_VERIFY_TOKEN: "real-verify-token",
+        WEBHOOK_APP_SECRET: "real-meta-app-secret"
+      })
+    ).toEqual({
+      WEBHOOK_VERIFY_TOKEN: "real-verify-token",
+      WEBHOOK_APP_SECRET: "real-meta-app-secret"
+    });
+  });
+});
+
 describe("loadMetaEmbeddedSignupConfig", () => {
   it("is disabled until every server-side platform credential is configured", () => {
     expect(loadMetaEmbeddedSignupConfig({})).toBeUndefined();
     expect(() => loadMetaEmbeddedSignupConfig({ META_APP_ID: "app-id" })).toThrow();
+  });
+
+  it("treats deployment placeholders as disabled instead of usable credentials", () => {
+    expect(
+      loadMetaEmbeddedSignupConfig({
+        META_APP_ID: "replace-with-flowdesk-meta-app-id",
+        META_APP_SECRET: "replace-with-flowdesk-meta-app-secret",
+        META_EMBEDDED_SIGNUP_CONFIG_ID: "replace-with-meta-embedded-signup-config-id",
+        META_SYSTEM_USER_ACCESS_TOKEN: "replace-with-flowdesk-system-user-access-token",
+        META_SYSTEM_USER_ID: "replace-with-flowdesk-system-user-id",
+        META_ADMIN_SYSTEM_USER_ACCESS_TOKEN: "replace-with-business-admin-system-user-access-token"
+      })
+    ).toBeUndefined();
   });
 
   it("keeps the platform App Secret and system-user token server-only", () => {
@@ -98,6 +147,19 @@ describe("loadMetaEmbeddedSignupConfig", () => {
   });
 });
 
+describe("loadWhatsAppGraphApiConfig", () => {
+  it("uses one current Graph API URL unless explicitly overridden", () => {
+    expect(loadWhatsAppGraphApiConfig({})).toEqual({
+      META_GRAPH_API_BASE_URL: "https://graph.facebook.com/v25.0"
+    });
+    expect(
+      loadWhatsAppGraphApiConfig({
+        META_GRAPH_API_BASE_URL: "https://graph.facebook.com/v26.0"
+      })
+    ).toEqual({ META_GRAPH_API_BASE_URL: "https://graph.facebook.com/v26.0" });
+  });
+});
+
 describe("docker compose deployment contract", () => {
   it("includes ENCRYPTION_KEY under x-app-environment in staging compose file", () => {
     const composePath = path.resolve(__dirname, "../../../infra/deploy/digitalocean/compose.yaml");
@@ -105,5 +167,14 @@ describe("docker compose deployment contract", () => {
     expect(composeContent).toMatch(
       /x-app-environment:[\s\S]*?ENCRYPTION_KEY:\s*\$\{ENCRYPTION_KEY/
     );
+  });
+
+  it("passes the same Graph API URL to API and worker through shared environment", () => {
+    const composePath = path.resolve(__dirname, "../../../infra/deploy/digitalocean/compose.yaml");
+    const composeContent = fs.readFileSync(composePath, "utf-8");
+    const sharedEnvironment = composeContent.match(
+      /x-app-environment:[\s\S]*?x-api-meta-environment:/
+    )?.[0];
+    expect(sharedEnvironment).toContain("META_GRAPH_API_BASE_URL");
   });
 });

@@ -23,7 +23,8 @@ x-app-environment: &app-environment
   AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
   AUTH_MOCK_ENABLED: ${AUTH_MOCK_ENABLED:-true}
   APP_BASE_URL: ${PUBLIC_BASE_URL:?PUBLIC_BASE_URL is required}
-  ENCRYPTION_KEY: ${ENCRYPTION_KEY:-dev-encryption-key-32-bytes-long!!}
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
+  META_GRAPH_API_BASE_URL: ${META_GRAPH_API_BASE_URL:-https://graph.facebook.com/v25.0}
 
 x-api-meta-environment: &api-meta-environment
   META_APP_ID: ${META_APP_ID:-replace-with-flowdesk-meta-app-id}
@@ -32,11 +33,10 @@ x-api-meta-environment: &api-meta-environment
   META_SYSTEM_USER_ACCESS_TOKEN: ${META_SYSTEM_USER_ACCESS_TOKEN:-replace-with-flowdesk-system-user-access-token}
   META_SYSTEM_USER_ID: ${META_SYSTEM_USER_ID:-replace-with-flowdesk-system-user-id}
   META_ADMIN_SYSTEM_USER_ACCESS_TOKEN: ${META_ADMIN_SYSTEM_USER_ACCESS_TOKEN:-replace-with-business-admin-system-user-access-token}
-  META_GRAPH_API_BASE_URL: ${META_GRAPH_API_BASE_URL:-https://graph.facebook.com/v25.0}
 
 x-ingress-webhook-environment: &ingress-webhook-environment
-  WEBHOOK_VERIFY_TOKEN: ${WEBHOOK_VERIFY_TOKEN:-flowdesk_webhook_verify_token_default}
-  WEBHOOK_APP_SECRET: ${WEBHOOK_APP_SECRET:-flowdesk_webhook_app_secret_default}
+  WEBHOOK_VERIFY_TOKEN: ${WEBHOOK_VERIFY_TOKEN:?WEBHOOK_VERIFY_TOKEN is required}
+  WEBHOOK_APP_SECRET: ${WEBHOOK_APP_SECRET:?WEBHOOK_APP_SECRET is required}
 
 x-app-defaults: &app-defaults
   restart: unless-stopped

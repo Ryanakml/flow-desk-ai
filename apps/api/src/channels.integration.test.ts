@@ -29,7 +29,7 @@ const otherOwnerUserId = randomUUID();
 const sessionToken = `channel-integration-${randomUUID()}`;
 const encryptionKey = "channel-api-worker-integration-key";
 const initialAccessToken = "integration-meta-system-user-token";
-const rotatedAccessToken = "integration-meta-system-user-token";
+const rotatedAccessToken = "integration-meta-rotated-token";
 const phoneNumberId = `phone-${randomUUID()}`;
 const wabaId = `waba-${randomUUID()}`;
 let organizationA = "";
@@ -37,20 +37,6 @@ let organizationB = "";
 let channelId = "";
 let conversationId = "";
 let messageId = "";
-
-function readSignupStart(body: unknown): { attemptId: string; state: string } {
-  if (
-    typeof body !== "object" ||
-    body === null ||
-    !("attemptId" in body) ||
-    typeof body.attemptId !== "string" ||
-    !("state" in body) ||
-    typeof body.state !== "string"
-  ) {
-    throw new Error("Embedded Signup start response was malformed");
-  }
-  return { attemptId: body.attemptId, state: body.state };
-}
 
 beforeAll(async () => {
   if (!pool) return;
@@ -170,7 +156,7 @@ integration("POST /api/v1/organizations/:orgId/channels with PostgreSQL RLS", ()
     : undefined;
   const ownerCookie = serializeSessionCookie(sessionToken, false);
 
-  it("connects an authorized organization through server-side Embedded Signup as flowdesk_runtime", async () => {
+  it("connects with the exact verified customer token as flowdesk_runtime", async () => {
     if (!pool || !app) throw new Error("integration database unavailable");
 
     const runtimeIdentity = await withTenantTransaction(
@@ -180,23 +166,14 @@ integration("POST /api/v1/organizations/:orgId/channels with PostgreSQL RLS", ()
     );
     expect(runtimeIdentity.rows[0]?.current_user).toBe("flowdesk_runtime");
 
-    const start = await request(app)
-      .post(`/api/v1/organizations/${organizationA}/channels/whatsapp/embedded-signup/start`)
-      .set("Cookie", ownerCookie);
-    expect(start.status).toBe(201);
-    const startRaw: unknown = start.body;
-    expect(startRaw).not.toHaveProperty("appSecret");
-    const startBody = readSignupStart(startRaw);
-
     const response = await request(app)
-      .post(`/api/v1/organizations/${organizationA}/channels/whatsapp/embedded-signup/complete`)
+      .post(`/api/v1/organizations/${organizationA}/channels`)
       .set("Cookie", ownerCookie)
       .send({
-        attemptId: startBody.attemptId,
-        state: startBody.state,
-        code: "initial-meta-code",
+        name: "Integration WhatsApp",
         phoneNumberId,
-        wabaId
+        wabaId,
+        accessToken: initialAccessToken
       });
 
     expect(response.status).toBe(201);
@@ -240,7 +217,7 @@ integration("POST /api/v1/organizations/:orgId/channels with PostgreSQL RLS", ()
     ).toBe("1");
   });
 
-  it("reconnects through Meta in place and preserves conversation/message links", async () => {
+  it("rotates a verified token in place and preserves conversation/message links", async () => {
     if (!pool || !app) throw new Error("integration database unavailable");
 
     const contact = await pool.query<{ id: string }>(
@@ -263,23 +240,14 @@ integration("POST /api/v1/organizations/:orgId/channels with PostgreSQL RLS", ()
     );
     messageId = message.rows[0]!.id;
 
-    const start = await request(app)
-      .post(`/api/v1/organizations/${organizationA}/channels/whatsapp/embedded-signup/start`)
-      .set("Cookie", ownerCookie);
-    const startBody = readSignupStart(start.body as unknown);
     const response = await request(app)
-      .post(`/api/v1/organizations/${organizationA}/channels/whatsapp/embedded-signup/complete`)
+      .patch(`/api/v1/organizations/${organizationA}/channels/${channelId}/credentials`)
       .set("Cookie", ownerCookie)
-      .send({
-        attemptId: startBody.attemptId,
-        state: startBody.state,
-        code: "rotated-meta-code",
-        phoneNumberId,
-        wabaId
-      });
-    expect(response.status).toBe(201);
+      .send({ accessToken: rotatedAccessToken });
+    expect(response.status).toBe(200);
     expect(response.body).toMatchObject({
-      channel: { id: channelId, organizationId: organizationA }
+      channelId,
+      organizationId: organizationA
     });
 
     const persisted = await pool.query<{

@@ -35,7 +35,7 @@ function urlFor(input: RequestInfo | URL): string {
   return input.url;
 }
 
-describe("ChannelsView Meta Embedded Signup", () => {
+describe("ChannelsView WhatsApp connection", () => {
   const showToast = vi.fn();
   const originalFetch = globalThis.fetch;
 
@@ -51,15 +51,75 @@ describe("ChannelsView Meta Embedded Signup", () => {
     delete window.FB;
   });
 
-  it("renders Meta connection controls and never renders manual credential fields", async () => {
+  it("renders verified-token connection as the primary path and keeps Meta Signup available", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(response([channel()])) as typeof fetch;
     render(<ChannelsView orgId={orgId} canManage={true} showToast={showToast} />);
 
     await screen.findByText("Support Line");
-    expect(screen.getByText("Connect WhatsApp with Meta")).toBeTruthy();
-    expect(screen.getByText("Reconnect with Meta")).toBeTruthy();
-    expect(screen.queryByText("Permanent System User Access Token")).toBeNull();
+    expect(screen.getByText("Connect WhatsApp")).toBeTruthy();
+    expect(screen.getByText("Connect with Meta Signup")).toBeTruthy();
+    expect(screen.getByText("Reconnect with token")).toBeTruthy();
+    fireEvent.click(screen.getByText("Connect WhatsApp"));
+    expect(screen.getByLabelText("Access token")).toBeTruthy();
     expect(screen.queryByText("App Secret")).toBeNull();
+  });
+
+  it("submits manual credentials to the verified connector", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlFor(input);
+      if (url.endsWith(`/api/v1/organizations/${orgId}/channels`) && init?.method === "POST") {
+        return Promise.resolve(
+          response(
+            {
+              channel: {
+                ...channel(),
+                metadata: {
+                  connectionMethod: "manual_verified",
+                  subscriptionStatus: "subscribed"
+                }
+              },
+              displayPhoneNumber: "+62 812 3456 7890",
+              verifiedName: "Support"
+            },
+            201
+          )
+        );
+      }
+      if (url.endsWith(`/api/v1/organizations/${orgId}/channels`)) {
+        return Promise.resolve(response([]));
+      }
+      return Promise.reject(new Error(`Unhandled URL: ${url}`));
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    render(<ChannelsView orgId={orgId} canManage={true} showToast={showToast} />);
+    await screen.findByText("No WhatsApp channels connected yet.");
+    fireEvent.click(screen.getByText("Connect WhatsApp"));
+    fireEvent.change(screen.getByLabelText("Channel name"), { target: { value: "Support" } });
+    fireEvent.change(screen.getByLabelText("Phone Number ID"), {
+      target: { value: "10987654321" }
+    });
+    fireEvent.change(screen.getByLabelText("WABA ID"), { target: { value: "9876543210" } });
+    fireEvent.change(screen.getByLabelText("Access token"), {
+      target: { value: "EAAG_CUSTOMER_TOKEN" }
+    });
+    fireEvent.click(screen.getByText("Verify and connect"));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        `/api/v1/organizations/${orgId}/channels`,
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            type: "whatsapp",
+            name: "Support",
+            phoneNumberId: "10987654321",
+            wabaId: "9876543210",
+            accessToken: "EAAG_CUSTOMER_TOKEN"
+          })
+        })
+      )
+    );
   });
 
   it("starts a server-bound Meta signup and only completes after code plus Meta WABA event", async () => {
@@ -109,7 +169,7 @@ describe("ChannelsView Meta Embedded Signup", () => {
 
     render(<ChannelsView orgId={orgId} canManage={true} showToast={showToast} />);
     await screen.findByText("No WhatsApp channels connected yet.");
-    fireEvent.click(screen.getByText("Connect WhatsApp with Meta"));
+    fireEvent.click(screen.getByText("Connect with Meta Signup"));
 
     await waitFor(() =>
       expect(
@@ -144,6 +204,6 @@ describe("ChannelsView Meta Embedded Signup", () => {
         })
       );
     });
-    expect(screen.queryByText("Permanent System User Access Token")).toBeNull();
+    expect(screen.queryByText("App Secret")).toBeNull();
   });
 });

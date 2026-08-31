@@ -113,10 +113,39 @@ export function loadAuthConfig(environment: NodeJS.ProcessEnv = process.env): Au
   return authConfigSchema.parse(environment);
 }
 
-export const webhookConfigSchema = z.object({
-  WEBHOOK_VERIFY_TOKEN: z.string().min(1).default("flowdesk_webhook_verify_token_default"),
-  WEBHOOK_APP_SECRET: z.string().min(1).default("flowdesk_webhook_app_secret_default")
-});
+const DEFAULT_WEBHOOK_VERIFY_TOKEN = "flowdesk_webhook_verify_token_default";
+const DEFAULT_WEBHOOK_APP_SECRET = "flowdesk_webhook_app_secret_default";
+
+export const webhookConfigSchema = z
+  .object({
+    APP_ENV: z.enum(["local", "preview", "staging", "production"]).default("local"),
+    WEBHOOK_VERIFY_TOKEN: z.string().min(1).default(DEFAULT_WEBHOOK_VERIFY_TOKEN),
+    WEBHOOK_APP_SECRET: z.string().min(1).default(DEFAULT_WEBHOOK_APP_SECRET)
+  })
+  .superRefine((config, context) => {
+    if (config.APP_ENV !== "staging" && config.APP_ENV !== "production") return;
+    const unsafeValues: Array<["WEBHOOK_VERIFY_TOKEN" | "WEBHOOK_APP_SECRET", string]> = [
+      ["WEBHOOK_VERIFY_TOKEN", config.WEBHOOK_VERIFY_TOKEN],
+      ["WEBHOOK_APP_SECRET", config.WEBHOOK_APP_SECRET]
+    ];
+    for (const [field, value] of unsafeValues) {
+      if (
+        value === DEFAULT_WEBHOOK_VERIFY_TOKEN ||
+        value === DEFAULT_WEBHOOK_APP_SECRET ||
+        value.toLowerCase().startsWith("replace-with-")
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: [field],
+          message: `${field} must be configured with a real Meta App value in staging and production`
+        });
+      }
+    }
+  })
+  .transform(({ WEBHOOK_VERIFY_TOKEN, WEBHOOK_APP_SECRET }) => ({
+    WEBHOOK_VERIFY_TOKEN,
+    WEBHOOK_APP_SECRET
+  }));
 
 export type WebhookConfig = z.infer<typeof webhookConfigSchema>;
 
@@ -129,15 +158,37 @@ export function loadWebhookConfig(environment: NodeJS.ProcessEnv = process.env):
  * intentionally server-only: it must never be placed in the web bundle or a
  * tenant-owned channel record.
  */
+const DEFAULT_META_GRAPH_API_BASE_URL = "https://graph.facebook.com/v25.0";
+const optionalMetaCredential = z.preprocess(
+  (value) =>
+    typeof value === "string" &&
+    (value.trim() === "" || value.trim().toLowerCase().startsWith("replace-with-"))
+      ? undefined
+      : value,
+  z.string().trim().min(1).optional()
+);
+
+const whatsAppGraphApiConfigSchema = z.object({
+  META_GRAPH_API_BASE_URL: z.string().url().default(DEFAULT_META_GRAPH_API_BASE_URL)
+});
+
+export type WhatsAppGraphApiConfig = z.infer<typeof whatsAppGraphApiConfigSchema>;
+
+export function loadWhatsAppGraphApiConfig(
+  environment: NodeJS.ProcessEnv = process.env
+): WhatsAppGraphApiConfig {
+  return whatsAppGraphApiConfigSchema.parse(environment);
+}
+
 const metaEmbeddedSignupConfigSchema = z
   .object({
-    META_APP_ID: z.string().trim().min(1).optional(),
-    META_APP_SECRET: z.string().trim().min(1).optional(),
-    META_EMBEDDED_SIGNUP_CONFIG_ID: z.string().trim().min(1).optional(),
-    META_SYSTEM_USER_ACCESS_TOKEN: z.string().trim().min(1).optional(),
-    META_SYSTEM_USER_ID: z.string().trim().min(1).optional(),
-    META_ADMIN_SYSTEM_USER_ACCESS_TOKEN: z.string().trim().min(1).optional(),
-    META_GRAPH_API_BASE_URL: z.string().url().optional()
+    META_APP_ID: optionalMetaCredential,
+    META_APP_SECRET: optionalMetaCredential,
+    META_EMBEDDED_SIGNUP_CONFIG_ID: optionalMetaCredential,
+    META_SYSTEM_USER_ACCESS_TOKEN: optionalMetaCredential,
+    META_SYSTEM_USER_ID: optionalMetaCredential,
+    META_ADMIN_SYSTEM_USER_ACCESS_TOKEN: optionalMetaCredential,
+    META_GRAPH_API_BASE_URL: z.string().url().default(DEFAULT_META_GRAPH_API_BASE_URL)
   })
   .superRefine((config, context) => {
     const configured = [
@@ -146,14 +197,13 @@ const metaEmbeddedSignupConfigSchema = z
       config.META_EMBEDDED_SIGNUP_CONFIG_ID,
       config.META_SYSTEM_USER_ACCESS_TOKEN,
       config.META_SYSTEM_USER_ID,
-      config.META_ADMIN_SYSTEM_USER_ACCESS_TOKEN,
-      config.META_GRAPH_API_BASE_URL
+      config.META_ADMIN_SYSTEM_USER_ACCESS_TOKEN
     ].filter(Boolean).length;
-    if (configured !== 0 && configured !== 7) {
+    if (configured !== 0 && configured !== 6) {
       context.addIssue({
         code: "custom",
         message:
-          "META_APP_ID, META_APP_SECRET, META_EMBEDDED_SIGNUP_CONFIG_ID, META_SYSTEM_USER_ACCESS_TOKEN, META_SYSTEM_USER_ID, META_ADMIN_SYSTEM_USER_ACCESS_TOKEN, and META_GRAPH_API_BASE_URL must be configured together"
+          "META_APP_ID, META_APP_SECRET, META_EMBEDDED_SIGNUP_CONFIG_ID, META_SYSTEM_USER_ACCESS_TOKEN, META_SYSTEM_USER_ID, and META_ADMIN_SYSTEM_USER_ACCESS_TOKEN must be configured together"
       });
     }
   })
@@ -163,8 +213,7 @@ const metaEmbeddedSignupConfigSchema = z
     config.META_EMBEDDED_SIGNUP_CONFIG_ID &&
     config.META_SYSTEM_USER_ACCESS_TOKEN &&
     config.META_SYSTEM_USER_ID &&
-    config.META_ADMIN_SYSTEM_USER_ACCESS_TOKEN &&
-    config.META_GRAPH_API_BASE_URL
+    config.META_ADMIN_SYSTEM_USER_ACCESS_TOKEN
       ? {
           appId: config.META_APP_ID,
           appSecret: config.META_APP_SECRET,
@@ -201,6 +250,16 @@ const channelEncryptionConfigSchema = z
         code: "custom",
         path: ["ENCRYPTION_KEY"],
         message: "ENCRYPTION_KEY is required outside local development"
+      });
+    }
+    if (
+      !developmentFallbackAllowed &&
+      config.ENCRYPTION_KEY?.toLowerCase().startsWith("replace-with-")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["ENCRYPTION_KEY"],
+        message: "ENCRYPTION_KEY must not be a placeholder outside local development"
       });
     }
   })

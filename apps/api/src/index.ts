@@ -3,7 +3,8 @@ import {
   loadChannelEncryptionConfig,
   loadHttpConfig,
   loadMetaEmbeddedSignupConfig,
-  loadMediaConfig
+  loadMediaConfig,
+  loadWhatsAppGraphApiConfig
 } from "@flowdesk/config";
 import { createLogger, initializeTelemetry } from "@flowdesk/observability";
 import { Pool } from "pg";
@@ -28,6 +29,7 @@ const dbPool = databaseUrl ? new Pool({ connectionString: databaseUrl }) : undef
 const authConfig = loadAuthConfig();
 const channelEncryptionConfig = loadChannelEncryptionConfig();
 const metaEmbeddedSignupConfig = loadMetaEmbeddedSignupConfig();
+const whatsAppGraphApiConfig = loadWhatsAppGraphApiConfig();
 const mediaConfig = loadMediaConfig();
 const hasStorageConfig = Boolean(
   mediaConfig.S3_BUCKET &&
@@ -57,11 +59,9 @@ const app = createApiApp({
           db: dbPool,
           config: authConfig,
           encryptionKey: channelEncryptionConfig.ENCRYPTION_KEY,
-          whatsappProvider: new MetaWhatsAppProvider(
-            metaEmbeddedSignupConfig
-              ? { graphApiBaseUrl: metaEmbeddedSignupConfig.graphApiBaseUrl }
-              : undefined
-          ),
+          whatsappProvider: new MetaWhatsAppProvider({
+            graphApiBaseUrl: whatsAppGraphApiConfig.META_GRAPH_API_BASE_URL
+          }),
           ...(metaEmbeddedSignupConfig ? { embeddedSignup: metaEmbeddedSignupConfig } : {})
         }
       }

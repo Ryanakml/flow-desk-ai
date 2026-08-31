@@ -2,6 +2,7 @@
 IMAGE_REGISTRY=ghcr.io/ryanakml
 SITE_ADDRESS=staging.example.com
 PUBLIC_BASE_URL=https://staging.example.com
+ENCRYPTION_KEY=replace-with-random-encryption-key
 POSTGRES_DB=flowdesk_staging
 POSTGRES_USER=flowdesk_bootstrap
 POSTGRES_PASSWORD=replace-with-random-value
@@ -10,7 +11,7 @@ REDIS_PASSWORD=replace-with-random-value
 MINIO_ROOT_USER=flowdesk_staging
 MINIO_ROOT_PASSWORD=replace-with-random-value
 WEBHOOK_VERIFY_TOKEN=replace-with-random-value
-WEBHOOK_APP_SECRET=replace-with-random-value
+WEBHOOK_APP_SECRET=replace-with-real-flowdesk-meta-app-secret
 META_APP_ID=replace-with-flowdesk-meta-app-id
 META_APP_SECRET=replace-with-flowdesk-meta-app-secret
 META_EMBEDDED_SIGNUP_CONFIG_ID=replace-with-meta-embedded-signup-config-id
