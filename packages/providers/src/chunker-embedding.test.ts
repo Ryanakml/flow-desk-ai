@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { chunkText } from "./chunker.js";
 import { FakeEmbeddingProvider, OpenAiEmbeddingProvider } from "./embedding.js";
+import type { AiProviderError } from "./ai-error.js";
 
 describe("Document Chunker & Embedding Providers", () => {
   describe("chunkText", () => {
@@ -76,6 +77,44 @@ Paragraph 3: All tenant data is isolated via Row-Level Security.`;
       expect((calledInit.headers as Record<string, string>)["Authorization"]).toBe(
         "Bearer sk-test-key"
       );
+    });
+
+    it("rejects a response whose embedding dimension does not match the vector index", async () => {
+      const provider = new OpenAiEmbeddingProvider({
+        apiKey: "test-openai-key-not-a-secret",
+        customFetcher: vi.fn().mockResolvedValue(
+          new Response(JSON.stringify({ data: [{ embedding: [0.1, 0.2], index: 0 }] }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+          })
+        )
+      });
+
+      await expect(provider.generateEmbeddings(["FlowDesk documentation"])).rejects.toMatchObject({
+        code: "AI_PROVIDER_INVALID_RESPONSE"
+      } satisfies Partial<AiProviderError>);
+    });
+
+    it("rejects missing and duplicate indexes as an invalid response", async () => {
+      const mockEmbedding = new Array<number>(1536).fill(0.01);
+      const provider = new OpenAiEmbeddingProvider({
+        apiKey: "test-openai-key-not-a-secret",
+        customFetcher: vi.fn().mockResolvedValue(
+          new Response(
+            JSON.stringify({
+              data: [
+                { embedding: mockEmbedding, index: 0 },
+                { embedding: mockEmbedding, index: 0 }
+              ]
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+        )
+      });
+
+      await expect(provider.generateEmbeddings(["first", "second"])).rejects.toMatchObject({
+        code: "AI_PROVIDER_INVALID_RESPONSE"
+      } satisfies Partial<AiProviderError>);
     });
   });
 });

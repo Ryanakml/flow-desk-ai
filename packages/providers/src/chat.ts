@@ -1,4 +1,9 @@
 import type { HealthCheckedProvider, ProviderHealth } from "./index.js";
+import {
+  AiProviderError,
+  classifyAiProviderHttpError,
+  normalizeAiProviderFetchError
+} from "./ai-error.js";
 
 export interface AiChatResponse {
   content: string;
@@ -51,6 +56,8 @@ export interface OpenAiChatProviderConfig {
   apiKey: string;
   model?: string; // Default gpt-4o-mini
   baseUrl?: string;
+  timeoutMs?: number;
+  maxOutputTokens?: number;
   customFetcher?: typeof fetch;
 }
 
@@ -59,15 +66,19 @@ export interface OpenAiChatProviderConfig {
  */
 export class OpenAiChatProvider implements AiChatProvider {
   readonly name = "openai-chat-provider";
+  readonly modelId: string;
   private readonly apiKey: string;
-  private readonly model: string;
   private readonly baseUrl: string;
+  private readonly timeoutMs: number;
+  private readonly maxOutputTokens: number;
   private readonly fetcher: typeof fetch;
 
   constructor(config: OpenAiChatProviderConfig) {
     this.apiKey = config.apiKey;
-    this.model = config.model ?? "gpt-4o-mini";
+    this.modelId = config.model ?? "gpt-4o-mini";
     this.baseUrl = (config.baseUrl ?? "https://api.openai.com/v1").replace(/\/$/, "");
+    this.timeoutMs = config.timeoutMs ?? 15_000;
+    this.maxOutputTokens = config.maxOutputTokens ?? 512;
     this.fetcher = config.customFetcher ?? fetch;
   }
 
@@ -81,40 +92,65 @@ export class OpenAiChatProvider implements AiChatProvider {
 
   async generateReplyDraft(systemPrompt: string, userMessage: string): Promise<AiChatResponse> {
     if (!this.apiKey) {
-      throw new Error("OpenAI API key is not configured for OpenAiChatProvider.");
+      throw new AiProviderError("AI_PROVIDER_CONFIGURATION");
     }
 
-    const response = await this.fetcher(`${this.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: this.model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userMessage }
-        ],
-        temperature: 0.2
-      })
-    });
+    let response: Response;
+    try {
+      response = await this.fetcher(`${this.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: this.modelId,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userMessage }
+          ],
+          temperature: 0.2,
+          max_tokens: this.maxOutputTokens
+        }),
+        signal: AbortSignal.timeout(this.timeoutMs)
+      });
+    } catch (error) {
+      throw normalizeAiProviderFetchError(error);
+    }
 
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(
-        `OpenAI Chat API error (${response.status}): ${errorText || response.statusText}`
-      );
+      throw classifyAiProviderHttpError(response.status);
     }
 
-    const body = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch (error) {
+      throw new AiProviderError("AI_PROVIDER_INVALID_RESPONSE", { cause: error });
+    }
+
+    if (!body || typeof body !== "object") {
+      throw new AiProviderError("AI_PROVIDER_INVALID_RESPONSE");
+    }
+
+    const parsed = body as {
+      choices?: Array<{ message?: { content?: unknown } }>;
+      usage?: { prompt_tokens?: unknown; completion_tokens?: unknown };
     };
 
-    const content = body.choices?.[0]?.message?.content?.trim() || "";
-    const promptTokens = body.usage?.prompt_tokens ?? 0;
-    const completionTokens = body.usage?.completion_tokens ?? 0;
+    const rawContent = parsed.choices?.[0]?.message?.content;
+    const content = typeof rawContent === "string" ? rawContent.trim() : "";
+    if (!content) {
+      throw new AiProviderError("AI_PROVIDER_INVALID_RESPONSE");
+    }
+    const promptTokens =
+      typeof parsed.usage?.prompt_tokens === "number" && parsed.usage.prompt_tokens >= 0
+        ? parsed.usage.prompt_tokens
+        : 0;
+    const completionTokens =
+      typeof parsed.usage?.completion_tokens === "number" && parsed.usage.completion_tokens >= 0
+        ? parsed.usage.completion_tokens
+        : 0;
 
     return {
       content,

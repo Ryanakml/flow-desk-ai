@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
-import { loadAuthConfig } from "@flowdesk/config";
+import { loadAiRuntimeConfig, loadAuthConfig } from "@flowdesk/config";
 import type { DbClient } from "@flowdesk/db";
+import { AiProviderError } from "@flowdesk/providers";
 import { hashSessionToken, serializeSessionCookie } from "@flowdesk/security";
 import { createApiApp } from "./app.js";
+import { createAiRuntime, type AiRuntime } from "./ai-runtime.js";
 
 function createMockDb(): DbClient {
   const users = new Map<
@@ -258,6 +260,8 @@ describe("Bot Configuration & AI Draft Generation API", () => {
     SESSION_SECRET: "test-secret-at-least-32-chars-long!!",
     APP_BASE_URL: "http://localhost:4000"
   });
+  const fakeAiRuntime = () =>
+    createAiRuntime(loadAiRuntimeConfig({ APP_ENV: "local", AI_PROVIDER: "fake" }))!;
 
   it("fetches default bot config for organization", async () => {
     const db = createMockDb();
@@ -315,7 +319,7 @@ describe("Bot Configuration & AI Draft Generation API", () => {
       version: "dev",
       gitSha: "dev",
       environment: "local",
-      auth: { db, config }
+      auth: { db, config, ai: fakeAiRuntime() }
     });
 
     const cookieHeader = serializeSessionCookie("bot-test-token-12345", false);
@@ -336,6 +340,70 @@ describe("Bot Configuration & AI Draft Generation API", () => {
     expect(body.suggestedContent).toBeDefined();
     expect(body.citations).toHaveLength(1);
     expect(body.citations[0]?.documentTitle).toBe("Policy Guide");
+  });
+
+  it("fails closed when no AI runtime is configured", async () => {
+    const db = createMockDb();
+    const app = createApiApp({
+      service: "api",
+      version: "dev",
+      gitSha: "dev",
+      environment: "local",
+      auth: { db, config }
+    });
+
+    const res = (await request(app)
+      .post("/api/v1/organizations/org1/bot/draft/c1")
+      .set("Cookie", serializeSessionCookie("bot-test-token-12345", false))) as unknown as {
+      status: number;
+      body: { code?: string; detail?: string };
+    };
+
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe("AI_PROVIDER_CONFIGURATION");
+    expect(res.body.detail).not.toContain("key");
+  });
+
+  it("returns a stable safe provider error without exposing upstream details", async () => {
+    const db = createMockDb();
+    const runtime = fakeAiRuntime();
+    const failingRuntime: AiRuntime = {
+      ...runtime,
+      chatProvider: {
+        name: "failing-provider",
+        checkHealth: async () => {
+          await Promise.resolve();
+          return {
+            status: "unavailable" as const,
+            checkedAt: new Date().toISOString()
+          };
+        },
+        generateReplyDraft: async () => {
+          await Promise.resolve();
+          throw new AiProviderError("AI_PROVIDER_AUTHENTICATION", {
+            cause: new Error("upstream payload contained synthetic-secret-value")
+          });
+        }
+      }
+    };
+    const app = createApiApp({
+      service: "api",
+      version: "dev",
+      gitSha: "dev",
+      environment: "local",
+      auth: { db, config, ai: failingRuntime }
+    });
+
+    const res = (await request(app)
+      .post("/api/v1/organizations/org1/bot/draft/c1")
+      .set("Cookie", serializeSessionCookie("bot-test-token-12345", false))) as unknown as {
+      status: number;
+      body: { code?: string; detail?: string };
+    };
+
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe("AI_PROVIDER_AUTHENTICATION");
+    expect(JSON.stringify(res.body)).not.toContain("synthetic-secret-value");
   });
 
   it("triggers emergency stop for organization bot", async () => {

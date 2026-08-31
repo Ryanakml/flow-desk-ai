@@ -28,6 +28,7 @@ import { createChannelsRouter } from "./channels.js";
 import { createDeveloperRouter } from "./developer.js";
 import { createAnalyticsRouter } from "./analytics.js";
 import type { ObjectStore } from "@flowdesk/providers";
+import type { AiRuntime } from "./ai-runtime.js";
 export { createAuthRouter, createRequireAuthMiddleware, type AuthenticatedUser } from "./auth.js";
 export {
   createOrganizationsRouter,
@@ -48,6 +49,7 @@ export interface ApiAppAuthOptions {
   encryptionKey?: string;
   whatsappProvider?: WhatsAppProvider;
   embeddedSignup?: MetaEmbeddedSignupConfig;
+  ai?: AiRuntime;
 }
 
 export interface ApiAppOptions {
@@ -235,7 +237,8 @@ export function createApiApp(options: ApiAppOptions) {
     app.use(
       "/api/v1/organizations/:orgId/bot",
       createBotRouter({
-        db: options.auth.db
+        db: options.auth.db,
+        ...(options.auth.ai ? { ai: options.auth.ai } : {})
       })
     );
     app.use(

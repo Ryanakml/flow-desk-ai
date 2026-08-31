@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
 import type { HealthCheckedProvider, ProviderHealth } from "./index.js";
+import {
+  AiProviderError,
+  classifyAiProviderHttpError,
+  normalizeAiProviderFetchError
+} from "./ai-error.js";
 
 export interface GeneratedEmbedding {
   embedding: number[];
@@ -52,6 +57,7 @@ export interface OpenAiEmbeddingProviderConfig {
   apiKey: string;
   model?: string; // Default text-embedding-3-small
   baseUrl?: string;
+  timeoutMs?: number;
   customFetcher?: typeof fetch;
 }
 
@@ -61,15 +67,17 @@ export interface OpenAiEmbeddingProviderConfig {
 export class OpenAiEmbeddingProvider implements AiEmbeddingProvider {
   readonly name = "openai-embedding-provider";
   readonly dimensions = 1536;
+  readonly modelId: string;
   private readonly apiKey: string;
-  private readonly model: string;
   private readonly baseUrl: string;
+  private readonly timeoutMs: number;
   private readonly fetcher: typeof fetch;
 
   constructor(config: OpenAiEmbeddingProviderConfig) {
     this.apiKey = config.apiKey;
-    this.model = config.model ?? "text-embedding-3-small";
+    this.modelId = config.model ?? "text-embedding-3-small";
     this.baseUrl = (config.baseUrl ?? "https://api.openai.com/v1").replace(/\/$/, "");
+    this.timeoutMs = config.timeoutMs ?? 15_000;
     this.fetcher = config.customFetcher ?? fetch;
   }
 
@@ -84,44 +92,67 @@ export class OpenAiEmbeddingProvider implements AiEmbeddingProvider {
   async generateEmbeddings(texts: string[]): Promise<GeneratedEmbedding[]> {
     if (texts.length === 0) return [];
     if (!this.apiKey) {
-      throw new Error("OpenAI API key is not configured for OpenAiEmbeddingProvider.");
+      throw new AiProviderError("AI_PROVIDER_CONFIGURATION");
     }
 
-    const response = await this.fetcher(`${this.baseUrl}/embeddings`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: this.model,
-        input: texts,
-        dimensions: this.dimensions
-      })
-    });
+    let response: Response;
+    try {
+      response = await this.fetcher(`${this.baseUrl}/embeddings`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: this.modelId,
+          input: texts,
+          dimensions: this.dimensions
+        }),
+        signal: AbortSignal.timeout(this.timeoutMs)
+      });
+    } catch (error) {
+      throw normalizeAiProviderFetchError(error);
+    }
 
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(
-        `OpenAI Embedding API error (${response.status}): ${errorText || response.statusText}`
-      );
+      throw classifyAiProviderHttpError(response.status);
     }
 
-    const body = (await response.json()) as {
-      data: Array<{ embedding: number[]; index: number }>;
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch (error) {
+      throw new AiProviderError("AI_PROVIDER_INVALID_RESPONSE", { cause: error });
+    }
+
+    const parsed = body as {
+      data?: Array<{ embedding?: unknown; index?: unknown }>;
       usage?: { total_tokens?: number };
     };
 
-    if (!body.data || !Array.isArray(body.data)) {
-      throw new Error("Invalid response schema returned by OpenAI Embedding API.");
+    if (!Array.isArray(parsed.data) || parsed.data.length !== texts.length) {
+      throw new AiProviderError("AI_PROVIDER_INVALID_RESPONSE");
     }
 
     // Sort by original input index
-    const sorted = [...body.data].sort((a, b) => a.index - b.index);
+    const sorted = [...parsed.data].sort(
+      (a, b) =>
+        (typeof a.index === "number" ? a.index : -1) - (typeof b.index === "number" ? b.index : -1)
+    );
 
-    return sorted.map((item, idx) => ({
-      embedding: item.embedding,
-      tokenCount: Math.ceil((texts[idx] || "").length / 4)
-    }));
+    return sorted.map((item, idx) => {
+      if (
+        item.index !== idx ||
+        !Array.isArray(item.embedding) ||
+        item.embedding.length !== this.dimensions ||
+        item.embedding.some((value) => typeof value !== "number" || !Number.isFinite(value))
+      ) {
+        throw new AiProviderError("AI_PROVIDER_INVALID_RESPONSE");
+      }
+      return {
+        embedding: item.embedding as number[],
+        tokenCount: Math.ceil((texts[idx] || "").length / 4)
+      };
+    });
   }
 }

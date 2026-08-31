@@ -27,6 +27,34 @@ sudo --preserve-env=WEBHOOK_APP_SECRET ./configure-staging-env.sh https://stagin
 unset WEBHOOK_APP_SECRET
 ```
 
+## AI provider runtime
+
+The API starts with `AI_PROVIDER=disabled` unless a provider is selected explicitly. In this mode,
+the rest of FlowDesk remains available, while draft generation fails closed with the stable
+`AI_PROVIDER_CONFIGURATION` response. `AI_PROVIDER=fake` is allowed only for local or preview
+testing and is rejected during staging or production startup.
+
+The OpenAI credential is server-only and is passed only to the API container. It is not shared with
+the web, ingress, worker, scheduler, image build, or GitHub Actions. To enable the real runtime,
+edit `/opt/flowdesk/shared/staging.env` directly on the host with `sudoedit`; set
+`AI_PROVIDER=openai` and add `OPENAI_API_KEY` without printing it in shell history or logs. Keep the
+default `OPENAI_BASE_URL`, `OPENAI_CHAT_MODEL`, and `OPENAI_EMBEDDING_MODEL` unless a reviewed
+change requires otherwise. Never commit the edited environment file.
+
+Validate only the shape of the deployment without rendering environment values:
+
+```bash
+cd "/opt/flowdesk/releases/$(cat /opt/flowdesk/shared/current-image)"
+docker compose --env-file /opt/flowdesk/shared/staging.env -f compose.yaml config --quiet
+```
+
+The next merge-triggered release recreates the API with the host configuration. Startup logs expose
+only the selected provider and model identifiers, never the credential. A real staging smoke must
+create a draft through the authenticated API, verify the persisted run status, token usage, latency,
+and citations, then confirm that no outbound message is sent by draft generation alone. Provider and
+model identity are currently deployment-level startup evidence; persisting them per run is separate
+schema work.
+
 ## Automated release
 
 Pull requests execute all quality/database/Terraform gates and cached image builds but never contact staging. A push to `main` after every required job succeeds performs the release:

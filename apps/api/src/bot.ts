@@ -21,7 +21,11 @@ import {
   assemblePromptContext,
   type ConversationMessageContext
 } from "@flowdesk/domain";
-import { FakeEmbeddingProvider, FakeAiChatProvider } from "@flowdesk/providers";
+import {
+  AiProviderError,
+  type AiChatProvider,
+  type AiEmbeddingProvider
+} from "@flowdesk/providers";
 import {
   checkPromptInjection,
   redactPiiFromPrompt,
@@ -31,16 +35,12 @@ import {
 import { createRequireAuthMiddleware } from "./auth.js";
 import { createRequireOrgPermissionMiddleware } from "./organizations.js";
 
-const embeddingProvider = new FakeEmbeddingProvider();
-const chatProvider = new FakeAiChatProvider();
-const llmCircuitBreaker = new LlmCircuitBreaker({
-  failureThreshold: 3,
-  recoveryTimeMs: 30_000,
-  name: "ai-chat-provider"
-});
-
 export interface BotRouterOptions {
   db: DbClient;
+  ai?: {
+    chatProvider: AiChatProvider;
+    embeddingProvider: AiEmbeddingProvider;
+  };
 }
 
 function getParam(params: Record<string, string | string[] | undefined>, key: string): string {
@@ -69,6 +69,11 @@ function sendProblem(
 
 export function createBotRouter(options: BotRouterOptions): Router {
   const router = Router({ mergeParams: true });
+  const llmCircuitBreaker = new LlmCircuitBreaker({
+    failureThreshold: 3,
+    recoveryTimeMs: 30_000,
+    name: "ai-chat-provider"
+  });
   const requireAuth = createRequireAuthMiddleware(options.db);
   const requireViewPermission = createRequireOrgPermissionMiddleware(
     options.db,
@@ -212,6 +217,17 @@ export function createBotRouter(options: BotRouterOptions): Router {
           );
         }
 
+        const ai = options.ai;
+        if (!ai) {
+          return sendProblem(
+            response,
+            503,
+            "AI_PROVIDER_CONFIGURATION",
+            "AI provider unavailable",
+            "AI draft generation is not configured for this environment."
+          );
+        }
+
         const conversation = await getConversationWithMessages(
           options.db,
           tenantContext,
@@ -247,7 +263,7 @@ export function createBotRouter(options: BotRouterOptions): Router {
         const redactedMsg = piiRedaction.redacted;
 
         // 1. Generate query embedding (use redacted msg to avoid PII in vector store)
-        const embeddings = await embeddingProvider.generateEmbeddings([redactedMsg]);
+        const embeddings = await ai.embeddingProvider.generateEmbeddings([redactedMsg]);
         const queryEmbedding = embeddings[0]?.embedding ?? new Array<number>(1536).fill(0);
 
         // 2. Perform vector search in pgvector
@@ -284,9 +300,18 @@ export function createBotRouter(options: BotRouterOptions): Router {
         }
 
         // M4-07: 4. Circuit-breaker-wrapped LLM call
-        const chatResponse = await llmCircuitBreaker.call(() =>
-          chatProvider.generateReplyDraft(promptContext.systemInstructions, redactedMsg)
-        );
+        let chatResponse: Awaited<ReturnType<AiChatProvider["generateReplyDraft"]>>;
+        try {
+          chatResponse = await llmCircuitBreaker.call(() =>
+            ai.chatProvider.generateReplyDraft(promptContext.systemInstructions, redactedMsg)
+          );
+        } catch (error) {
+          if (error instanceof AiProviderError) throw error;
+          throw new AiProviderError("AI_PROVIDER_UNAVAILABLE", {
+            cause: error,
+            retryable: true
+          });
+        }
 
         const latencyMs = Date.now() - startTime;
         const confidence = chatResponse.confidence ?? 0.85;
@@ -331,12 +356,15 @@ export function createBotRouter(options: BotRouterOptions): Router {
           })
         );
       } catch (err) {
+        if (err instanceof AiProviderError) {
+          return sendProblem(response, 503, err.code, "AI provider unavailable", err.message);
+        }
         return sendProblem(
           response,
           500,
           "INTERNAL_ERROR",
           "Internal error",
-          err instanceof Error ? err.message : "Failed to generate AI draft"
+          "Failed to generate AI draft"
         );
       }
     }

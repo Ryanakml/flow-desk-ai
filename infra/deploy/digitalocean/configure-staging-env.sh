@@ -60,6 +60,13 @@ printf '%s\n' \
   "META_SYSTEM_USER_ID=replace-with-flowdesk-system-user-id" \
   "META_ADMIN_SYSTEM_USER_ACCESS_TOKEN=replace-with-business-admin-system-user-access-token" \
   "META_GRAPH_API_BASE_URL=https://graph.facebook.com/v25.0" \
+  "AI_PROVIDER=disabled" \
+  "OPENAI_BASE_URL=https://api.openai.com/v1" \
+  "OPENAI_CHAT_MODEL=gpt-4o-mini" \
+  "OPENAI_EMBEDDING_MODEL=text-embedding-3-small" \
+  "AI_CHAT_TIMEOUT_MS=15000" \
+  "AI_EMBEDDING_TIMEOUT_MS=15000" \
+  "AI_MAX_OUTPUT_TOKENS=512" \
   "AUTH_OIDC_ISSUER=https://flowdesk.local.auth0.com/" \
   "AUTH_OIDC_CLIENT_ID=flowdesk-staging-client" \
   "AUTH_OIDC_CLIENT_SECRET=${oidc_secret}" \

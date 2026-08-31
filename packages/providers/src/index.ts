@@ -9,6 +9,13 @@ export interface HealthCheckedProvider {
 }
 
 export {
+  AiProviderError,
+  classifyAiProviderHttpError,
+  normalizeAiProviderFetchError,
+  type AiProviderErrorCode
+} from "./ai-error.js";
+
+export {
   type VerifiedIdentityClaims,
   type IdentityProvider,
   MockIdentityProvider,
