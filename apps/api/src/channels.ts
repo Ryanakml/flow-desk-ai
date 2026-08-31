@@ -2,6 +2,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import {
   CompleteWhatsAppEmbeddedSignupRequestSchema,
+  CreateChannelRequestSchema,
+  RotateChannelCredentialsRequestSchema,
   UpdateChannelStatusRequestSchema,
   type ChannelVerificationState
 } from "@flowdesk/contracts";
@@ -18,6 +20,7 @@ import {
   listChannels,
   updateChannelStatus,
   updateChannelCredentials,
+  updateChannelMetadata,
   deleteChannel,
   recordAuditEvent,
   runInTenantTransaction,
@@ -385,6 +388,9 @@ export function createChannelsRouter(options: ChannelsRouterOptions): Router {
           options.db,
           { organizationId: orgId },
           async (db) => {
+            await updateChannelMetadata(db, connectingChannel.id, orgId, {
+              subscriptionStatus: "subscribed"
+            });
             const activated = await updateChannelStatus(db, connectingChannel.id, "active");
             await completeWhatsAppEmbeddedSignupAttempt(db, {
               id: attempt.id,
@@ -456,15 +462,181 @@ export function createChannelsRouter(options: ChannelsRouterOptions): Router {
     }
   );
 
-  // Manual token entry made a channel appear active without Meta onboarding.
-  router.post("/", requireAuth, requireWritePermission, (_request, response) =>
-    sendProblem(
-      response,
-      410,
-      "MANUAL_CHANNEL_CONNECTION_RETIRED",
-      "Manual WhatsApp connection has been retired",
-      "Use Connect WhatsApp with Meta so FlowDesk can verify and subscribe the account safely."
-    )
+  // Operator-assisted connection: the exact token verified here is also used
+  // for WABA subscription and encrypted storage for worker sends.
+  router.post(
+    "/",
+    requireAuth,
+    requireWritePermission,
+    async (request: Request, response: Response) => {
+      const parsed = CreateChannelRequestSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return sendProblem(
+          response,
+          400,
+          "VALIDATION_ERROR",
+          "Invalid WhatsApp connection input",
+          parsed.error.issues.map((issue) => issue.message).join("; ")
+        );
+      }
+
+      const orgId = getParam(request.params, "orgId");
+      const input = parsed.data;
+      let channelId: string | undefined;
+      try {
+        const provider = getProvider(options);
+        const verified = await provider.verifyPhoneNumber({
+          phoneNumberId: input.phoneNumberId,
+          wabaId: input.wabaId,
+          accessToken: input.accessToken
+        });
+        const encryptedCredentials = encryptWhatsAppChannelCredentials(
+          {
+            accessToken: input.accessToken,
+            phoneNumberId: verified.phoneNumberId,
+            wabaId: verified.wabaId
+          },
+          getEncryptionKey(options)
+        );
+
+        const connectingChannel = await runInTenantTransaction(
+          options.db,
+          { organizationId: orgId },
+          async (db) => {
+            const wabaClaimed = await claimWhatsAppBusinessAccount(db, {
+              wabaId: verified.wabaId,
+              organizationId: orgId
+            });
+            if (!wabaClaimed) throw new Error("WABA_OWNED_BY_ANOTHER_ORGANIZATION");
+
+            const existing = await getChannelByPhoneNumberId(db, verified.phoneNumberId);
+            if (
+              existing &&
+              (existing.organizationId !== orgId || existing.wabaId !== verified.wabaId)
+            ) {
+              throw new Error("WABA_OWNED_BY_ANOTHER_ORGANIZATION");
+            }
+
+            const channel = existing
+              ? await (async () => {
+                  await updateChannelCredentials(db, {
+                    id: existing.id,
+                    organizationId: orgId,
+                    encryptedCredentials
+                  });
+                  await updateChannelMetadata(db, existing.id, orgId, {
+                    connectionMethod: "manual_verified",
+                    subscriptionStatus: "pending"
+                  });
+                  return updateChannelStatus(db, existing.id, "connecting");
+                })()
+              : await createChannel(db, {
+                  organizationId: orgId,
+                  type: "whatsapp",
+                  name: input.name,
+                  phoneNumberId: verified.phoneNumberId,
+                  wabaId: verified.wabaId,
+                  encryptedCredentials,
+                  status: "connecting",
+                  metadata: {
+                    ...input.metadata,
+                    connectionMethod: "manual_verified",
+                    subscriptionStatus: "pending"
+                  }
+                });
+            await recordAuditEvent(db, {
+              organizationId: orgId,
+              actorUserId: request.user!.id,
+              action: existing ? "whatsapp.channel_reconnecting" : "whatsapp.channel_connecting",
+              targetType: "channel",
+              targetId: channel.id,
+              result: "allowed",
+              metadata: {
+                connectionMethod: "manual_verified",
+                phoneNumberId: verified.phoneNumberId,
+                wabaId: verified.wabaId
+              }
+            });
+            return channel;
+          }
+        );
+        channelId = connectingChannel.id;
+
+        await provider.subscribeWhatsAppBusinessAccount({
+          wabaId: verified.wabaId,
+          accessToken: input.accessToken
+        });
+
+        const activeChannel = await runInTenantTransaction(
+          options.db,
+          { organizationId: orgId },
+          async (db) => {
+            await updateChannelMetadata(db, connectingChannel.id, orgId, {
+              subscriptionStatus: "subscribed"
+            });
+            const activated = await updateChannelStatus(db, connectingChannel.id, "active");
+            await recordAuditEvent(db, {
+              organizationId: orgId,
+              actorUserId: request.user!.id,
+              action: "whatsapp.channel_connected",
+              targetType: "channel",
+              targetId: activated.id,
+              result: "allowed",
+              metadata: {
+                connectionMethod: "manual_verified",
+                phoneNumberId: verified.phoneNumberId,
+                wabaId: verified.wabaId
+              }
+            });
+            return activated;
+          }
+        );
+
+        return response.status(201).json({
+          channel: serializeChannel(activeChannel),
+          displayPhoneNumber: verified.displayPhoneNumber,
+          verifiedName: verified.verifiedName
+        });
+      } catch (error) {
+        if (channelId) {
+          await runInTenantTransaction(options.db, { organizationId: orgId }, async (db) => {
+            await updateChannelMetadata(db, channelId!, orgId, { subscriptionStatus: "failed" });
+            await updateChannelStatus(
+              db,
+              channelId!,
+              "degraded",
+              "Meta webhook subscription failed. Check the token permissions and reconnect."
+            );
+          });
+        }
+        if (error instanceof Error && error.message === "WABA_OWNED_BY_ANOTHER_ORGANIZATION") {
+          return sendProblem(
+            response,
+            409,
+            "WABA_OWNERSHIP_CONFLICT",
+            "WhatsApp account is already connected",
+            "This WhatsApp Business Account is already connected to another FlowDesk organization."
+          );
+        }
+        if (error instanceof WhatsAppProviderError) {
+          const failure = verificationFailure(error);
+          return sendProblem(
+            response,
+            error.classification === "RESOURCE_MISMATCH" ? 409 : 422,
+            "META_CONNECTION_FAILED",
+            "Meta connection could not be completed",
+            failure.message
+          );
+        }
+        return sendProblem(
+          response,
+          500,
+          "INTERNAL_ERROR",
+          "WhatsApp connection failed",
+          error instanceof Error ? error.message : "Internal error"
+        );
+      }
+    }
   );
 
   // POST /api/v1/organizations/:orgId/channels/:channelId/verify
@@ -545,19 +717,131 @@ export function createChannelsRouter(options: ChannelsRouterOptions): Router {
     }
   );
 
-  // Token rotation is performed by a fresh Meta authorization, never by pasting a token.
+  // Rotate credentials in place so conversations and channel identity are preserved.
   router.patch(
     "/:channelId/credentials",
     requireAuth,
     requireWritePermission,
-    (_request, response) =>
-      sendProblem(
-        response,
-        410,
-        "MANUAL_CREDENTIAL_ROTATION_RETIRED",
-        "Manual credential rotation has been retired",
-        "Reconnect the channel with Meta to refresh its authorization safely."
-      )
+    async (request: Request, response: Response) => {
+      const parsed = RotateChannelCredentialsRequestSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return sendProblem(
+          response,
+          400,
+          "VALIDATION_ERROR",
+          "Invalid credential input",
+          parsed.error.issues.map((issue) => issue.message).join("; ")
+        );
+      }
+
+      const orgId = getParam(request.params, "orgId");
+      const channelId = getParam(request.params, "channelId");
+      const channel = await runInTenantTransaction(options.db, { organizationId: orgId }, (db) =>
+        getChannelById(db, channelId, orgId)
+      );
+      if (!channel) {
+        return sendProblem(
+          response,
+          404,
+          "NOT_FOUND",
+          "Channel not found",
+          "Channel does not exist"
+        );
+      }
+
+      let credentialsStored = false;
+      try {
+        const provider = getProvider(options);
+        const verified = await provider.verifyPhoneNumber({
+          phoneNumberId: channel.phoneNumberId,
+          wabaId: channel.wabaId,
+          accessToken: parsed.data.accessToken
+        });
+        const encryptedCredentials = encryptWhatsAppChannelCredentials(
+          {
+            accessToken: parsed.data.accessToken,
+            phoneNumberId: verified.phoneNumberId,
+            wabaId: verified.wabaId
+          },
+          getEncryptionKey(options)
+        );
+
+        await runInTenantTransaction(options.db, { organizationId: orgId }, async (db) => {
+          await updateChannelCredentials(db, {
+            id: channel.id,
+            organizationId: orgId,
+            encryptedCredentials
+          });
+          await updateChannelMetadata(db, channel.id, orgId, {
+            connectionMethod: "manual_verified",
+            subscriptionStatus: "pending"
+          });
+          await updateChannelStatus(db, channel.id, "connecting");
+        });
+        credentialsStored = true;
+
+        await provider.subscribeWhatsAppBusinessAccount({
+          wabaId: verified.wabaId,
+          accessToken: parsed.data.accessToken
+        });
+
+        const updated = await runInTenantTransaction(
+          options.db,
+          { organizationId: orgId },
+          async (db) => {
+            await updateChannelMetadata(db, channel.id, orgId, {
+              subscriptionStatus: "subscribed"
+            });
+            const activated = await updateChannelStatus(db, channel.id, "active");
+            await recordAuditEvent(db, {
+              organizationId: orgId,
+              actorUserId: request.user!.id,
+              action: "whatsapp.channel_credentials_rotated",
+              targetType: "channel",
+              targetId: channel.id,
+              result: "allowed",
+              metadata: { connectionMethod: "manual_verified" }
+            });
+            return activated;
+          }
+        );
+
+        return response.status(200).json({
+          channelId: updated.id,
+          organizationId: updated.organizationId,
+          updatedAt: updated.updatedAt.toISOString()
+        });
+      } catch (error) {
+        if (credentialsStored) {
+          await runInTenantTransaction(options.db, { organizationId: orgId }, async (db) => {
+            await updateChannelMetadata(db, channel.id, orgId, { subscriptionStatus: "failed" });
+            await updateChannelStatus(
+              db,
+              channel.id,
+              "degraded",
+              "Meta webhook subscription failed. Check the token permissions and reconnect."
+            );
+          });
+        }
+        if (error instanceof WhatsAppProviderError) {
+          const failure = verificationFailure(error);
+          return sendProblem(
+            response,
+            error.classification === "RESOURCE_MISMATCH" ? 409 : 422,
+            "META_CONNECTION_FAILED",
+            "Meta credential rotation failed",
+            failure.message
+          );
+        }
+        return sendProblem(
+          response,
+          500,
+          "INTERNAL_ERROR",
+          "Meta credential rotation failed",
+          error instanceof Error ? error.message : "Internal error"
+        );
+      }
+    }
   );
 
   // PATCH /api/v1/organizations/:orgId/channels/:channelId

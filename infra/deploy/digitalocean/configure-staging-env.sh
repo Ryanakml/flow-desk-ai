@@ -23,6 +23,12 @@ if [[ -f ${environment_file} ]]; then
   exit 0
 fi
 
+webhook_app_secret=${WEBHOOK_APP_SECRET:-}
+if [[ ${#webhook_app_secret} -lt 16 || ${webhook_app_secret} == replace-with-* ]]; then
+  echo "set WEBHOOK_APP_SECRET to the real FlowDesk Meta App secret before creating staging.env" >&2
+  exit 1
+fi
+
 temporary_file=$(mktemp /opt/flowdesk/shared/staging.env.XXXXXX)
 chmod 0600 "${temporary_file}"
 encryption_key=$(openssl rand -hex 24)
@@ -31,7 +37,6 @@ runtime_password=$(openssl rand -hex 24)
 redis_password=$(openssl rand -hex 24)
 minio_password=$(openssl rand -hex 24)
 webhook_token=$(openssl rand -hex 24)
-webhook_secret=$(openssl rand -hex 32)
 oidc_secret=$(openssl rand -hex 24)
 
 printf '%s\n' \
@@ -47,7 +52,7 @@ printf '%s\n' \
   "MINIO_ROOT_USER=flowdesk_staging" \
   "MINIO_ROOT_PASSWORD=${minio_password}" \
   "WEBHOOK_VERIFY_TOKEN=${webhook_token}" \
-  "WEBHOOK_APP_SECRET=${webhook_secret}" \
+  "WEBHOOK_APP_SECRET=${webhook_app_secret}" \
   "META_APP_ID=replace-with-flowdesk-meta-app-id" \
   "META_APP_SECRET=replace-with-flowdesk-meta-app-secret" \
   "META_EMBEDDED_SIGNUP_CONFIG_ID=replace-with-meta-embedded-signup-config-id" \

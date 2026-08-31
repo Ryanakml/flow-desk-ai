@@ -1,4 +1,9 @@
-import { loadChannelEncryptionConfig, loadHttpConfig, loadMediaConfig } from "@flowdesk/config";
+import {
+  loadChannelEncryptionConfig,
+  loadHttpConfig,
+  loadMediaConfig,
+  loadWhatsAppGraphApiConfig
+} from "@flowdesk/config";
 import {
   createLogger,
   createProcessHealthServer,
@@ -22,6 +27,7 @@ export { processOutboxOutboundBatch, dispatchOutboundMessage };
 
 const config = loadHttpConfig("worker", Number(process.env["WORKER_HEALTH_PORT"] ?? 4002));
 const channelEncryptionConfig = loadChannelEncryptionConfig();
+const whatsAppGraphApiConfig = loadWhatsAppGraphApiConfig();
 const logger = createLogger({
   service: config.SERVICE_NAME,
   environment: config.APP_ENV,
@@ -58,7 +64,9 @@ const scanner = mediaConfig.CLAMAV_HOST
       port: mediaConfig.CLAMAV_PORT
     })
   : new FakeMalwareScanner();
-const provider = new MetaWhatsAppProvider();
+const provider = new MetaWhatsAppProvider({
+  graphApiBaseUrl: whatsAppGraphApiConfig.META_GRAPH_API_BASE_URL
+});
 const mediaLogger = {
   info: (message: string, context?: Record<string, unknown>) => logger.info(context ?? {}, message),
   warn: (message: string, context?: Record<string, unknown>) => logger.warn(context ?? {}, message),

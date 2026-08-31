@@ -1,6 +1,6 @@
-# Meta Embedded Signup — FlowDesk Production Runbook
+# WhatsApp Connection — FlowDesk Production Runbook
 
-FlowDesk uses one platform-owned Meta App. Customers authorize their existing or new WhatsApp Business Account (WABA) through Meta Embedded Signup; they never provide an App Secret or manually paste an access token.
+FlowDesk uses one platform-owned Meta App. The primary operational path is an operator-assisted verified connection: an authorized organization admin enters the channel name, Phone Number ID, WABA ID, and an access token issued for that Meta App. FlowDesk verifies ownership, subscribes the WABA, encrypts the exact same token, and only then activates the channel. Meta Embedded Signup remains available when all platform credentials are configured.
 
 ## One-time Meta configuration
 
@@ -10,8 +10,9 @@ FlowDesk uses one platform-owned Meta App. Customers authorize their existing or
    - Callback URL: `https://<flowdesk-ingress-host>/webhooks/whatsapp`
    - Verify token: the value of `WEBHOOK_VERIFY_TOKEN`
    - Subscribe to the required WhatsApp fields, including `messages`.
-4. Create the FlowDesk runtime system user and a Business Admin system user. Assign the runtime user to each approved customer WABA with `MANAGE`; store its ID as `META_SYSTEM_USER_ID`, its management token as `META_SYSTEM_USER_ACCESS_TOKEN`, and the admin token used for the assignment as `META_ADMIN_SYSTEM_USER_ACCESS_TOKEN`.
-5. Complete Meta business verification, App Review, and Advanced Access required by the selected Embedded Signup configuration before onboarding external customers.
+4. Create a token for each connected WABA with the permissions needed to inspect the phone number, subscribe the WABA, and send messages. Never paste the App Secret into FlowDesk's channel form.
+5. To enable the optional Embedded Signup path, create the FlowDesk runtime system user and a Business Admin system user, then configure the Embedded Signup variables listed below.
+6. Complete Meta business verification, App Review, and Advanced Access required before onboarding external customers.
 
 Meta requires a WABA to be explicitly subscribed before it delivers webhook events for that account. The subscription is performed by FlowDesk after a successful user authorization. [Meta WABA subscriptions](https://www.postman.com/meta/whatsapp-business-platform/folder/gumbt4j/waba-subscriptions)
 
@@ -31,23 +32,25 @@ Set these values only in the deployment secret manager. Do not put them in brows
 
 `WEBHOOK_APP_SECRET` and `META_APP_SECRET` must refer to the same FlowDesk Meta App.
 
+The six `META_*` Embedded Signup credentials are optional as a group. Placeholder values disable Embedded Signup; partial real configuration fails startup. `META_GRAPH_API_BASE_URL` is independent and is shared by the API and worker. `WEBHOOK_VERIFY_TOKEN`, `WEBHOOK_APP_SECRET`, and `ENCRYPTION_KEY` are mandatory outside local development; deployment defaults and placeholders are rejected.
+
 ## Customer flow and safety checks
 
-1. Customer admin selects **Connect WhatsApp with Meta** in FlowDesk.
-2. FlowDesk creates a tenant-bound, single-use connection attempt that expires in ten minutes.
-3. The browser opens Meta Embedded Signup using only the App ID and configuration ID.
-4. The browser returns the one-time code and selected WABA/phone identifiers to FlowDesk. The API treats those identifiers as candidates and verifies their relationship with Meta.
-5. The API uses the user-authorized token only to verify the selected account. It assigns and verifies FlowDesk's runtime system user, encrypts that platform token as the tenant credential, claims WABA and phone ownership for one FlowDesk organization, subscribes the WABA, then activates the channel.
-6. If exchange, verification, ownership, or subscription fails, the channel is not active. A partially connected channel is marked `degraded` and must be reconnected through Meta.
+1. Organization admin selects **Connect WhatsApp** in FlowDesk.
+2. The admin enters the channel name, Phone Number ID, WABA ID, and access token. The UI never requests the Meta App Secret.
+3. The API verifies that the token can inspect the Phone Number ID and that the phone belongs to the stated WABA.
+4. FlowDesk claims WABA and phone ownership for one organization, encrypts the submitted token, and marks the channel `connecting`.
+5. The API subscribes that WABA using the exact submitted token. Only a successful subscription changes the channel to `active`; the worker later decrypts that same token for outbound sends.
+6. Verification failure creates no channel. Subscription failure leaves the channel `degraded`, with no secret returned by the UI, API, or logs.
 
-Existing customers should use **Reconnect with Meta**. It refreshes the encrypted credential in place and preserves the channel's conversation and message relationships.
+Existing customers should use **Reconnect with token**. It verifies and rotates the encrypted credential in place, re-subscribes the WABA, and preserves the channel's conversation and message relationships. **Connect with Meta Signup** remains an optional secondary path.
 
 ## Release verification
 
 Before declaring the release live, prove all of the following in staging with a real Meta test WABA:
 
 1. Callback URL challenge returns the raw `hub.challenge` with the configured verify token.
-2. A new user can select an existing WABA through Embedded Signup without entering a token or App Secret.
+2. A valid customer token connects the expected Phone Number ID/WABA pair; an invalid or mismatched token does not create an active channel.
 3. FlowDesk receives an inbound message and a delivery status webhook after the WABA subscription succeeds.
 4. Outbound sending works using the stored encrypted credential.
 5. A second organization cannot attach the same WABA or phone number.

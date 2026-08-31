@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import {
   completeWhatsAppEmbeddedSignupApi,
+  connectWhatsAppWithTokenApi,
   deleteChannelApi,
   listChannelsApi,
   startWhatsAppEmbeddedSignupApi,
@@ -68,6 +69,13 @@ export function ChannelsView({ orgId, canManage, showToast }: ChannelsViewProps)
   const [channels, setChannels] = useState<ChannelClientRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [showManualConnect, setShowManualConnect] = useState(false);
+  const [manualConnection, setManualConnection] = useState({
+    name: "",
+    phoneNumberId: "",
+    wabaId: "",
+    accessToken: ""
+  });
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
   const pendingSignup = useRef<PendingSignup | null>(null);
 
@@ -195,6 +203,33 @@ export function ChannelsView({ orgId, canManage, showToast }: ChannelsViewProps)
     }
   };
 
+  const handleManualConnect = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canManage || connecting) return;
+    try {
+      setConnecting(true);
+      const result = await connectWhatsAppWithTokenApi(orgId, manualConnection);
+      showToast(`WhatsApp channel connected and verified: ${result.channel.name}`);
+      setManualConnection({ name: "", phoneNumberId: "", wabaId: "", accessToken: "" });
+      setShowManualConnect(false);
+      await loadChannels();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "WhatsApp connection failed.", true);
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const openManualConnect = (channel?: ChannelClientRecord) => {
+    setManualConnection({
+      name: channel?.name ?? "",
+      phoneNumberId: channel?.phoneNumberId ?? "",
+      wabaId: channel?.wabaId ?? "",
+      accessToken: ""
+    });
+    setShowManualConnect(true);
+  };
+
   const handleVerify = async (channelId: string) => {
     try {
       setVerifyingId(channelId);
@@ -236,22 +271,114 @@ export function ChannelsView({ orgId, canManage, showToast }: ChannelsViewProps)
         <div>
           <h2 className="text-xl font-bold text-gray-900">WhatsApp Channels</h2>
           <p className="text-sm text-gray-500">
-            Connect a WhatsApp Business Account securely through Meta. FlowDesk never asks for your
-            Meta App Secret or a pasted access token.
+            Connect with a Meta access token and FlowDesk will verify the phone number, subscribe
+            the WABA, and encrypt the credential before activating the channel.
           </p>
         </div>
         {canManage && (
-          <button
-            type="button"
-            onClick={() => void handleConnect()}
-            className="btn btn-primary"
-            id="connect-channel-btn"
-            disabled={connecting}
-          >
-            {connecting ? "Connecting with Meta..." : "Connect WhatsApp with Meta"}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => openManualConnect()}
+              className="btn btn-primary"
+              id="connect-channel-btn"
+              disabled={connecting}
+            >
+              Connect WhatsApp
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleConnect()}
+              className="btn btn-secondary"
+              disabled={connecting}
+            >
+              Connect with Meta Signup
+            </button>
+          </div>
         )}
       </div>
+
+      {canManage && showManualConnect && (
+        <form
+          onSubmit={(event) => void handleManualConnect(event)}
+          className="card mb-6 grid gap-4 border rounded-lg bg-white p-5 md:grid-cols-2"
+          aria-label="Connect WhatsApp with access token"
+        >
+          <div className="md:col-span-2">
+            <h3 className="font-semibold text-gray-900">Connect with verified credentials</h3>
+            <p className="text-sm text-gray-500">
+              Use credentials from the same Meta App configured for the FlowDesk webhook. The access
+              token is never returned by the API.
+            </p>
+          </div>
+          <label className="text-sm font-medium text-gray-700">
+            Channel name
+            <input
+              required
+              maxLength={100}
+              className="mt-1 block w-full rounded border p-2"
+              value={manualConnection.name}
+              onChange={(event) =>
+                setManualConnection((current) => ({ ...current, name: event.target.value }))
+              }
+            />
+          </label>
+          <label className="text-sm font-medium text-gray-700">
+            Phone Number ID
+            <input
+              required
+              className="mt-1 block w-full rounded border p-2"
+              value={manualConnection.phoneNumberId}
+              onChange={(event) =>
+                setManualConnection((current) => ({
+                  ...current,
+                  phoneNumberId: event.target.value
+                }))
+              }
+            />
+          </label>
+          <label className="text-sm font-medium text-gray-700">
+            WABA ID
+            <input
+              required
+              className="mt-1 block w-full rounded border p-2"
+              value={manualConnection.wabaId}
+              onChange={(event) =>
+                setManualConnection((current) => ({ ...current, wabaId: event.target.value }))
+              }
+            />
+          </label>
+          <label className="text-sm font-medium text-gray-700">
+            Access token
+            <input
+              required
+              type="password"
+              autoComplete="off"
+              className="mt-1 block w-full rounded border p-2"
+              value={manualConnection.accessToken}
+              onChange={(event) =>
+                setManualConnection((current) => ({
+                  ...current,
+                  accessToken: event.target.value
+                }))
+              }
+            />
+          </label>
+          <div className="flex gap-2 md:col-span-2">
+            <button type="submit" className="btn btn-primary" disabled={connecting}>
+              {connecting ? "Verifying and connecting..." : "Verify and connect"}
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setShowManualConnect(false)}
+              disabled={connecting}
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
 
       {loading ? (
         <div className="p-4 text-center text-gray-500">Loading connected channels...</div>
@@ -261,11 +388,11 @@ export function ChannelsView({ orgId, canManage, showToast }: ChannelsViewProps)
           {canManage && (
             <button
               type="button"
-              onClick={() => void handleConnect()}
+              onClick={() => openManualConnect()}
               className="btn btn-secondary btn-sm"
               disabled={connecting}
             >
-              Connect your first channel with Meta
+              Connect your first channel
             </button>
           )}
         </div>
@@ -303,11 +430,11 @@ export function ChannelsView({ orgId, canManage, showToast }: ChannelsViewProps)
                 <div className="flex flex-wrap gap-2 border-t pt-3 mt-2">
                   <button
                     type="button"
-                    onClick={() => void handleConnect()}
+                    onClick={() => openManualConnect(channel)}
                     disabled={connecting}
                     className="btn btn-secondary btn-sm"
                   >
-                    Reconnect with Meta
+                    Reconnect with token
                   </button>
                   <button
                     type="button"

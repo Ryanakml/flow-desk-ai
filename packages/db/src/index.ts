@@ -62,6 +62,7 @@ export {
   listChannels,
   updateChannelStatus,
   updateChannelCredentials,
+  updateChannelMetadata,
   deleteChannel,
   type ChannelRecord,
   type CreateChannelInput,
