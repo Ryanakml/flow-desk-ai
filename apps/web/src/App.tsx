@@ -24,42 +24,29 @@ import { InboxView } from "./InboxView.js";
 import { ChannelsView } from "./ChannelsView.js";
 import { DeveloperSettingsView } from "./DeveloperSettingsView.js";
 import { AnalyticsView } from "./AnalyticsView.js";
-import "./styles.css";
-
-function FlowDeskIcon({ size = 20 }: { size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 32 32"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <defs>
-        <linearGradient
-          id="fdGradIcon"
-          x1="4"
-          y1="4"
-          x2="28"
-          y2="28"
-          gradientUnits="userSpaceOnUse"
-        >
-          <stop offset="0%" stopColor="#10B981" />
-          <stop offset="100%" stopColor="#0EA5E9" />
-        </linearGradient>
-      </defs>
-      <path
-        fillRule="evenodd"
-        clipRule="evenodd"
-        d="M16 3C8.8203 3 3 8.8203 3 16C3 18.73 3.84 21.26 5.28 23.36L3.25 28.75L8.79 26.89C10.82 28.24 13.31 29 16 29C23.1797 29 29 23.1797 29 16C29 8.8203 23.1797 3 16 3ZM10.5 9.5C10.5 8.67157 11.1716 8 12 8H21C21.8284 8 22.5 8.67157 22.5 9.5C22.5 10.3284 21.8284 11 21 11H14.5V13.5H19.5C20.3284 13.5 21 14.1716 21 15C21 15.8284 20.3284 16.5 19.5 16.5H14.5V22.5C14.5 23.3284 13.8284 24 13 24C12.1716 24 11.5 23.3284 11.5 22.5V16.5H12C11.1716 16.5 10.5 15.8284 10.5 15V9.5Z"
-        fill="url(#fdGradIcon)"
-      />
-    </svg>
-  );
-}
-
-type Tab =
-  "conversations" | "analytics" | "workspace" | "channels" | "developer" | "team" | "audit";
+import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
+import { AppSidebar, type TabKey, FlowDeskBrandIcon } from "@/components/layout/AppSidebar";
+import { Header } from "@/components/layout/Header";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter
+} from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from "@/components/ui/table";
+import { Icons } from "@/components/icons";
 
 export function App() {
   const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
@@ -72,7 +59,7 @@ export function App() {
   const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
 
   // Active tab (defaults to WhatsApp Inbox)
-  const [activeTab, setActiveTab] = useState<Tab>("conversations");
+  const [activeTab, setActiveTab] = useState<TabKey>("conversations");
 
   // Invitation token from URL
   const [inviteToken, setInviteToken] = useState<string | null>(null);
@@ -322,22 +309,21 @@ export function App() {
   // 1. Loading State
   if (loading) {
     return (
-      <div className="login-wrap">
-        <div className="glass-card login-card" role="status" aria-live="polite">
-          <div className="login-icon">
-            <svg
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <circle cx="12" cy="12" r="10" strokeDasharray="32" strokeDashoffset="16" />
-            </svg>
+      <div className="login-wrap flex min-h-screen items-center justify-center bg-background p-4">
+        <div
+          className="glass-card login-card flex flex-col items-center text-center p-8 max-w-sm w-full rounded-2xl border border-border/70 bg-card/80 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 duration-200"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="login-icon mb-4 flex size-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
+            <Icons.spinner className="size-6 animate-spin" />
           </div>
-          <h2 className="login-title">Loading FlowDesk…</h2>
-          <p className="login-subtitle">Verifying secure tenant session</p>
+          <h2 className="login-title text-xl font-bold tracking-tight text-foreground">
+            Loading FlowDesk…
+          </h2>
+          <p className="login-subtitle text-xs text-muted-foreground mt-1.5">
+            Verifying secure tenant session
+          </p>
         </div>
       </div>
     );
@@ -346,19 +332,27 @@ export function App() {
   // 2. Unauthenticated State (Route Guard)
   if (!sessionUser) {
     return (
-      <div className="login-wrap">
-        <div className="glass-card login-card">
-          <div className="login-icon" style={{ background: "transparent", border: "none" }}>
-            <FlowDeskIcon size={40} />
+      <div className="login-wrap flex min-h-screen items-center justify-center bg-background p-4 relative overflow-hidden">
+        {/* Glow backdrop */}
+        <div className="absolute -top-40 -left-40 size-96 rounded-full bg-emerald-500/10 blur-3xl pointer-events-none" />
+        <div className="absolute -bottom-40 -right-40 size-96 rounded-full bg-sky-500/10 blur-3xl pointer-events-none" />
+
+        <div className="glass-card login-card flex flex-col items-center text-center p-8 max-w-md w-full rounded-2xl border border-border/70 bg-card/90 shadow-2xl backdrop-blur-xl z-10">
+          <div className="login-icon mb-4 flex size-14 items-center justify-center rounded-2xl bg-emerald-500/10 border border-emerald-500/20 shadow-inner">
+            <FlowDeskBrandIcon size={34} />
           </div>
-          <h1 className="login-title">FlowDesk</h1>
-          <p className="login-subtitle">AI-first customer operations platform</p>
+          <h1 className="login-title text-2xl font-bold tracking-tight text-foreground">
+            FlowDesk
+          </h1>
+          <p className="login-subtitle text-sm text-muted-foreground mt-1 mb-6">
+            AI-first customer operations & omnichannel platform
+          </p>
           <a
             href="/api/v1/auth/login"
-            className="btn btn-primary"
-            style={{ width: "100%", justifyContent: "center" }}
+            className="btn btn-primary inline-flex h-10 w-full items-center justify-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground shadow hover:bg-primary/90 transition-all cursor-pointer"
             id="login-button"
           >
+            <Icons.login className="mr-2 size-4" />
             Sign in with SSO / OIDC
           </a>
         </div>
@@ -369,67 +363,63 @@ export function App() {
   // 3. Invitation Acceptance View
   if (inviteToken) {
     return (
-      <div className="app-container">
-        <header className="top-nav">
-          <div className="brand-section">
-            <span className="logo-badge">
-              <span className="logo-icon" style={{ display: "inline-flex", alignItems: "center" }}>
-                <FlowDeskIcon size={20} />
-              </span>
+      <div className="app-container min-h-screen bg-background flex flex-col">
+        <header className="top-nav flex h-14 items-center justify-between border-b border-border/70 px-6 bg-background/80 backdrop-blur-md">
+          <div className="brand-section flex items-center gap-2">
+            <span className="logo-badge flex items-center gap-2 font-bold text-base text-foreground">
+              <FlowDeskBrandIcon size={22} />
               FlowDesk
             </span>
           </div>
-          <div className="user-controls">
-            <span className="user-badge">
-              <span className="user-avatar">{sessionUser.displayName.charAt(0)}</span>
+          <div className="user-controls flex items-center gap-3">
+            <span className="user-badge flex items-center gap-2 text-xs font-medium text-muted-foreground">
+              <span className="user-avatar size-6 rounded-full bg-primary/20 flex items-center justify-center font-bold text-primary text-[10px]">
+                {sessionUser.displayName.charAt(0)}
+              </span>
               {sessionUser.displayName}
             </span>
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="xs"
               onClick={() => {
                 void handleLogout();
               }}
               className="btn btn-secondary btn-sm"
             >
               Sign out
-            </button>
+            </Button>
           </div>
         </header>
 
-        <main className="main-content">
-          {errorMsg && <div className="toast-banner toast-error">{errorMsg}</div>}
-          <div className="glass-card empty-state">
-            <div className="empty-icon-wrap">
-              <svg
-                width="28"
-                height="28"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-              >
-                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-                <circle cx="9" cy="7" r="4" />
-                <line x1="19" y1="8" x2="19" y2="14" />
-                <line x1="22" y1="11" x2="16" y2="11" />
-              </svg>
+        <main className="main-content flex-1 flex items-center justify-center p-6">
+          {errorMsg && (
+            <div className="toast-banner toast-error mb-4 max-w-md w-full rounded-lg bg-destructive/10 border border-destructive/20 p-3 text-sm text-destructive" role="alert">
+              {errorMsg}
             </div>
-            <h2 className="empty-title">You've been invited!</h2>
-            <p className="empty-desc">
+          )}
+          <div className="glass-card empty-state max-w-md w-full p-8 rounded-2xl border border-border/70 bg-card/90 text-center shadow-xl backdrop-blur-xl">
+            <div className="empty-icon-wrap mx-auto mb-4 size-14 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
+              <Icons.teams className="size-7" />
+            </div>
+            <h2 className="empty-title text-xl font-bold tracking-tight text-foreground">
+              You've been invited!
+            </h2>
+            <p className="empty-desc text-xs text-muted-foreground mt-2 mb-6">
               You have a pending invitation to join an organization on FlowDesk. Accept below to
               enter the workspace.
             </p>
-            <button
+            <Button
               type="button"
               onClick={() => {
                 void handleAcceptInvite();
               }}
               disabled={acceptingInvite}
-              className="btn btn-primary"
+              className="btn btn-primary w-full"
               id="accept-invite-btn"
             >
               {acceptingInvite ? "Accepting…" : "Accept and Join Organization"}
-            </button>
+            </Button>
           </div>
         </main>
       </div>
@@ -439,63 +429,62 @@ export function App() {
   // 4. Onboarding View (0 Organizations)
   if (organizations.length === 0) {
     return (
-      <div className="app-container">
-        <header className="top-nav">
-          <div className="brand-section">
-            <span className="logo-badge">
-              <span className="logo-icon" style={{ display: "inline-flex", alignItems: "center" }}>
-                <FlowDeskIcon size={20} />
-              </span>
+      <div className="app-container min-h-screen bg-background flex flex-col">
+        <header className="top-nav flex h-14 items-center justify-between border-b border-border/70 px-6 bg-background/80 backdrop-blur-md">
+          <div className="brand-section flex items-center gap-2">
+            <span className="logo-badge flex items-center gap-2 font-bold text-base text-foreground">
+              <FlowDeskBrandIcon size={22} />
               FlowDesk
             </span>
           </div>
-          <div className="user-controls">
-            <span className="user-badge">
-              <span className="user-avatar">{sessionUser.displayName.charAt(0)}</span>
+          <div className="user-controls flex items-center gap-3">
+            <span className="user-badge flex items-center gap-2 text-xs font-medium text-muted-foreground">
+              <span className="user-avatar size-6 rounded-full bg-primary/20 flex items-center justify-center font-bold text-primary text-[10px]">
+                {sessionUser.displayName.charAt(0)}
+              </span>
               {sessionUser.displayName}
             </span>
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="xs"
               onClick={() => {
                 void handleLogout();
               }}
               className="btn btn-secondary btn-sm"
             >
               Sign out
-            </button>
+            </Button>
           </div>
         </header>
 
-        <main className="main-content">
-          {errorMsg && <div className="toast-banner toast-error">{errorMsg}</div>}
-          <div className="glass-card onboarding-wrap">
-            <div className="empty-icon-wrap">
-              <svg
-                width="28"
-                height="28"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-              >
-                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                <polyline points="9 22 9 12 15 12 15 22" />
-              </svg>
+        <main className="main-content flex-1 flex items-center justify-center p-6">
+          {errorMsg && (
+            <div className="toast-banner toast-error mb-4 max-w-md w-full rounded-lg bg-destructive/10 border border-destructive/20 p-3 text-sm text-destructive" role="alert">
+              {errorMsg}
             </div>
-            <h2 className="empty-title">Create your organization</h2>
-            <p className="empty-desc">
+          )}
+          <div className="glass-card onboarding-wrap max-w-md w-full p-8 rounded-2xl border border-border/70 bg-card/90 shadow-xl backdrop-blur-xl">
+            <div className="empty-icon-wrap mx-auto mb-4 size-14 rounded-2xl bg-emerald-500/10 flex items-center justify-center text-emerald-500">
+              <Icons.workspace className="size-7" />
+            </div>
+            <h2 className="empty-title text-xl font-bold tracking-tight text-foreground text-center">
+              Create your organization
+            </h2>
+            <p className="empty-desc text-xs text-muted-foreground text-center mt-1 mb-6">
               Bootstrap an isolated multi-tenant organization to start customer support operations.
             </p>
             <form
               onSubmit={(e) => {
                 void handleBootstrap(e);
               }}
+              className="space-y-4"
             >
-              <div className="form-group">
-                <label className="form-label" htmlFor={newOrgNameId}>
+              <div className="form-group space-y-1.5">
+                <label className="form-label text-xs font-semibold text-foreground" htmlFor={newOrgNameId}>
                   Organization Name
                 </label>
-                <input
+                <Input
                   id={newOrgNameId}
                   type="text"
                   required
@@ -515,11 +504,11 @@ export function App() {
                   className="form-input"
                 />
               </div>
-              <div className="form-group">
-                <label className="form-label" htmlFor={newOrgSlugId}>
+              <div className="form-group space-y-1.5">
+                <label className="form-label text-xs font-semibold text-foreground" htmlFor={newOrgSlugId}>
                   Organization Slug
                 </label>
-                <input
+                <Input
                   id={newOrgSlugId}
                   type="text"
                   required
@@ -532,15 +521,14 @@ export function App() {
                   className="form-input"
                 />
               </div>
-              <button
+              <Button
                 type="submit"
                 disabled={bootstrapping}
-                className="btn btn-primary"
-                style={{ width: "100%", justifyContent: "center" }}
+                className="btn btn-primary w-full"
                 id="create-org-btn"
               >
                 {bootstrapping ? "Provisioning…" : "Create Organization"}
-              </button>
+              </Button>
             </form>
           </div>
         </main>
@@ -548,455 +536,344 @@ export function App() {
     );
   }
 
-  // 5. Authenticated Workspace Shell
+  const tabTitles: Record<TabKey, string> = {
+    conversations: "Inbox & Live Conversations",
+    analytics: "Real-Time Analytics & SLA",
+    workspace: "Workspace",
+    channels: "WhatsApp Channels",
+    developer: "Developer API & Webhooks",
+    team: "Team Settings",
+    audit: "Audit Trail"
+  };
+
+  // 5. Authenticated Modern shadcn Workspace Shell
   return (
-    <div className="app-container">
-      {/* Top Bar */}
-      <header className="top-nav">
-        <div className="brand-section">
-          <span className="logo-badge">
-            <span className="logo-icon" style={{ display: "inline-flex", alignItems: "center" }}>
-              <FlowDeskIcon size={20} />
-            </span>
-            FlowDesk
-          </span>
+    <SidebarProvider defaultOpen>
+      <div className="flex min-h-screen w-full bg-background text-foreground">
+        {/* Modern Collapsible App Sidebar */}
+        <AppSidebar
+          activeTab={activeTab}
+          onSelectTab={setActiveTab}
+          sessionUser={sessionUser}
+          organizations={organizations}
+          selectedOrgId={selectedOrgId}
+          onSelectOrgId={setSelectedOrgId}
+          onLogout={() => {
+            void handleLogout();
+          }}
+        />
 
-          {/* Org Switcher (only for multi-membership users; badge for single org) */}
-          <div className="org-picker-wrap">
-            {organizations.length > 1 ? (
-              <>
-                <label
-                  htmlFor={orgSelectId}
-                  className="visually-hidden"
-                  style={{
-                    position: "absolute",
-                    width: 1,
-                    height: 1,
-                    overflow: "hidden",
-                    clip: "rect(0,0,0,0)"
-                  }}
-                >
-                  Select Organization
-                </label>
-                <select
-                  id={orgSelectId}
-                  value={selectedOrgId ?? ""}
-                  onChange={(e) => setSelectedOrgId(e.target.value)}
-                  className="org-select"
-                  aria-label="Switch organization"
-                >
-                  {organizations.map((org) => (
-                    <option key={org.id} value={org.id}>
-                      {org.name} ({org.role})
-                    </option>
-                  ))}
-                </select>
-              </>
-            ) : (
-              <span className="org-badge" id="active-org-badge">
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                >
-                  <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                </svg>
-                {activeOrg?.name}
-              </span>
-            )}
-          </div>
-        </div>
+        {/* Inset Main App Area */}
+        <SidebarInset className="flex flex-1 flex-col overflow-hidden">
+          {/* Header Bar */}
+          <Header currentTabName={tabTitles[activeTab]} />
 
-        <div className="user-controls">
-          <span className="user-badge">
-            <span className="user-avatar">{sessionUser.displayName.charAt(0)}</span>
-            <span>{sessionUser.displayName}</span>
-            <span className={`role-pill ${currentRole}`} id="user-role-badge">
-              {currentRole.replace("_", " ")}
-            </span>
-          </span>
-          <button
-            type="button"
-            onClick={() => {
-              void handleLogout();
-            }}
-            className="btn btn-secondary btn-sm"
-            id="logout-btn"
-          >
-            Sign out
-          </button>
-        </div>
-      </header>
-
-      {/* Sub Navigation (Tabs) */}
-      <nav className="sub-nav" aria-label="Workspace Sections">
-        <button
-          type="button"
-          onClick={() => setActiveTab("conversations")}
-          className={`tab-btn ${activeTab === "conversations" ? "active" : ""}`}
-          id="tab-conversations"
-          data-testid="tab-conversations"
-        >
-          Inbox
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab("analytics")}
-          className={`tab-btn ${activeTab === "analytics" ? "active" : ""}`}
-          id="tab-analytics"
-          data-testid="tab-analytics"
-        >
-          Analytics & SLA
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab("workspace")}
-          className={`tab-btn ${activeTab === "workspace" ? "active" : ""}`}
-          id="tab-workspace"
-        >
-          Workspace
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab("channels")}
-          className={`tab-btn ${activeTab === "channels" ? "active" : ""}`}
-          id="tab-channels"
-          data-testid="tab-channels"
-        >
-          WhatsApp Channels
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab("developer")}
-          className={`tab-btn ${activeTab === "developer" ? "active" : ""}`}
-          id="tab-developer"
-          data-testid="tab-developer"
-        >
-          Developer API & Webhooks
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab("team")}
-          className={`tab-btn ${activeTab === "team" ? "active" : ""}`}
-          id="tab-team"
-        >
-          Team Settings
-        </button>
-        {canViewAudit && (
-          <button
-            type="button"
-            onClick={() => setActiveTab("audit")}
-            className={`tab-btn ${activeTab === "audit" ? "active" : ""}`}
-            id="tab-audit"
-          >
-            Audit Log
-          </button>
-        )}
-      </nav>
-
-      {/* Main Content Area */}
-      <main className="main-content">
-        {errorMsg && (
-          <div className="toast-banner toast-error" role="alert">
-            <span>{errorMsg}</span>
-            <button type="button" onClick={() => setErrorMsg(null)} className="btn btn-sm">
-              ✕
-            </button>
-          </div>
-        )}
-        {successMsg && (
-          <div className="toast-banner toast-success" role="status">
-            <span>{successMsg}</span>
-            <button type="button" onClick={() => setSuccessMsg(null)} className="btn btn-sm">
-              ✕
-            </button>
-          </div>
-        )}
-
-        {/* Tab 0: WhatsApp Operator Conversation Inbox */}
-        {activeTab === "conversations" && selectedOrgId && sessionUser && (
-          <InboxView
-            organizationId={selectedOrgId}
-            userRole={currentRole}
-            sessionUserId={sessionUser.id}
-          />
-        )}
-
-        {/* Tab: Real-Time Analytics Engine & SLA */}
-        {activeTab === "analytics" && selectedOrgId && <AnalyticsView orgId={selectedOrgId} />}
-
-        {/* Tab: Self-Service WhatsApp Channels */}
-        {activeTab === "channels" && selectedOrgId && (
-          <ChannelsView
-            orgId={selectedOrgId}
-            canManage={hasPermission(currentRole, "automation:publish")}
-            showToast={showToast}
-          />
-        )}
-
-        {/* Tab: Developer API Keys & Webhooks */}
-        {activeTab === "developer" && selectedOrgId && (
-          <DeveloperSettingsView
-            orgId={selectedOrgId}
-            canManage={hasPermission(currentRole, "automation:publish")}
-            showToast={(msg, type) => showToast(msg, type === "error")}
-          />
-        )}
-
-        {/* Tab 1: Empty Workspace Shell */}
-        {activeTab === "workspace" && (
-          <div className="glass-card empty-state">
-            <div className="empty-icon-wrap">
-              <svg
-                width="32"
-                height="32"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
+          {/* Main Content Area */}
+          <main className="main-content flex-1 overflow-y-auto p-4 md:p-6">
+            {errorMsg && (
+              <div
+                className="toast-banner toast-error mb-4 flex items-center justify-between rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive shadow-sm"
+                role="alert"
               >
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-              </svg>
-            </div>
-            <h2 className="empty-title">Inbox is clear</h2>
-            <p className="empty-desc">
-              No active conversations or tickets yet. Your secure tenant boundary in{" "}
-              <strong>{activeOrg?.name}</strong> is verified and ready.
-            </p>
-            {canInvite && (
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTab("team");
-                  setShowInviteModal(true);
-                }}
-                className="btn btn-primary"
-                id="workspace-invite-team-btn"
-              >
-                Invite team members
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* Tab 2: Team Settings */}
-        {activeTab === "team" && (
-          <div className="glass-card">
-            <div className="section-header">
-              <div>
-                <h2 className="section-title">Team Members</h2>
-                <p className="section-subtitle">
-                  Manage members and role permissions for {activeOrg?.name}.
-                </p>
-              </div>
-              {canInvite && (
+                <span>{errorMsg}</span>
                 <button
                   type="button"
-                  onClick={() => setShowInviteModal(true)}
-                  className="btn btn-primary btn-sm"
-                  id="invite-member-btn"
+                  onClick={() => setErrorMsg(null)}
+                  className="size-6 rounded-md hover:bg-destructive/20 text-xs font-bold"
                 >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                  >
-                    <line x1="12" y1="5" x2="12" y2="19" />
-                    <line x1="5" y1="12" x2="19" y2="12" />
-                  </svg>
-                  Invite Member
+                  ✕
                 </button>
-              )}
-            </div>
-
-            {loadingMembers ? (
-              <div style={{ textAlign: "center", padding: "2rem" }}>Loading team…</div>
-            ) : (
-              <div className="table-container">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Member</th>
-                      <th>Email</th>
-                      <th>Role</th>
-                      <th>Status</th>
-                      {canRevokeMember && <th>Actions</th>}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {members.map((member) => (
-                      <tr key={member.id}>
-                        <td>
-                          <strong>{member.displayName}</strong>
-                        </td>
-                        <td>{member.email}</td>
-                        <td>
-                          {canModifyRole ? (
-                            <select
-                              value={member.roleKey}
-                              onChange={(e) =>
-                                void handleRoleChange(member.id, e.target.value as RoleKey)
-                              }
-                              className="form-select"
-                              style={{ width: "auto", padding: "0.2rem 0.5rem" }}
-                              aria-label={`Change role for ${member.displayName}`}
-                            >
-                              <option value="owner">Owner</option>
-                              <option value="admin">Admin</option>
-                              <option value="supervisor">Supervisor</option>
-                              <option value="agent">Agent</option>
-                              <option value="analyst">Analyst</option>
-                              <option value="billing_admin">Billing Admin</option>
-                            </select>
-                          ) : (
-                            <span className={`role-pill ${member.roleKey}`}>
-                              {member.roleKey.replace("_", " ")}
-                            </span>
-                          )}
-                        </td>
-                        <td>
-                          <span
-                            style={{
-                              textTransform: "capitalize",
-                              color:
-                                member.status === "active"
-                                  ? "var(--color-success)"
-                                  : "var(--color-warning)"
-                            }}
-                          >
-                            {member.status}
-                          </span>
-                        </td>
-                        {canRevokeMember && (
-                          <td>
-                            <button
-                              type="button"
-                              onClick={() => void handleRevoke(member.id, member.displayName)}
-                              className="btn btn-danger btn-sm"
-                              aria-label={`Remove ${member.displayName}`}
-                            >
-                              Remove
-                            </button>
-                          </td>
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
               </div>
             )}
-          </div>
-        )}
-
-        {/* Tab 3: Audit Log */}
-        {activeTab === "audit" && canViewAudit && (
-          <div className="glass-card">
-            <div className="section-header">
-              <div>
-                <h2 className="section-title">Audit Trail</h2>
-                <p className="section-subtitle">Tamper-evident event log for {activeOrg?.name}.</p>
+            {successMsg && (
+              <div
+                className="toast-banner toast-success mb-4 flex items-center justify-between rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-600 dark:text-emerald-400 shadow-sm"
+                role="status"
+              >
+                <span>{successMsg}</span>
+                <button
+                  type="button"
+                  onClick={() => setSuccessMsg(null)}
+                  className="size-6 rounded-md hover:bg-emerald-500/20 text-xs font-bold"
+                >
+                  ✕
+                </button>
               </div>
-            </div>
+            )}
 
-            {loadingAudit ? (
-              <div style={{ textAlign: "center", padding: "2rem" }}>Loading audit records…</div>
-            ) : auditLogs.length === 0 ? (
-              <p style={{ textAlign: "center", padding: "2rem", color: "var(--color-text-muted)" }}>
-                No audit events recorded yet.
-              </p>
-            ) : (
-              <div className="table-container">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Time</th>
-                      <th>Action</th>
-                      <th>Target</th>
-                      <th>Result</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {auditLogs.map((log) => (
-                      <tr key={log.id}>
-                        <td>{new Date(log.occurredAt).toLocaleString()}</td>
-                        <td>
-                          <code>{log.action}</code>
-                        </td>
-                        <td>{log.targetType}</td>
-                        <td>
-                          <span
-                            style={{
-                              color:
-                                log.result === "allowed"
-                                  ? "var(--color-success)"
-                                  : "var(--color-danger)"
-                            }}
-                          >
-                            {log.result}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {auditPageInfo?.hasNextPage && auditPageInfo.endCursor && (
-                  <div style={{ padding: "1rem", textAlign: "right" }}>
-                    <button
+            {/* Tab 0: WhatsApp Operator Conversation Inbox */}
+            {activeTab === "conversations" && selectedOrgId && sessionUser && (
+              <InboxView
+                organizationId={selectedOrgId}
+                userRole={currentRole}
+                sessionUserId={sessionUser.id}
+              />
+            )}
+
+            {/* Tab: Real-Time Analytics Engine & SLA */}
+            {activeTab === "analytics" && selectedOrgId && <AnalyticsView orgId={selectedOrgId} />}
+
+            {/* Tab: Self-Service WhatsApp Channels */}
+            {activeTab === "channels" && selectedOrgId && (
+              <ChannelsView
+                orgId={selectedOrgId}
+                canManage={hasPermission(currentRole, "automation:publish")}
+                showToast={showToast}
+              />
+            )}
+
+            {/* Tab: Developer API Keys & Webhooks */}
+            {activeTab === "developer" && selectedOrgId && (
+              <DeveloperSettingsView
+                orgId={selectedOrgId}
+                canManage={hasPermission(currentRole, "automation:publish")}
+                showToast={(msg, type) => showToast(msg, type === "error")}
+              />
+            )}
+
+            {/* Tab 1: Empty Workspace Shell */}
+            {activeTab === "workspace" && (
+              <div className="glass-card empty-state flex flex-col items-center justify-center p-12 text-center rounded-2xl border border-border/70 bg-card/80 shadow-lg">
+                <div className="empty-icon-wrap mb-4 flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                  <Icons.workspace className="size-7" />
+                </div>
+                <h2 className="empty-title text-xl font-bold tracking-tight text-foreground">
+                  Inbox is clear
+                </h2>
+                <p className="empty-desc text-sm text-muted-foreground max-w-md mt-1 mb-6">
+                  No active conversations or tickets yet. Your secure tenant boundary in{" "}
+                  <strong>{activeOrg?.name}</strong> is verified and ready.
+                </p>
+                {canInvite && (
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab("team");
+                      setShowInviteModal(true);
+                    }}
+                    id="workspace-invite-team-btn"
+                    className="btn btn-primary"
+                  >
+                    <Icons.add className="mr-2 size-4" />
+                    Invite team members
+                  </Button>
+                )}
+              </div>
+            )}
+
+            {/* Tab 2: Team Settings */}
+            {activeTab === "team" && (
+              <div className="glass-card rounded-2xl border border-border/70 bg-card/80 p-6 shadow-sm">
+                <div className="section-header flex items-center justify-between pb-6 border-b border-border/60">
+                  <div>
+                    <h2 className="section-title text-lg font-bold tracking-tight text-foreground">
+                      Team Members
+                    </h2>
+                    <p className="section-subtitle text-xs text-muted-foreground mt-0.5">
+                      Manage members and role permissions for {activeOrg?.name}.
+                    </p>
+                  </div>
+                  {canInvite && (
+                    <Button
                       type="button"
-                      onClick={() =>
-                        selectedOrgId &&
-                        void loadAudit(selectedOrgId, auditPageInfo.endCursor ?? undefined)
-                      }
-                      className="btn btn-secondary btn-sm"
+                      onClick={() => setShowInviteModal(true)}
+                      size="sm"
+                      id="invite-member-btn"
+                      className="btn btn-primary btn-sm"
                     >
-                      Next page →
-                    </button>
+                      <Icons.add className="mr-1.5 size-4" />
+                      Invite Member
+                    </Button>
+                  )}
+                </div>
+
+                {loadingMembers ? (
+                  <div className="flex items-center justify-center p-12 text-sm text-muted-foreground">
+                    <Icons.spinner className="mr-2 size-4 animate-spin" />
+                    Loading team…
+                  </div>
+                ) : (
+                  <div className="table-container mt-4 overflow-x-auto rounded-lg border border-border/50">
+                    <Table className="data-table w-full">
+                      <TableHeader>
+                        <TableRow className="border-b border-border/60 bg-muted/30">
+                          <TableHead className="font-semibold text-xs text-muted-foreground">Member</TableHead>
+                          <TableHead className="font-semibold text-xs text-muted-foreground">Email</TableHead>
+                          <TableHead className="font-semibold text-xs text-muted-foreground">Role</TableHead>
+                          <TableHead className="font-semibold text-xs text-muted-foreground">Status</TableHead>
+                          {canRevokeMember && (
+                            <TableHead className="font-semibold text-xs text-muted-foreground text-right">Actions</TableHead>
+                          )}
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {members.map((member) => (
+                          <TableRow key={member.id} className="border-b border-border/40 hover:bg-muted/20">
+                            <TableCell className="font-medium text-sm text-foreground">
+                              {member.displayName}
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground">{member.email}</TableCell>
+                            <TableCell>
+                              {canModifyRole ? (
+                                <select
+                                  value={member.roleKey}
+                                  onChange={(e) =>
+                                    void handleRoleChange(member.id, e.target.value as RoleKey)
+                                  }
+                                  className="form-select rounded-md border border-border bg-background px-2 py-1 text-xs font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                                  aria-label={`Change role for ${member.displayName}`}
+                                >
+                                  <option value="owner">Owner</option>
+                                  <option value="admin">Admin</option>
+                                  <option value="supervisor">Supervisor</option>
+                                  <option value="agent">Agent</option>
+                                  <option value="analyst">Analyst</option>
+                                  <option value="billing_admin">Billing Admin</option>
+                                </select>
+                              ) : (
+                                <Badge variant="secondary" className="text-[11px] capitalize">
+                                  {member.roleKey.replace("_", " ")}
+                                </Badge>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <Badge
+                                variant={member.status === "active" ? "default" : "outline"}
+                                className={
+                                  member.status === "active"
+                                    ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20 text-[10px]"
+                                    : "text-amber-500 border-amber-500/20 text-[10px]"
+                                }
+                              >
+                                {member.status}
+                              </Badge>
+                            </TableCell>
+                            {canRevokeMember && (
+                              <TableCell className="text-right">
+                                <Button
+                                  type="button"
+                                  variant="destructive"
+                                  size="xs"
+                                  onClick={() => void handleRevoke(member.id, member.displayName)}
+                                  className="btn btn-danger btn-sm"
+                                  aria-label={`Remove ${member.displayName}`}
+                                >
+                                  Remove
+                                </Button>
+                              </TableCell>
+                            )}
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
                   </div>
                 )}
               </div>
             )}
-          </div>
-        )}
-      </main>
 
-      {/* Invite Member Modal Dialog */}
-      {showInviteModal && (
-        <div
-          className="modal-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="invite-modal-title"
-        >
-          <div className="modal-card">
-            <div className="modal-header">
-              <h3 className="modal-title" id="invite-modal-title">
+            {/* Tab 3: Audit Log */}
+            {activeTab === "audit" && canViewAudit && (
+              <div className="glass-card rounded-2xl border border-border/70 bg-card/80 p-6 shadow-sm">
+                <div className="section-header pb-6 border-b border-border/60">
+                  <h2 className="section-title text-lg font-bold tracking-tight text-foreground">
+                    Audit Trail
+                  </h2>
+                  <p className="section-subtitle text-xs text-muted-foreground mt-0.5">
+                    Tamper-evident event log for {activeOrg?.name}.
+                  </p>
+                </div>
+
+                {loadingAudit ? (
+                  <div className="flex items-center justify-center p-12 text-sm text-muted-foreground">
+                    <Icons.spinner className="mr-2 size-4 animate-spin" />
+                    Loading audit records…
+                  </div>
+                ) : auditLogs.length === 0 ? (
+                  <p className="p-12 text-center text-sm text-muted-foreground">
+                    No audit events recorded yet.
+                  </p>
+                ) : (
+                  <div className="table-container mt-4 overflow-x-auto rounded-lg border border-border/50">
+                    <Table className="data-table w-full">
+                      <TableHeader>
+                        <TableRow className="border-b border-border/60 bg-muted/30">
+                          <TableHead className="font-semibold text-xs text-muted-foreground">Time</TableHead>
+                          <TableHead className="font-semibold text-xs text-muted-foreground">Action</TableHead>
+                          <TableHead className="font-semibold text-xs text-muted-foreground">Target</TableHead>
+                          <TableHead className="font-semibold text-xs text-muted-foreground">Result</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {auditLogs.map((log) => (
+                          <TableRow key={log.id} className="border-b border-border/40 hover:bg-muted/20">
+                            <TableCell className="text-xs text-muted-foreground font-mono">
+                              {new Date(log.occurredAt).toLocaleString()}
+                            </TableCell>
+                            <TableCell className="text-xs font-mono text-foreground font-medium">
+                              <code>{log.action}</code>
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground">{log.targetType}</TableCell>
+                            <TableCell>
+                              <Badge
+                                variant="outline"
+                                className={
+                                  log.result === "allowed"
+                                    ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20 text-[10px]"
+                                    : "bg-destructive/10 text-destructive border-destructive/20 text-[10px]"
+                                }
+                              >
+                                {log.result}
+                              </Badge>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                    {auditPageInfo?.hasNextPage && auditPageInfo.endCursor && (
+                      <div className="p-3 border-t border-border/40 text-right">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            selectedOrgId &&
+                            void loadAudit(selectedOrgId, auditPageInfo.endCursor ?? undefined)
+                          }
+                          className="btn btn-secondary btn-sm"
+                        >
+                          Next page →
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </main>
+        </SidebarInset>
+
+        {/* Invite Member Dialog Modal */}
+        <Dialog open={showInviteModal} onOpenChange={setShowInviteModal}>
+          <DialogContent className="max-w-md bg-card/95 backdrop-blur-xl border border-border/80 p-6 rounded-2xl shadow-2xl">
+            <DialogHeader>
+              <DialogTitle id="invite-modal-title" className="text-lg font-bold text-foreground">
                 Invite Team Member
-              </h3>
-              <button
-                type="button"
-                onClick={() => setShowInviteModal(false)}
-                className="btn btn-secondary btn-sm"
-                aria-label="Close dialog"
-              >
-                ✕
-              </button>
-            </div>
+              </DialogTitle>
+              <DialogDescription className="text-xs text-muted-foreground">
+                Send an email invitation with assigned role to join {activeOrg?.name}.
+              </DialogDescription>
+            </DialogHeader>
             <form
               onSubmit={(e) => {
                 void handleInviteSubmit(e);
               }}
+              className="space-y-4 mt-2"
             >
-              <div className="form-group">
-                <label className="form-label" htmlFor={inviteEmailId}>
+              <div className="form-group space-y-1.5">
+                <label className="form-label text-xs font-semibold text-foreground" htmlFor={inviteEmailId}>
                   Email Address
                 </label>
-                <input
+                <Input
                   id={inviteEmailId}
                   type="email"
                   required
@@ -1006,15 +883,15 @@ export function App() {
                   className="form-input"
                 />
               </div>
-              <div className="form-group">
-                <label className="form-label" htmlFor={inviteRoleId}>
+              <div className="form-group space-y-1.5">
+                <label className="form-label text-xs font-semibold text-foreground" htmlFor={inviteRoleId}>
                   Organization Role
                 </label>
                 <select
                   id={inviteRoleId}
                   value={inviteRole}
                   onChange={(e) => setInviteRole(e.target.value as RoleKey)}
-                  className="form-select"
+                  className="form-select w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                 >
                   <option value="owner">Owner</option>
                   <option value="admin">Admin</option>
@@ -1024,27 +901,30 @@ export function App() {
                   <option value="billing_admin">Billing Admin</option>
                 </select>
               </div>
-              <div className="modal-actions">
-                <button
+              <DialogFooter className="modal-actions pt-2 flex items-center justify-end gap-2">
+                <Button
                   type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={() => setShowInviteModal(false)}
                   className="btn btn-secondary"
                 >
                   Cancel
-                </button>
-                <button
+                </Button>
+                <Button
                   type="submit"
+                  size="sm"
                   disabled={inviting}
                   className="btn btn-primary"
                   id="send-invite-btn"
                 >
                   {inviting ? "Sending…" : "Send Invitation"}
-                </button>
-              </div>
+                </Button>
+              </DialogFooter>
             </form>
-          </div>
-        </div>
-      )}
-    </div>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </SidebarProvider>
   );
 }

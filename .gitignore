@@ -17,3 +17,5 @@ infra/terraform/**/*.tfstate
 infra/terraform/**/*.tfstate.*
 infra/terraform/**/crash.log
 tempt.md
+next-shadcn-dashboard-starter/
+_reference_ui/
