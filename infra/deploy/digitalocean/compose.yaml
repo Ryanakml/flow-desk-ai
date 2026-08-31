@@ -116,7 +116,7 @@ services:
     <<: *app-defaults
     image: ${IMAGE_REGISTRY:-ghcr.io/ryanakml}/flowdesk-worker:${IMAGE_TAG}
     environment:
-      <<: *app-environment
+      <<: [*app-environment, *api-ai-environment]
       PORT: "4002"
 
   scheduler:

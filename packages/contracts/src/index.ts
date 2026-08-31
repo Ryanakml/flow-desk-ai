@@ -793,7 +793,55 @@ export const GenerateDownloadUrlResponseSchema = z.object({
 });
 export type GenerateDownloadUrlResponse = z.infer<typeof GenerateDownloadUrlResponseSchema>;
 
-// M4: Bot Configuration and AI Draft schemas
+// M4: Knowledge ingestion, Bot Configuration and AI Draft schemas
+export const KnowledgeSourceStateSchema = z.enum([
+  "queued",
+  "processing",
+  "ready",
+  "failed",
+  "archived"
+]);
+
+export const KnowledgeSourceSchema = z.object({
+  id: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  type: z.enum(["text", "file", "url"]),
+  name: z.string(),
+  sourceUri: z.string().url().nullable(),
+  status: KnowledgeSourceStateSchema,
+  statusReason: z.string().nullable(),
+  byteSize: z.number().int().nonnegative(),
+  lastIndexedAt: z.string().datetime({ offset: true }).nullable(),
+  createdAt: z.string().datetime({ offset: true }),
+  updatedAt: z.string().datetime({ offset: true })
+});
+export type KnowledgeSourceResponse = z.infer<typeof KnowledgeSourceSchema>;
+
+export const ListKnowledgeSourcesResponseSchema = z.object({
+  sources: z.array(KnowledgeSourceSchema)
+});
+export type ListKnowledgeSourcesResponse = z.infer<typeof ListKnowledgeSourcesResponseSchema>;
+
+export const CreateKnowledgeSourceRequestSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("text"),
+    name: z.string().trim().min(1).max(200),
+    content: z.string().trim().min(1).max(500_000)
+  }),
+  z.object({
+    type: z.literal("url"),
+    name: z.string().trim().min(1).max(200),
+    url: z.string().url().max(2_048)
+  })
+]);
+export type CreateKnowledgeSourceRequest = z.infer<typeof CreateKnowledgeSourceRequestSchema>;
+
+export const CreateKnowledgeSourceResponseSchema = z.object({
+  source: KnowledgeSourceSchema,
+  jobId: z.string().uuid()
+});
+export type CreateKnowledgeSourceResponse = z.infer<typeof CreateKnowledgeSourceResponseSchema>;
+
 export const BotConfigSchema = z.object({
   id: z.string().uuid(),
   organizationId: z.string().uuid(),

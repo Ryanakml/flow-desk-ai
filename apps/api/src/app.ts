@@ -27,6 +27,7 @@ import { createRoutingRouter } from "./routing.js";
 import { createChannelsRouter } from "./channels.js";
 import { createDeveloperRouter } from "./developer.js";
 import { createAnalyticsRouter } from "./analytics.js";
+import { createKnowledgeRouter } from "./knowledge.js";
 import type { ObjectStore } from "@flowdesk/providers";
 import type { AiRuntime } from "./ai-runtime.js";
 export { createAuthRouter, createRequireAuthMiddleware, type AuthenticatedUser } from "./auth.js";
@@ -41,6 +42,7 @@ export { createBotRouter } from "./bot.js";
 export { createRoutingRouter } from "./routing.js";
 export { createChannelsRouter } from "./channels.js";
 export { createDeveloperRouter } from "./developer.js";
+export { createKnowledgeRouter } from "./knowledge.js";
 
 export interface ApiAppAuthOptions {
   db: DbClient;
@@ -240,6 +242,10 @@ export function createApiApp(options: ApiAppOptions) {
         db: options.auth.db,
         ...(options.auth.ai ? { ai: options.auth.ai } : {})
       })
+    );
+    app.use(
+      "/api/v1/organizations/:orgId/knowledge",
+      createKnowledgeRouter({ db: options.auth.db })
     );
     app.use(
       "/api/v1/organizations/:orgId/routing",

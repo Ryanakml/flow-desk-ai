@@ -43,6 +43,11 @@ import {
   type UpdateBotConfigRequest,
   GenerateBotDraftResponseSchema,
   type GenerateBotDraftResponse,
+  type CreateKnowledgeSourceRequest,
+  type CreateKnowledgeSourceResponse,
+  CreateKnowledgeSourceResponseSchema,
+  type ListKnowledgeSourcesResponse,
+  ListKnowledgeSourcesResponseSchema,
   StartWhatsAppEmbeddedSignupResponseSchema,
   CompleteWhatsAppEmbeddedSignupResponseSchema
 } from "@flowdesk/contracts";
@@ -770,4 +775,27 @@ export async function exportAnalyticsReportApi(
     await handleResponse(res);
   }
   return res.blob();
+}
+
+export async function listKnowledgeSourcesApi(
+  orgId: string,
+  fetcher: typeof fetch = fetch
+): Promise<ListKnowledgeSourcesResponse> {
+  const response = await fetcher(`/api/v1/organizations/${orgId}/knowledge/sources`, {
+    cache: "no-store"
+  });
+  return ListKnowledgeSourcesResponseSchema.parse(await handleResponse<unknown>(response));
+}
+
+export async function createKnowledgeSourceApi(
+  orgId: string,
+  body: CreateKnowledgeSourceRequest,
+  fetcher: typeof fetch = fetch
+): Promise<CreateKnowledgeSourceResponse> {
+  const response = await fetcher(`/api/v1/organizations/${orgId}/knowledge/sources`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  return CreateKnowledgeSourceResponseSchema.parse(await handleResponse<unknown>(response));
 }

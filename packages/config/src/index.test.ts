@@ -246,6 +246,6 @@ describe("docker compose deployment contract", () => {
     expect(aiEnvironment).toContain("AI_PROVIDER: ${AI_PROVIDER:-disabled}");
     expect(aiEnvironment).toContain("OPENAI_API_KEY: ${OPENAI_API_KEY:-}");
     expect(apiService).toContain("*api-ai-environment");
-    expect(workerService).not.toContain("*api-ai-environment");
+    expect(workerService).toContain("*api-ai-environment");
   });
 });

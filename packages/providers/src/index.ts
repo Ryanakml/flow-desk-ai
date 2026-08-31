@@ -14,6 +14,11 @@ export {
   normalizeAiProviderFetchError,
   type AiProviderErrorCode
 } from "./ai-error.js";
+export {
+  createAiProviderRuntime,
+  type AiProviderRuntime,
+  type AiProviderRuntimeConfig
+} from "./ai-runtime.js";
 
 export {
   type VerifiedIdentityClaims,

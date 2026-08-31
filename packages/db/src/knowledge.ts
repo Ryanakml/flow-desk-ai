@@ -7,6 +7,7 @@ export type BotTone = "professional" | "friendly" | "concise" | "formal";
 export type BotLanguage = "id" | "en" | "auto";
 export type BotRunStatus = "started" | "completed" | "failed" | "fallback_no_evidence";
 export type OperatorAction = "approved" | "edited" | "rejected" | "ignored";
+export type KnowledgeIngestionJobStatus = "queued" | "processing" | "completed" | "failed";
 
 export interface KnowledgeSource {
   id: string;
@@ -17,6 +18,7 @@ export interface KnowledgeSource {
   status: KnowledgeSourceStatus;
   statusReason: string | null;
   contentHash: string | null;
+  dedupeKey: string | null;
   byteSize: number;
   metadata: Record<string, unknown>;
   lastIndexedAt: Date | null;
@@ -57,6 +59,20 @@ export interface DocumentChunk {
 
 export interface DocumentChunkSearchResult extends DocumentChunk {
   similarity: number;
+}
+
+export interface KnowledgeIngestionJob {
+  id: string;
+  organizationId: string;
+  sourceId: string;
+  dedupeKey: string;
+  inputText: string | null;
+  status: KnowledgeIngestionJobStatus;
+  attempts: number;
+  maxAttempts: number;
+  availableAt: Date;
+  errorCode: string | null;
+  errorDetail: string | null;
 }
 
 export interface KnowledgeVersion {
@@ -124,6 +140,7 @@ export async function createKnowledgeSource(
     name: string;
     sourceUri?: string | null;
     contentHash?: string | null;
+    dedupeKey?: string | null;
     byteSize?: number;
     metadata?: Record<string, unknown>;
     createdByUserId?: string | null;
@@ -138,6 +155,7 @@ export async function createKnowledgeSource(
     status: KnowledgeSourceStatus;
     status_reason: string | null;
     content_hash: string | null;
+    dedupe_key: string | null;
     byte_size: string;
     metadata: Record<string, unknown>;
     last_indexed_at: Date | null;
@@ -147,8 +165,11 @@ export async function createKnowledgeSource(
     deleted_at: Date | null;
   }>(
     `INSERT INTO flowdesk.knowledge_sources (
-      organization_id, type, name, source_uri, content_hash, byte_size, metadata, created_by_user_id
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      organization_id, type, name, source_uri, content_hash, dedupe_key, byte_size, metadata, created_by_user_id
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    ON CONFLICT (organization_id, dedupe_key)
+      WHERE dedupe_key IS NOT NULL AND deleted_at IS NULL
+    DO UPDATE SET updated_at = flowdesk.knowledge_sources.updated_at
     RETURNING *`,
     [
       input.organizationId,
@@ -156,6 +177,7 @@ export async function createKnowledgeSource(
       input.name,
       input.sourceUri ?? null,
       input.contentHash ?? null,
+      input.dedupeKey ?? null,
       input.byteSize ?? 0,
       JSON.stringify(input.metadata ?? {}),
       input.createdByUserId ?? null
@@ -172,6 +194,7 @@ export async function createKnowledgeSource(
     status: row.status,
     statusReason: row.status_reason,
     contentHash: row.content_hash,
+    dedupeKey: row.dedupe_key ?? input.dedupeKey ?? null,
     byteSize: Number(row.byte_size),
     metadata: row.metadata,
     lastIndexedAt: row.last_indexed_at,
@@ -195,6 +218,7 @@ export async function getKnowledgeSourceById(
     status: KnowledgeSourceStatus;
     status_reason: string | null;
     content_hash: string | null;
+    dedupe_key: string | null;
     byte_size: string;
     metadata: Record<string, unknown>;
     last_indexed_at: Date | null;
@@ -219,6 +243,7 @@ export async function getKnowledgeSourceById(
     status: row.status,
     statusReason: row.status_reason,
     contentHash: row.content_hash,
+    dedupeKey: row.dedupe_key ?? null,
     byteSize: Number(row.byte_size),
     metadata: row.metadata,
     lastIndexedAt: row.last_indexed_at,
@@ -242,6 +267,7 @@ export async function listKnowledgeSources(
     status: KnowledgeSourceStatus;
     status_reason: string | null;
     content_hash: string | null;
+    dedupe_key: string | null;
     byte_size: string;
     metadata: Record<string, unknown>;
     last_indexed_at: Date | null;
@@ -265,6 +291,7 @@ export async function listKnowledgeSources(
     status: row.status,
     statusReason: row.status_reason,
     contentHash: row.content_hash,
+    dedupeKey: row.dedupe_key ?? null,
     byteSize: Number(row.byte_size),
     metadata: row.metadata,
     lastIndexedAt: row.last_indexed_at,
@@ -288,6 +315,192 @@ export async function updateKnowledgeSourceStatus(
      WHERE id = $3`,
     [status, statusReason ?? null, id]
   );
+}
+
+export async function enqueueKnowledgeIngestionJob(
+  db: DbClient,
+  input: {
+    organizationId: string;
+    sourceId: string;
+    dedupeKey: string;
+    inputText?: string | null;
+  }
+): Promise<KnowledgeIngestionJob> {
+  const res = await db.query<{
+    id: string;
+    organization_id: string;
+    source_id: string;
+    dedupe_key: string;
+    input_text: string | null;
+    status: KnowledgeIngestionJobStatus;
+    attempts: number;
+    max_attempts: number;
+    available_at: Date;
+    error_code: string | null;
+    error_detail: string | null;
+  }>(
+    `INSERT INTO flowdesk.knowledge_ingestion_jobs (
+       organization_id, source_id, dedupe_key, input_text
+     ) VALUES ($1, $2, $3, $4)
+     ON CONFLICT (organization_id, dedupe_key) DO UPDATE
+       SET status = CASE
+             WHEN flowdesk.knowledge_ingestion_jobs.status = 'failed' THEN 'queued'
+             ELSE flowdesk.knowledge_ingestion_jobs.status
+           END,
+           attempts = CASE
+             WHEN flowdesk.knowledge_ingestion_jobs.status = 'failed' THEN 0
+             ELSE flowdesk.knowledge_ingestion_jobs.attempts
+           END,
+           available_at = CASE
+             WHEN flowdesk.knowledge_ingestion_jobs.status = 'failed' THEN clock_timestamp()
+             ELSE flowdesk.knowledge_ingestion_jobs.available_at
+           END,
+           error_code = CASE
+             WHEN flowdesk.knowledge_ingestion_jobs.status = 'failed' THEN NULL
+             ELSE flowdesk.knowledge_ingestion_jobs.error_code
+           END,
+           error_detail = CASE
+             WHEN flowdesk.knowledge_ingestion_jobs.status = 'failed' THEN NULL
+             ELSE flowdesk.knowledge_ingestion_jobs.error_detail
+           END,
+           updated_at = clock_timestamp()
+     RETURNING id, organization_id, source_id, dedupe_key, input_text, status,
+               attempts, max_attempts, available_at, error_code, error_detail`,
+    [input.organizationId, input.sourceId, input.dedupeKey, input.inputText ?? null]
+  );
+  return mapKnowledgeIngestionJob(res.rows[0]!);
+}
+
+export async function claimKnowledgeIngestionJobs(
+  db: DbClient,
+  limit = 10
+): Promise<
+  Array<{
+    id: string;
+    organizationId: string;
+    sourceId: string;
+    attempts: number;
+    maxAttempts: number;
+  }>
+> {
+  const res = await db.query<{
+    id: string;
+    organization_id: string;
+    source_id: string;
+    attempts: number;
+    max_attempts: number;
+  }>(`SELECT * FROM flowdesk.claim_knowledge_ingestion_jobs($1::integer)`, [limit]);
+  return res.rows.map((row) => ({
+    id: row.id,
+    organizationId: row.organization_id,
+    sourceId: row.source_id,
+    attempts: row.attempts,
+    maxAttempts: row.max_attempts
+  }));
+}
+
+export async function getKnowledgeIngestionJob(
+  db: DbClient,
+  id: string
+): Promise<KnowledgeIngestionJob | null> {
+  const res = await db.query<{
+    id: string;
+    organization_id: string;
+    source_id: string;
+    dedupe_key: string;
+    input_text: string | null;
+    status: KnowledgeIngestionJobStatus;
+    attempts: number;
+    max_attempts: number;
+    available_at: Date;
+    error_code: string | null;
+    error_detail: string | null;
+  }>(
+    `SELECT id, organization_id, source_id, dedupe_key, input_text, status,
+            attempts, max_attempts, available_at, error_code, error_detail
+     FROM flowdesk.knowledge_ingestion_jobs WHERE id = $1`,
+    [id]
+  );
+  return res.rows[0] ? mapKnowledgeIngestionJob(res.rows[0]) : null;
+}
+
+export async function updateKnowledgeIngestionJob(
+  db: DbClient,
+  input: {
+    id: string;
+    status: "queued" | "completed" | "failed";
+    availableAt?: Date;
+    errorCode?: string | null;
+    errorDetail?: string | null;
+  }
+): Promise<void> {
+  await db.query(
+    `UPDATE flowdesk.knowledge_ingestion_jobs
+     SET status = $2,
+         input_text = CASE WHEN $2 = 'completed' THEN NULL ELSE input_text END,
+         available_at = COALESCE($3, available_at),
+         error_code = $4,
+         error_detail = $5,
+         completed_at = CASE WHEN $2 IN ('completed', 'failed') THEN clock_timestamp() ELSE NULL END,
+         updated_at = clock_timestamp()
+     WHERE id = $1`,
+    [
+      input.id,
+      input.status,
+      input.availableAt ?? null,
+      input.errorCode ?? null,
+      input.errorDetail ?? null
+    ]
+  );
+}
+
+export async function replaceKnowledgeSourceDocument(
+  db: DbClient,
+  input: Parameters<typeof createDocumentWithChunks>[1]
+): Promise<{ documentId: string; chunkCount: number }> {
+  await db.query(`DELETE FROM flowdesk.documents WHERE source_id = $1`, [input.sourceId]);
+  return createDocumentWithChunks(db, input);
+}
+
+export async function completeKnowledgeSourceIngestion(
+  db: DbClient,
+  input: { sourceId: string; contentHash: string; byteSize: number }
+): Promise<void> {
+  await db.query(
+    `UPDATE flowdesk.knowledge_sources
+     SET status = 'active', status_reason = NULL, content_hash = $2, byte_size = $3,
+         last_indexed_at = clock_timestamp(), updated_at = clock_timestamp()
+     WHERE id = $1`,
+    [input.sourceId, input.contentHash, input.byteSize]
+  );
+}
+
+function mapKnowledgeIngestionJob(row: {
+  id: string;
+  organization_id: string;
+  source_id: string;
+  dedupe_key: string;
+  input_text: string | null;
+  status: KnowledgeIngestionJobStatus;
+  attempts: number;
+  max_attempts: number;
+  available_at: Date;
+  error_code: string | null;
+  error_detail: string | null;
+}): KnowledgeIngestionJob {
+  return {
+    id: row.id,
+    organizationId: row.organization_id,
+    sourceId: row.source_id,
+    dedupeKey: row.dedupe_key,
+    inputText: row.input_text,
+    status: row.status,
+    attempts: row.attempts,
+    maxAttempts: row.max_attempts,
+    availableAt: row.available_at,
+    errorCode: row.error_code,
+    errorDetail: row.error_detail
+  };
 }
 
 // ----------------------------------------------------------------------

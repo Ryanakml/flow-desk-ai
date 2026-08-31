@@ -65,7 +65,8 @@ describe("database foundation", () => {
       "0018_user_organization_discovery.sql",
       "0019_m5_routing_rules.sql",
       "0020_m6_developer_integrations.sql",
-      "0021_m6_meta_embedded_signup.sql"
+      "0021_m6_meta_embedded_signup.sql",
+      "0022_m4_knowledge_ingestion_jobs.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -186,13 +187,14 @@ describe("database foundation", () => {
        JOIN pg_roles AS owner ON owner.oid = procedure.proowner
        WHERE namespace.nspname = 'flowdesk'
          AND procedure.proname IN (
-           'claim_attachment_scan_events', 'claim_outbox_events', 'list_attachment_retention_candidates',
+           'claim_attachment_scan_events', 'claim_knowledge_ingestion_jobs', 'claim_outbox_events', 'list_attachment_retention_candidates',
            'list_user_organizations', 'messaging_operational_snapshot', 'record_whatsapp_webhook'
          )
        ORDER BY procedure.proname`
     );
     expect(functions.rows).toEqual([
       { proname: "claim_attachment_scan_events", owner: "flowdesk_system" },
+      { proname: "claim_knowledge_ingestion_jobs", owner: "flowdesk_system" },
       { proname: "claim_outbox_events", owner: "flowdesk_system" },
       { proname: "list_attachment_retention_candidates", owner: "flowdesk_system" },
       { proname: "list_user_organizations", owner: "flowdesk_system" },
@@ -231,6 +233,7 @@ describe("database foundation", () => {
       "idempotency_keys",
       "identities",
       "invitations",
+      "knowledge_ingestion_jobs",
       "knowledge_sources",
       "knowledge_versions",
       "memberships",
@@ -281,6 +284,7 @@ describe("database foundation", () => {
       "documents",
       "idempotency_keys",
       "invitations",
+      "knowledge_ingestion_jobs",
       "knowledge_sources",
       "knowledge_versions",
       "memberships",
@@ -867,6 +871,7 @@ describe("database foundation", () => {
       "bot_runs",
       "document_chunks",
       "documents",
+      "knowledge_ingestion_jobs",
       "knowledge_sources",
       "knowledge_versions"
     ];
