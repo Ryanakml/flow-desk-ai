@@ -18,26 +18,55 @@ const SAFE_MESSAGES: Record<AiProviderErrorCode, string> = {
 export class AiProviderError extends Error {
   readonly code: AiProviderErrorCode;
   readonly retryable: boolean;
+  httpStatus?: number | undefined;
+  httpBody?: string | undefined;
 
-  constructor(code: AiProviderErrorCode, options?: { cause?: unknown; retryable?: boolean }) {
+  constructor(
+    code: AiProviderErrorCode,
+    options?: {
+      cause?: unknown;
+      retryable?: boolean | undefined;
+      httpStatus?: number | undefined;
+      httpBody?: string | undefined;
+    }
+  ) {
     super(SAFE_MESSAGES[code], options?.cause === undefined ? undefined : { cause: options.cause });
     this.name = "AiProviderError";
     this.code = code;
     this.retryable = options?.retryable ?? false;
+    this.httpStatus = options?.httpStatus;
+    this.httpBody = options?.httpBody;
   }
 }
 
-export function classifyAiProviderHttpError(status: number): AiProviderError {
+export function classifyAiProviderHttpError(
+  status: number,
+  responseBody?: string
+): AiProviderError {
   if (status === 401 || status === 403) {
-    return new AiProviderError("AI_PROVIDER_AUTHENTICATION");
+    return new AiProviderError("AI_PROVIDER_AUTHENTICATION", {
+      httpStatus: status,
+      httpBody: responseBody
+    });
   }
   if (status === 429) {
-    return new AiProviderError("AI_PROVIDER_RATE_LIMITED", { retryable: true });
+    return new AiProviderError("AI_PROVIDER_RATE_LIMITED", {
+      retryable: true,
+      httpStatus: status,
+      httpBody: responseBody
+    });
   }
   if (status >= 500) {
-    return new AiProviderError("AI_PROVIDER_UNAVAILABLE", { retryable: true });
+    return new AiProviderError("AI_PROVIDER_UNAVAILABLE", {
+      retryable: true,
+      httpStatus: status,
+      httpBody: responseBody
+    });
   }
-  return new AiProviderError("AI_PROVIDER_INVALID_RESPONSE");
+  return new AiProviderError("AI_PROVIDER_INVALID_RESPONSE", {
+    httpStatus: status,
+    httpBody: responseBody
+  });
 }
 
 export function normalizeAiProviderFetchError(error: unknown): AiProviderError {

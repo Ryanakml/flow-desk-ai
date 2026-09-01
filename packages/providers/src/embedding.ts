@@ -235,14 +235,23 @@ export class GeminiEmbeddingProvider implements AiEmbeddingProvider {
     }
 
     if (!response.ok) {
-      throw classifyAiProviderHttpError(response.status);
+      let responseBody: string | undefined;
+      try {
+        responseBody = await response.text();
+      } catch {
+        // ignore
+      }
+      throw classifyAiProviderHttpError(response.status, responseBody);
     }
 
     let body: unknown;
     try {
       body = await response.json();
     } catch (error) {
-      throw new AiProviderError("AI_PROVIDER_INVALID_RESPONSE", { cause: error });
+      throw new AiProviderError("AI_PROVIDER_INVALID_RESPONSE", {
+        cause: error,
+        httpStatus: response.status
+      });
     }
 
     const parsed = body as {

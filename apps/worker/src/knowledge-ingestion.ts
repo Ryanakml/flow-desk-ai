@@ -30,6 +30,11 @@ export interface KnowledgeIngestionOptions {
   fetcher?: typeof fetch;
   maxFetchBytes?: number;
   fetchTimeoutMs?: number;
+  logger?: {
+    error: (context: Record<string, unknown>, message: string) => void;
+    info?: (context: Record<string, unknown>, message: string) => void;
+    warn?: (context: Record<string, unknown>, message: string) => void;
+  };
 }
 
 function safeFailure(error: unknown): { code: string; detail: string; retryable: boolean } {
@@ -78,6 +83,7 @@ export async function processKnowledgeIngestionBatch(
   const jobs = await claimKnowledgeIngestionJobs(db, limit);
 
   for (const claimed of jobs) {
+    let currentStage = "fetch_and_extract";
     try {
       await runInTenantTransaction(
         db,
@@ -117,17 +123,25 @@ export async function processKnowledgeIngestionBatch(
             throw new Error("UNSUPPORTED_KNOWLEDGE_SOURCE");
           }
 
+          currentStage = "extraction";
           const extracted = extractKnowledgeContent(rawContent, contentType, {
             defaultTitle: source.name
           });
+
+          currentStage = "chunking";
           const chunks = chunkText(extracted.text, { maxChunkTokens: 300, overlapTokens: 50 });
           if (chunks.length === 0) throw new Error("KNOWLEDGE_CONTENT_EMPTY");
+
+          currentStage = "embedding";
           const vectors = await generateEmbeddingsInBatches(
             options.embeddingProvider,
             chunks.map((chunk) => chunk.content)
           );
+
+          currentStage = "vector_normalization";
           if (vectors.length !== chunks.length) throw new Error("EMBEDDING_COUNT_MISMATCH");
 
+          currentStage = "db_persistence";
           const contentHash = createHash("sha256").update(extracted.text, "utf8").digest("hex");
           await replaceKnowledgeSourceDocument(tenantDb, {
             organizationId: claimed.organizationId,
@@ -156,6 +170,50 @@ export async function processKnowledgeIngestionBatch(
     } catch (error) {
       const failure = safeFailure(error);
       const willRetry = failure.retryable && claimed.attempts < claimed.maxAttempts;
+
+      const aiErr = error instanceof AiProviderError ? error : undefined;
+      const dbErr = error as Error & {
+        code?: unknown;
+        detail?: unknown;
+        constraint?: unknown;
+        schema?: unknown;
+        table?: unknown;
+      };
+
+      const embeddingModel =
+        (options.embeddingProvider as { modelId?: string }).modelId ??
+        (options.embeddingProvider as { model?: string }).model ??
+        "unknown";
+
+      const errorPayload: Record<string, unknown> = {
+        organizationId: claimed.organizationId,
+        sourceId: claimed.sourceId,
+        jobId: claimed.id,
+        stage: currentStage,
+        provider: options.embeddingProvider.name,
+        embeddingModel,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+        errorMessage: error instanceof Error ? error.message : String(error),
+        ...(error instanceof Error && error.stack ? { stack: error.stack } : {}),
+        ...(aiErr?.httpStatus !== undefined ? { httpStatus: aiErr.httpStatus } : {}),
+        ...(aiErr?.httpBody !== undefined ? { httpBody: aiErr.httpBody } : {}),
+        ...(typeof dbErr?.code === "string" ? { pgCode: dbErr.code, errorCode: dbErr.code } : {}),
+        ...(typeof dbErr?.detail === "string"
+          ? { pgDetail: dbErr.detail, errorDetail: dbErr.detail }
+          : {}),
+        ...(typeof dbErr?.constraint === "string"
+          ? { pgConstraint: dbErr.constraint, errorConstraint: dbErr.constraint }
+          : {})
+      };
+
+      if (options.logger?.error) {
+        options.logger.error(errorPayload, "worker.knowledge_ingestion.failed");
+      } else {
+        process.stderr.write(
+          `${JSON.stringify({ level: "error", msg: "worker.knowledge_ingestion.failed", ...errorPayload })}\n`
+        );
+      }
+
       await runInTenantTransaction(
         db,
         { organizationId: claimed.organizationId },
