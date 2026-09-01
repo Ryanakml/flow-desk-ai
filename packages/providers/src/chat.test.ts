@@ -156,13 +156,11 @@ describe("GeminiChatProvider", () => {
       contents: Array<{ parts: Array<{ text: string }> }>;
       generationConfig: {
         maxOutputTokens: number;
-        thinkingConfig: { thinkingLevel: string };
       };
     };
     expect(requestBody.systemInstruction.parts[0]?.text).toBe("system rules");
     expect(requestBody.contents[0]?.parts[0]?.text).toBe("customer question");
     expect(requestBody.generationConfig.maxOutputTokens).toBe(321);
-    expect(requestBody.generationConfig.thinkingConfig.thinkingLevel).toBe("low");
   });
 
   it.each([

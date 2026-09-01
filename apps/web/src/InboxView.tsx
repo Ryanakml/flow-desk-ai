@@ -238,11 +238,15 @@ export function InboxView({
 
   useEffect(() => {
     if (!selectedConversationId) return;
+    const isPending = copilotDraft?.status === "queued" || copilotDraft?.status === "processing";
+    if (!isPending && copilotDraft !== null && copilotDraft !== undefined) {
+      return;
+    }
     const timer = window.setInterval(
       () => {
         void loadCopilotDraft(selectedConversationId);
       },
-      copilotDraft?.status === "queued" || copilotDraft?.status === "processing" ? 1_000 : 5_000
+      isPending ? 1_000 : 10_000
     );
     return () => window.clearInterval(timer);
   }, [selectedConversationId, copilotDraft?.status, loadCopilotDraft]);

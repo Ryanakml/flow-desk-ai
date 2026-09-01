@@ -124,11 +124,11 @@ Paragraph 3: All tenant data is isolated via Row-Level Security.`;
 
   describe("GeminiEmbeddingProvider", () => {
     it("requests and validates single Gemini embedding with real response shape", async () => {
-      const mock768Embedding = new Array<number>(768).fill(0.02);
+      const mock1536Embedding = new Array<number>(1536).fill(0.02);
       const customFetcher = vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
-            embedding: { values: mock768Embedding }
+            embedding: { values: mock1536Embedding }
           }),
           { status: 200, headers: { "Content-Type": "application/json" } }
         )
@@ -143,8 +143,7 @@ Paragraph 3: All tenant data is isolated via Row-Level Security.`;
 
       expect(results).toHaveLength(1);
       expect(results[0]?.embedding).toHaveLength(1536);
-      expect(results[0]?.embedding.slice(0, 768)).toEqual(mock768Embedding);
-      expect(results[0]?.embedding.slice(768)).toEqual(new Array<number>(768).fill(0));
+      expect(results[0]?.embedding).toEqual(mock1536Embedding);
       expect(results[0]?.tokenCount).toBe(Math.ceil("single document".length / 4));
 
       const [url, init] = customFetcher.mock.calls[0] as [string, RequestInit];
@@ -156,18 +155,20 @@ Paragraph 3: All tenant data is isolated via Row-Level Security.`;
       );
       const requestBody = JSON.parse(init.body as string) as {
         content: { parts: Array<{ text: string }> };
+        outputDimensionality: number;
       };
       expect(requestBody).toEqual({
-        content: { parts: [{ text: "single document" }] }
+        content: { parts: [{ text: "single document" }] },
+        outputDimensionality: 1536
       });
     });
 
     it("requests and validates 1536d Gemini batch embeddings", async () => {
-      const mock768Embedding = new Array<number>(768).fill(0.01);
+      const mock1536Embedding = new Array<number>(1536).fill(0.01);
       const customFetcher = vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
-            embeddings: [{ values: mock768Embedding }, { values: mock768Embedding }]
+            embeddings: [{ values: mock1536Embedding }, { values: mock1536Embedding }]
           }),
           { status: 200, headers: { "Content-Type": "application/json" } }
         )
@@ -182,8 +183,7 @@ Paragraph 3: All tenant data is isolated via Row-Level Security.`;
 
       expect(results).toHaveLength(2);
       expect(results[0]?.embedding).toHaveLength(1536);
-      expect(results[0]?.embedding.slice(0, 768)).toEqual(mock768Embedding);
-      expect(results[0]?.embedding.slice(768)).toEqual(new Array<number>(768).fill(0));
+      expect(results[0]?.embedding).toEqual(mock1536Embedding);
       const [url, init] = customFetcher.mock.calls[0] as [string, RequestInit];
       expect(url).toBe(
         "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:batchEmbedContents"
@@ -194,11 +194,13 @@ Paragraph 3: All tenant data is isolated via Row-Level Security.`;
       const requestBody = JSON.parse(init.body as string) as {
         requests: Array<{
           model: string;
+          outputDimensionality: number;
         }>;
       };
       expect(requestBody.requests).toHaveLength(2);
       expect(requestBody.requests[0]).toMatchObject({
-        model: "models/text-embedding-004"
+        model: "models/text-embedding-004",
+        outputDimensionality: 1536
       });
     });
 
@@ -207,6 +209,22 @@ Paragraph 3: All tenant data is isolated via Row-Level Security.`;
         apiKey: "test-gemini-key-not-a-secret",
         customFetcher: vi.fn().mockResolvedValue(
           new Response(JSON.stringify({ embeddings: [{ values: [] }] }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+          })
+        )
+      });
+
+      await expect(provider.generateEmbeddings(["document"])).rejects.toMatchObject({
+        code: "AI_PROVIDER_INVALID_RESPONSE"
+      } satisfies Partial<AiProviderError>);
+    });
+
+    it("rejects an embedding whose dimension does not match 1536", async () => {
+      const provider = new GeminiEmbeddingProvider({
+        apiKey: "test-gemini-key-not-a-secret",
+        customFetcher: vi.fn().mockResolvedValue(
+          new Response(JSON.stringify({ embedding: { values: [0.1, 0.2, 0.3] } }), {
             status: 200,
             headers: { "Content-Type": "application/json" }
           })

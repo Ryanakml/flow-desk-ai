@@ -367,23 +367,45 @@ describe("durable bot draft worker", () => {
     expect(state.suggestedContent).toBeNull();
   });
 
-  it("requeues retryable provider failures with a safe error code", async () => {
+  it("requeues retryable provider failures with a safe error code and logs structured error", async () => {
     const { db, state } = createMockDb();
+    const errorWithHttp = new AiProviderError("AI_PROVIDER_RATE_LIMITED", {
+      retryable: true,
+      httpStatus: 429,
+      httpBody: JSON.stringify({ error: { code: 429, message: "Resource exhausted" } })
+    });
     const embeddingProvider: AiEmbeddingProvider = {
       name: "rate-limited",
       dimensions: 1536,
       checkHealth: () =>
         Promise.resolve({ status: "unavailable", checkedAt: new Date().toISOString() }),
-      generateEmbeddings: () =>
-        Promise.reject(new AiProviderError("AI_PROVIDER_RATE_LIMITED", { retryable: true }))
+      generateEmbeddings: () => Promise.reject(errorWithHttp)
+    };
+
+    const logged: Array<{ context: Record<string, unknown>; message: string }> = [];
+    const logger = {
+      error: (context: Record<string, unknown>, message: string) => {
+        logged.push({ context, message });
+      }
     };
 
     await processBotDraftBatch(db, {
       chatProvider: new FakeAiChatProvider(),
       embeddingProvider,
-      chatModel: "test"
+      chatModel: "test",
+      logger
     });
     expect(state.status).toBe("queued");
     expect(state.errorCode).toBe("AI_PROVIDER_RATE_LIMITED");
+    expect(logged).toHaveLength(1);
+    expect(logged[0]!.message).toBe("worker.bot_draft.failed");
+    expect(logged[0]!.context).toMatchObject({
+      organizationId: "org-1",
+      conversationId: "conversation-1",
+      runId: "run-1",
+      stage: "query_embedding",
+      httpStatus: 429
+    });
+    expect(logged[0]!.context["httpBody"]).toContain("Resource exhausted");
   });
 });

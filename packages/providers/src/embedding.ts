@@ -210,12 +210,14 @@ export class GeminiEmbeddingProvider implements AiEmbeddingProvider {
       : `${this.baseUrl}/models/${encodeURIComponent(this.modelId)}:batchEmbedContents`;
     const payload = isSingle
       ? {
-          content: { parts: [{ text: texts[0] }] }
+          content: { parts: [{ text: texts[0] }] },
+          outputDimensionality: this.dimensions
         }
       : {
           requests: texts.map((text) => ({
             model: modelResource,
-            content: { parts: [{ text }] }
+            content: { parts: [{ text }] },
+            outputDimensionality: this.dimensions
           }))
         };
 
@@ -280,15 +282,16 @@ export class GeminiEmbeddingProvider implements AiEmbeddingProvider {
         throw new AiProviderError("AI_PROVIDER_INVALID_RESPONSE");
       }
       const values = item.values as number[];
-      const embedding =
-        values.length === this.dimensions
-          ? values
-          : values.length < this.dimensions
-            ? [...values, ...new Array<number>(this.dimensions - values.length).fill(0)]
-            : values.slice(0, this.dimensions);
+      if (values.length !== this.dimensions) {
+        throw new AiProviderError("AI_PROVIDER_INVALID_RESPONSE", {
+          cause: new Error(
+            `Gemini embedding returned ${values.length} dimensions, expected ${this.dimensions}`
+          )
+        });
+      }
 
       return {
-        embedding,
+        embedding: values,
         tokenCount: Math.ceil((texts[index] ?? "").length / 4)
       };
     });

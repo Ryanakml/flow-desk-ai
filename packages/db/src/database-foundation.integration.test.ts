@@ -17,7 +17,13 @@ import {
   listExpiredAttachments
 } from "./attachments.js";
 import { readFileSync, existsSync } from "node:fs";
-import { enqueueBotDraftRun, getLatestBotRunForConversation } from "./knowledge.js";
+import {
+  createKnowledgeSource,
+  createDocumentWithChunks,
+  enqueueBotDraftRun,
+  getLatestBotRunForConversation,
+  searchDocumentChunks
+} from "./knowledge.js";
 
 const executeFile = promisify(execFile);
 
@@ -95,7 +101,8 @@ describe("database foundation", () => {
       "0021_m6_meta_embedded_signup.sql",
       "0022_m4_knowledge_ingestion_jobs.sql",
       "0023_m4_durable_bot_drafts.sql",
-      "0024_m4_gemini_default_model.sql"
+      "0024_m4_gemini_default_model.sql",
+      "0025_m4_grant_public_schema_usage.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -1047,5 +1054,63 @@ describe("database foundation", () => {
     );
     expect(indexes.rows).toHaveLength(1);
     expect(indexes.rows[0]?.indexname).toBe("idx_chunks_embedding_cosine");
+  });
+
+  it("persists 1536d vector chunks and performs similarity search in a tenant transaction", async () => {
+    const orgId = "00000000-0000-7000-8000-0000000000a1";
+    await admin.query(
+      `INSERT INTO flowdesk.organizations (id, slug, display_name)
+       VALUES ($1, 'vector-test-org', 'Vector Test Org')
+       ON CONFLICT (id) DO NOTHING`,
+      [orgId]
+    );
+
+    const fakeVector = new Array<number>(1536).fill(0.01);
+    // Normalize fakeVector
+    const norm = Math.sqrt(fakeVector.reduce((sum, val) => sum + val * val, 0)) || 1;
+    const normalizedVector = fakeVector.map((val) => val / norm);
+
+    const testPool = new Pool({ connectionString });
+    try {
+      const searchResults = await withTenantTransaction(
+        testPool,
+        { organizationId: orgId },
+        async (client) => {
+          const source = await createKnowledgeSource(client, {
+            organizationId: orgId,
+            type: "text",
+            name: "Test Ingestion Source"
+          });
+
+          await createDocumentWithChunks(client, {
+            organizationId: orgId,
+            sourceId: source.id,
+            title: "Test Ingestion Source",
+            contentHash: "testhash123",
+            chunks: [
+              {
+                chunkIndex: 0,
+                content: "FlowDesk refunds are processed within seven business days.",
+                contentHash: "chunkhash123",
+                embedding: normalizedVector
+              }
+            ]
+          });
+
+          return searchDocumentChunks(client, {
+            organizationId: orgId,
+            queryEmbedding: normalizedVector,
+            topK: 3,
+            similarityThreshold: 0.5
+          });
+        }
+      );
+
+      expect(searchResults).toHaveLength(1);
+      expect(searchResults[0]?.similarity).toBeGreaterThan(0.99);
+      expect(searchResults[0]?.content).toContain("FlowDesk refunds");
+    } finally {
+      await testPool.end();
+    }
   });
 });
