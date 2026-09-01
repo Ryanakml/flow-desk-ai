@@ -37,7 +37,7 @@ export async function getAnalyticsOverview(
     `SELECT
       COUNT(*) AS total,
       COUNT(*) FILTER (WHERE status = 'open') AS open,
-      COUNT(*) FILTER (WHERE assigned_agent_id IS NOT NULL OR assigned_team_id IS NOT NULL) AS assigned,
+      COUNT(*) FILTER (WHERE assigned_to_user_id IS NOT NULL OR team_id IS NOT NULL) AS assigned,
       COUNT(*) FILTER (WHERE status = 'closed') AS resolved
      FROM flowdesk.conversations
      WHERE organization_id = $1 AND created_at >= clock_timestamp() - ($2 || ' days')::interval`,

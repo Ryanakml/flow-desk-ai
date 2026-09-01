@@ -25,6 +25,8 @@ import {
   getLatestBotRunForConversation,
   searchDocumentChunks
 } from "./knowledge.js";
+import { getAnalyticsOverview } from "./analytics.js";
+import type { DbClient } from "./auth.js";
 
 const executeFile = promisify(execFile);
 
@@ -103,7 +105,8 @@ describe("database foundation", () => {
       "0022_m4_knowledge_ingestion_jobs.sql",
       "0023_m4_durable_bot_drafts.sql",
       "0024_m4_gemini_default_model.sql",
-      "0025_m4_grant_public_schema_usage.sql"
+      "0025_m4_grant_public_schema_usage.sql",
+      "0026_m6_runtime_integrations_privileges.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -136,6 +139,98 @@ describe("database foundation", () => {
       { rolname: "flowdesk_migrator", rolbypassrls: false },
       { rolname: "flowdesk_reporting", rolbypassrls: false },
       { rolname: "flowdesk_runtime", rolbypassrls: false }
+    ]);
+  });
+
+  it("grants M6 integration access without weakening tenant RLS", async () => {
+    const organizationA = "00000000-0000-7000-8000-0000000006a1";
+    const organizationB = "00000000-0000-7000-8000-0000000006b1";
+
+    await admin.query("DELETE FROM flowdesk.api_keys WHERE organization_id = ANY($1::uuid[])", [
+      [organizationA, organizationB]
+    ]);
+    await admin.query(
+      "DELETE FROM flowdesk.webhook_subscriptions WHERE organization_id = ANY($1::uuid[])",
+      [[organizationA, organizationB]]
+    );
+    await admin.query("DELETE FROM flowdesk.organizations WHERE id = ANY($1::uuid[])", [
+      [organizationA, organizationB]
+    ]);
+    await admin.query(
+      `INSERT INTO flowdesk.organizations (id, slug, display_name) VALUES
+       ($1, 'm6-runtime-a', 'M6 Runtime A'),
+       ($2, 'm6-runtime-b', 'M6 Runtime B')`,
+      [organizationA, organizationB]
+    );
+    await admin.query(
+      `INSERT INTO flowdesk.api_keys
+         (id, organization_id, name, key_prefix, key_hash, scopes) VALUES
+       ('00000000-0000-7000-8000-0000000006a2', $1, 'Tenant A', 'fd_a', repeat('a', 64), '[]'),
+       ('00000000-0000-7000-8000-0000000006b2', $2, 'Tenant B', 'fd_b', repeat('b', 64), '[]')`,
+      [organizationA, organizationB]
+    );
+    await admin.query(
+      `INSERT INTO flowdesk.webhook_subscriptions
+         (id, organization_id, name, url, secret, events) VALUES
+       ('00000000-0000-7000-8000-0000000006a3', $1, 'Tenant A', 'https://a.example.test', 'tenant-a-secret-1234', '[]'),
+       ('00000000-0000-7000-8000-0000000006b3', $2, 'Tenant B', 'https://b.example.test', 'tenant-b-secret-1234', '[]')`,
+      [organizationA, organizationB]
+    );
+
+    const privileges = await admin.query<{ table_name: string; can_write: boolean }>(
+      `SELECT table_name,
+              has_table_privilege('flowdesk_runtime', 'flowdesk.' || table_name,
+                                  'SELECT,INSERT,UPDATE,DELETE') AS can_write
+       FROM (VALUES ('api_keys'), ('webhook_subscriptions')) AS tables(table_name)
+       ORDER BY table_name`
+    );
+    expect(privileges.rows).toEqual([
+      { table_name: "api_keys", can_write: true },
+      { table_name: "webhook_subscriptions", can_write: true }
+    ]);
+
+    await admin.query("BEGIN");
+    try {
+      await admin.query("SET LOCAL ROLE flowdesk_runtime");
+      await admin.query("SELECT set_config('app.organization_id', $1, true)", [organizationA]);
+
+      expect((await admin.query("SELECT id FROM flowdesk.api_keys ORDER BY id")).rows).toEqual([
+        { id: "00000000-0000-7000-8000-0000000006a2" }
+      ]);
+      expect(
+        (await admin.query("SELECT id FROM flowdesk.webhook_subscriptions ORDER BY id")).rows
+      ).toEqual([{ id: "00000000-0000-7000-8000-0000000006a3" }]);
+
+      const analytics = await getAnalyticsOverview(admin as unknown as DbClient, organizationA, 30);
+      expect(analytics.assignedConversations).toBe(0);
+
+      expect(
+        (
+          await admin.query("UPDATE flowdesk.api_keys SET revoked_at = now() WHERE id = $1", [
+            "00000000-0000-7000-8000-0000000006b2"
+          ])
+        ).rowCount
+      ).toBe(0);
+      expect(
+        (
+          await admin.query("DELETE FROM flowdesk.webhook_subscriptions WHERE id = $1", [
+            "00000000-0000-7000-8000-0000000006b3"
+          ])
+        ).rowCount
+      ).toBe(0);
+    } finally {
+      await admin.query("ROLLBACK");
+    }
+
+    await admin.query("DELETE FROM flowdesk.api_keys WHERE organization_id = ANY($1::uuid[])", [
+      [organizationA, organizationB]
+    ]);
+    await admin.query(
+      "DELETE FROM flowdesk.webhook_subscriptions WHERE organization_id = ANY($1::uuid[])",
+      [[organizationA, organizationB]]
+    );
+    await admin.query("DELETE FROM flowdesk.organizations WHERE id = ANY($1::uuid[])", [
+      [organizationA, organizationB]
     ]);
   });
 
