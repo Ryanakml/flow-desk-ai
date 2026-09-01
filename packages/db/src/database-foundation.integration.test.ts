@@ -1056,7 +1056,14 @@ describe("database foundation", () => {
   });
 
   it("persists 1536d vector chunks and performs similarity search in a tenant transaction", async () => {
-    const orgId = "00000000-0000-0000-0000-000000000001";
+    const orgId = "00000000-0000-7000-8000-0000000000a1";
+    await admin.query(
+      `INSERT INTO flowdesk.organizations (id, slug, display_name)
+       VALUES ($1, 'vector-test-org', 'Vector Test Org')
+       ON CONFLICT (id) DO NOTHING`,
+      [orgId]
+    );
+
     const fakeVector = new Array<number>(1536).fill(0.01);
     // Normalize fakeVector
     const norm = Math.sqrt(fakeVector.reduce((sum, val) => sum + val * val, 0)) || 1;
