@@ -68,7 +68,8 @@ describe("database foundation", () => {
       "0020_m6_developer_integrations.sql",
       "0021_m6_meta_embedded_signup.sql",
       "0022_m4_knowledge_ingestion_jobs.sql",
-      "0023_m4_durable_bot_drafts.sql"
+      "0023_m4_durable_bot_drafts.sql",
+      "0024_m4_gemini_default_model.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
