@@ -237,7 +237,8 @@ export function createApiApp(options: ApiAppOptions) {
     app.use(
       "/api/v1/organizations/:orgId/bot",
       createBotRouter({
-        db: options.auth.db
+        db: options.auth.db,
+        ...(options.logError ? { logError: options.logError } : {})
       })
     );
     app.use(

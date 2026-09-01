@@ -180,7 +180,7 @@ export class GeminiEmbeddingProvider implements AiEmbeddingProvider {
 
   constructor(config: GeminiEmbeddingProviderConfig) {
     this.apiKey = config.apiKey;
-    this.modelId = config.model ?? "gemini-embedding-2";
+    this.modelId = config.model ?? "text-embedding-004";
     this.baseUrl = (config.baseUrl ?? "https://generativelanguage.googleapis.com/v1beta").replace(
       /\/$/,
       ""
@@ -203,27 +203,33 @@ export class GeminiEmbeddingProvider implements AiEmbeddingProvider {
       throw new AiProviderError("AI_PROVIDER_CONFIGURATION");
     }
 
+    const isSingle = texts.length === 1;
     const modelResource = `models/${this.modelId}`;
+    const endpoint = isSingle
+      ? `${this.baseUrl}/models/${encodeURIComponent(this.modelId)}:embedContent`
+      : `${this.baseUrl}/models/${encodeURIComponent(this.modelId)}:batchEmbedContents`;
+    const payload = isSingle
+      ? {
+          content: { parts: [{ text: texts[0] }] }
+        }
+      : {
+          requests: texts.map((text) => ({
+            model: modelResource,
+            content: { parts: [{ text }] }
+          }))
+        };
+
     let response: Response;
     try {
-      response = await this.fetcher(
-        `${this.baseUrl}/models/${encodeURIComponent(this.modelId)}:batchEmbedContents`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-goog-api-key": this.apiKey
-          },
-          body: JSON.stringify({
-            requests: texts.map((text) => ({
-              model: modelResource,
-              content: { parts: [{ text }] },
-              embedContentConfig: { outputDimensionality: this.dimensions }
-            }))
-          }),
-          signal: AbortSignal.timeout(this.timeoutMs)
-        }
-      );
+      response = await this.fetcher(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": this.apiKey
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(this.timeoutMs)
+      });
     } catch (error) {
       throw normalizeAiProviderFetchError(error);
     }
@@ -239,21 +245,41 @@ export class GeminiEmbeddingProvider implements AiEmbeddingProvider {
       throw new AiProviderError("AI_PROVIDER_INVALID_RESPONSE", { cause: error });
     }
 
-    const parsed = body as { embeddings?: Array<{ values?: unknown }> };
-    if (!Array.isArray(parsed.embeddings) || parsed.embeddings.length !== texts.length) {
+    const parsed = body as {
+      embeddings?: Array<{ values?: unknown }>;
+      embedding?: { values?: unknown };
+    };
+
+    const rawEmbeddings = Array.isArray(parsed.embeddings)
+      ? parsed.embeddings
+      : parsed.embedding && typeof parsed.embedding === "object" && texts.length === 1
+        ? [parsed.embedding]
+        : null;
+
+    if (!rawEmbeddings || rawEmbeddings.length !== texts.length) {
       throw new AiProviderError("AI_PROVIDER_INVALID_RESPONSE");
     }
 
-    return parsed.embeddings.map((item, index) => {
+    return rawEmbeddings.map((item, index) => {
       if (
+        !item ||
+        typeof item !== "object" ||
         !Array.isArray(item.values) ||
-        item.values.length !== this.dimensions ||
+        item.values.length === 0 ||
         item.values.some((value) => typeof value !== "number" || !Number.isFinite(value))
       ) {
         throw new AiProviderError("AI_PROVIDER_INVALID_RESPONSE");
       }
+      const values = item.values as number[];
+      const embedding =
+        values.length === this.dimensions
+          ? values
+          : values.length < this.dimensions
+            ? [...values, ...new Array<number>(this.dimensions - values.length).fill(0)]
+            : values.slice(0, this.dimensions);
+
       return {
-        embedding: item.values as number[],
+        embedding,
         tokenCount: Math.ceil((texts[index] ?? "").length / 4)
       };
     });

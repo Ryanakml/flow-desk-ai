@@ -55,7 +55,7 @@ describe("loadAiRuntimeConfig", () => {
     expect(loadAiRuntimeConfig({})).toMatchObject({
       AI_PROVIDER: "disabled",
       GEMINI_CHAT_MODEL: "gemini-3.7-flash",
-      GEMINI_EMBEDDING_MODEL: "gemini-embedding-2",
+      GEMINI_EMBEDDING_MODEL: "text-embedding-004",
       OPENAI_CHAT_MODEL: "gpt-4o-mini",
       OPENAI_EMBEDDING_MODEL: "text-embedding-3-small",
       AI_CHAT_TIMEOUT_MS: 15_000,

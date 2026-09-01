@@ -112,7 +112,7 @@ const aiRuntimeConfigSchema = z
     GEMINI_API_KEY: optionalAiSecret,
     GEMINI_BASE_URL: z.url().default("https://generativelanguage.googleapis.com/v1beta"),
     GEMINI_CHAT_MODEL: z.string().trim().min(1).default("gemini-3.7-flash"),
-    GEMINI_EMBEDDING_MODEL: z.string().trim().min(1).default("gemini-embedding-2"),
+    GEMINI_EMBEDDING_MODEL: z.string().trim().min(1).default("text-embedding-004"),
     OPENAI_API_KEY: optionalAiSecret,
     OPENAI_BASE_URL: z.url().default("https://api.openai.com/v1"),
     OPENAI_CHAT_MODEL: z.string().trim().min(1).default("gpt-4o-mini"),
