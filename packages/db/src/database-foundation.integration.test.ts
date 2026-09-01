@@ -16,9 +16,35 @@ import {
   softDeleteAttachment,
   listExpiredAttachments
 } from "./attachments.js";
+import { readFileSync, existsSync } from "node:fs";
 import { enqueueBotDraftRun, getLatestBotRunForConversation } from "./knowledge.js";
 
 const executeFile = promisify(execFile);
+
+if (!process.env["DATABASE_MIGRATOR_URL"]) {
+  try {
+    const envPath = fileURLToPath(new URL("../../../.env", import.meta.url));
+    if (existsSync(envPath)) {
+      const envContent = readFileSync(envPath, "utf8");
+      for (const line of envContent.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        const idx = trimmed.indexOf("=");
+        if (idx > 0) {
+          const key = trimmed.slice(0, idx).trim();
+          let val = trimmed.slice(idx + 1).trim();
+          if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
+          if (!process.env[key]) {
+            process.env[key] = val;
+          }
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
+
 const connectionString = process.env["DATABASE_MIGRATOR_URL"];
 const migrationScript = fileURLToPath(new URL("../scripts/migrate.mjs", import.meta.url));
 
@@ -894,6 +920,9 @@ describe("database foundation", () => {
         "DELETE FROM flowdesk.conversations WHERE organization_id = ANY($1::uuid[])",
         [organizations]
       );
+      await admin.query("DELETE FROM flowdesk.contacts WHERE organization_id = ANY($1::uuid[])", [
+        organizations
+      ]);
       await admin.query("DELETE FROM flowdesk.channels WHERE organization_id = ANY($1::uuid[])", [
         organizations
       ]);
