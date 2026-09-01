@@ -166,7 +166,9 @@ describe("M4 Knowledge Base & Vector Database Repository", () => {
     expect(results).toHaveLength(1);
     expect(results[0]?.similarity).toBe(0.89);
     expect(query).toHaveBeenCalledWith(
-      expect.stringContaining("ORDER BY embedding <=> $1::vector ASC"),
+      expect.stringContaining(
+        "ORDER BY flowdesk.document_chunks.embedding <=> $1::public.vector ASC"
+      ),
       ["[0.1,0.2,0.3]", orgId, 0.75, 3]
     );
   });

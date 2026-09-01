@@ -118,7 +118,12 @@ if (dbPool) {
               {
                 chatProvider: aiRuntime.chatProvider,
                 embeddingProvider: aiRuntime.embeddingProvider,
-                chatModel: aiRuntime.chatModel
+                chatModel: aiRuntime.chatModel,
+                logger: {
+                  error: (context, msg) => logger.error(context, msg),
+                  info: (context, msg) => logger.info(context, msg),
+                  warn: (context, msg) => logger.warn(context, msg)
+                }
               },
               5
             )

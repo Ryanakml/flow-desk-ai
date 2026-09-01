@@ -632,7 +632,7 @@ export async function createDocumentWithChunks(
     await db.query(
       `INSERT INTO flowdesk.document_chunks (
         organization_id, document_id, source_id, chunk_index, content, content_hash, embedding, token_count, metadata
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7::vector, $8, $9)`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7::public.vector, $8, $9)`,
       [
         input.organizationId,
         documentId,
@@ -680,12 +680,12 @@ export async function searchDocumentChunks(
     `SELECT
       id, organization_id, document_id, source_id, chunk_index, content, content_hash,
       token_count, metadata, created_at,
-      (1 - (embedding <=> $1::vector)) AS similarity
+      (1 - (flowdesk.document_chunks.embedding <=> $1::public.vector)) AS similarity
      FROM flowdesk.document_chunks
      WHERE organization_id = $2
        AND embedding IS NOT NULL
-       AND (1 - (embedding <=> $1::vector)) >= $3
-     ORDER BY embedding <=> $1::vector ASC
+       AND (1 - (flowdesk.document_chunks.embedding <=> $1::public.vector)) >= $3
+     ORDER BY flowdesk.document_chunks.embedding <=> $1::public.vector ASC
      LIMIT $4`,
     [embeddingStr, input.organizationId, similarityThreshold, topK]
   );

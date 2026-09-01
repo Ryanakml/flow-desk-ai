@@ -34,6 +34,11 @@ export interface BotDraftWorkerOptions {
   chatProvider: AiChatProvider;
   embeddingProvider: AiEmbeddingProvider;
   chatModel: string;
+  logger?: {
+    error: (context: Record<string, unknown>, message: string) => void;
+    info?: (context: Record<string, unknown>, message: string) => void;
+    warn?: (context: Record<string, unknown>, message: string) => void;
+  };
 }
 
 interface BotConfigSnapshot {
@@ -96,6 +101,7 @@ export async function processBotDraftBatch(
 
   for (const claimed of claimedRuns) {
     const startedAt = Date.now();
+    let currentStage = "fetch_context";
     try {
       await runInTenantTransaction(
         db,
@@ -148,6 +154,7 @@ export async function processBotDraftBatch(
             return;
           }
 
+          currentStage = "safety_check";
           const injection = checkPromptInjection(latestCustomer.content);
           if (!injection.safe) {
             await finishBotDraftRun(tenantDb, {
@@ -160,6 +167,7 @@ export async function processBotDraftBatch(
             return;
           }
 
+          currentStage = "query_embedding";
           const redactedQuery = redactPiiFromPrompt(injection.sanitized);
           const piiTypesRedacted = new Set(redactedQuery.piiFound);
           const embeddingResult = await options.embeddingProvider.generateEmbeddings([
@@ -170,6 +178,7 @@ export async function processBotDraftBatch(
             throw new AiProviderError("AI_PROVIDER_INVALID_RESPONSE", { retryable: true });
           }
 
+          currentStage = "vector_search";
           const rawChunks = await searchDocumentChunks(tenantDb, {
             organizationId: claimed.organizationId,
             queryEmbedding,
@@ -194,6 +203,7 @@ export async function processBotDraftBatch(
             return;
           }
 
+          currentStage = "prompt_assembly";
           const messages: ConversationMessageContext[] = conversation.messages.map((message) => {
             const redacted = redactPiiFromPrompt(message.content);
             redacted.piiFound.forEach((type) => piiTypesRedacted.add(type));
@@ -224,6 +234,7 @@ export async function processBotDraftBatch(
             return;
           }
 
+          currentStage = "chat_generation";
           const reply = await circuitBreaker.call(() =>
             options.chatProvider.generateReplyDraft(fullSystemPrompt, redactedQuery.redacted)
           );
@@ -244,6 +255,7 @@ export async function processBotDraftBatch(
             return;
           }
 
+          currentStage = "db_persistence";
           const refreshed = await getConversationWithMessages(
             tenantDb,
             { organizationId: claimed.organizationId },
@@ -319,6 +331,43 @@ export async function processBotDraftBatch(
     } catch (error) {
       const failure = providerFailure(error);
       const willRetry = failure.retryable && claimed.attempts < claimed.maxAttempts;
+
+      const aiErr = error instanceof AiProviderError ? error : undefined;
+      const dbErr = error as Error & {
+        code?: unknown;
+        detail?: unknown;
+        constraint?: unknown;
+      };
+
+      const errorPayload: Record<string, unknown> = {
+        organizationId: claimed.organizationId,
+        conversationId: claimed.conversationId,
+        runId: claimed.id,
+        stage: currentStage,
+        provider: options.chatProvider.name,
+        chatModel: options.chatModel,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+        errorMessage: error instanceof Error ? error.message : String(error),
+        ...(error instanceof Error && error.stack ? { stack: error.stack } : {}),
+        ...(aiErr?.httpStatus !== undefined ? { httpStatus: aiErr.httpStatus } : {}),
+        ...(aiErr?.httpBody !== undefined ? { httpBody: aiErr.httpBody } : {}),
+        ...(typeof dbErr?.code === "string" ? { pgCode: dbErr.code, errorCode: dbErr.code } : {}),
+        ...(typeof dbErr?.detail === "string"
+          ? { pgDetail: dbErr.detail, errorDetail: dbErr.detail }
+          : {}),
+        ...(typeof dbErr?.constraint === "string"
+          ? { pgConstraint: dbErr.constraint, errorConstraint: dbErr.constraint }
+          : {})
+      };
+
+      if (options.logger?.error) {
+        options.logger.error(errorPayload, "worker.bot_draft.failed");
+      } else {
+        process.stderr.write(
+          `${JSON.stringify({ level: "error", msg: "worker.bot_draft.failed", ...errorPayload })}\n`
+        );
+      }
+
       await runInTenantTransaction(
         db,
         { organizationId: claimed.organizationId },
