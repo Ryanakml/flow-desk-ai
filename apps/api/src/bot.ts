@@ -221,11 +221,18 @@ export function createBotRouter(options: BotRouterOptions): Router {
         const organizationId = getParam(request.params, "orgId");
         const conversationId = getParam(request.params, "conversationId");
         const run = await runInTenantTransaction(options.db, { organizationId }, async (db) => {
-          const [latestRun, conversation] = await Promise.all([
-            getLatestBotRunForConversation(db, organizationId, conversationId),
-            getConversationWithMessages(db, { organizationId }, conversationId)
-          ]);
-          if (!latestRun || !conversation) return null;
+          const latestRun = await getLatestBotRunForConversation(
+            db,
+            organizationId,
+            conversationId
+          );
+          if (!latestRun) return null;
+          const conversation = await getConversationWithMessages(
+            db,
+            { organizationId },
+            conversationId
+          );
+          if (!conversation) return null;
           return staleIfSuperseded(db, latestRun, conversation.messages);
         });
         if (!run) {
@@ -255,12 +262,14 @@ export function createBotRouter(options: BotRouterOptions): Router {
       const organizationId = getParam(request.params, "orgId");
       const conversationId = getParam(request.params, "conversationId");
       const run = await runInTenantTransaction(options.db, { organizationId }, async (db) => {
-        const [existingConfig, conversation, knowledgeVersion] = await Promise.all([
-          getBotConfig(db, organizationId),
-          getConversationWithMessages(db, { organizationId }, conversationId),
-          getLatestKnowledgeVersion(db, organizationId)
-        ]);
+        const conversation = await getConversationWithMessages(
+          db,
+          { organizationId },
+          conversationId
+        );
         if (!conversation) return null;
+        const existingConfig = await getBotConfig(db, organizationId);
+        const knowledgeVersion = await getLatestKnowledgeVersion(db, organizationId);
         const config = existingConfig ?? (await upsertBotConfig(db, { organizationId }));
         const trigger = latestCustomerMessage(conversation.messages);
         const snapshot = {

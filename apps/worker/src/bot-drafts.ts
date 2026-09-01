@@ -101,16 +101,17 @@ export async function processBotDraftBatch(
         db,
         { organizationId: claimed.organizationId },
         async (tenantDb) => {
-          const [run, conversation, currentConfig, currentKnowledgeVersion] = await Promise.all([
-            getBotRunById(tenantDb, claimed.id),
-            getConversationWithMessages(
-              tenantDb,
-              { organizationId: claimed.organizationId },
-              claimed.conversationId
-            ),
-            getBotConfig(tenantDb, claimed.organizationId),
-            getLatestKnowledgeVersion(tenantDb, claimed.organizationId)
-          ]);
+          const run = await getBotRunById(tenantDb, claimed.id);
+          const conversation = await getConversationWithMessages(
+            tenantDb,
+            { organizationId: claimed.organizationId },
+            claimed.conversationId
+          );
+          const currentConfig = await getBotConfig(tenantDb, claimed.organizationId);
+          const currentKnowledgeVersion = await getLatestKnowledgeVersion(
+            tenantDb,
+            claimed.organizationId
+          );
           if (!run || !conversation) throw new Error("BOT_DRAFT_CONTEXT_NOT_FOUND");
 
           if (run.knowledgeVersionId !== (currentKnowledgeVersion?.id ?? null)) {

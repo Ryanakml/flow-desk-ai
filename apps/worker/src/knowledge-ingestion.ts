@@ -83,10 +83,8 @@ export async function processKnowledgeIngestionBatch(
         db,
         { organizationId: claimed.organizationId },
         async (tenantDb) => {
-          const [job, source] = await Promise.all([
-            getKnowledgeIngestionJob(tenantDb, claimed.id),
-            getKnowledgeSourceById(tenantDb, claimed.sourceId)
-          ]);
+          const job = await getKnowledgeIngestionJob(tenantDb, claimed.id);
+          const source = await getKnowledgeSourceById(tenantDb, claimed.sourceId);
           if (!job || !source) throw new Error("KNOWLEDGE_JOB_NOT_FOUND");
 
           await updateKnowledgeSourceStatus(tenantDb, source.id, "indexing");
