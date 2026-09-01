@@ -8,7 +8,8 @@ import {
   listWebhookSubscriptions,
   createWebhookSubscription,
   deleteWebhookSubscription,
-  recordAuditEvent
+  recordAuditEvent,
+  runInTenantTransaction
 } from "@flowdesk/db";
 import { generateApiKey } from "@flowdesk/security";
 
@@ -51,34 +52,41 @@ export function createDeveloperRouter(options: DeveloperRouterOptions): Router {
   );
 
   // GET /api/v1/organizations/:orgId/developer/api-keys
-  router.get("/api-keys", requireAuth, async (request: Request, response: Response) => {
-    try {
-      const orgId = getParam(request.params, "orgId");
-      const keys = await listApiKeys(options.db, orgId);
+  router.get(
+    "/api-keys",
+    requireAuth,
+    requireWritePermission,
+    async (request: Request, response: Response) => {
+      try {
+        const orgId = getParam(request.params, "orgId");
+        const keys = await runInTenantTransaction(options.db, { organizationId: orgId }, (db) =>
+          listApiKeys(db, orgId)
+        );
 
-      return response.status(200).json(
-        keys.map((k) => ({
-          id: k.id,
-          organizationId: k.organizationId,
-          name: k.name,
-          keyPrefix: k.keyPrefix,
-          scopes: k.scopes,
-          createdByUserId: k.createdByUserId,
-          expiresAt: k.expiresAt,
-          revokedAt: k.revokedAt,
-          createdAt: k.createdAt
-        }))
-      );
-    } catch (err) {
-      return sendProblem(
-        response,
-        500,
-        "INTERNAL_ERROR",
-        "Failed to list API keys",
-        err instanceof Error ? err.message : "Internal error"
-      );
+        return response.status(200).json(
+          keys.map((k) => ({
+            id: k.id,
+            organizationId: k.organizationId,
+            name: k.name,
+            keyPrefix: k.keyPrefix,
+            scopes: k.scopes,
+            createdByUserId: k.createdByUserId,
+            expiresAt: k.expiresAt,
+            revokedAt: k.revokedAt,
+            createdAt: k.createdAt
+          }))
+        );
+      } catch (err) {
+        return sendProblem(
+          response,
+          500,
+          "INTERNAL_ERROR",
+          "Failed to list API keys",
+          err instanceof Error ? err.message : "Internal error"
+        );
+      }
     }
-  });
+  );
 
   // POST /api/v1/organizations/:orgId/developer/api-keys
   router.post(
@@ -110,24 +118,32 @@ export function createDeveloperRouter(options: DeveloperRouterOptions): Router {
         }
 
         const generated = generateApiKey("fd_live_");
-        const record = await createApiKey(options.db, {
-          organizationId: orgId,
-          name,
-          keyPrefix: generated.keyPrefix,
-          keyHash: generated.keyHash,
-          scopes,
-          createdByUserId: request.user?.id ?? null
-        });
+        const record = await runInTenantTransaction(
+          options.db,
+          { organizationId: orgId },
+          async (db) => {
+            const record = await createApiKey(db, {
+              organizationId: orgId,
+              name,
+              keyPrefix: generated.keyPrefix,
+              keyHash: generated.keyHash,
+              scopes,
+              createdByUserId: request.user?.id ?? null
+            });
 
-        await recordAuditEvent(options.db, {
-          organizationId: orgId,
-          actorUserId: request.user?.id ?? "unknown",
-          action: "api_key.created",
-          targetType: "api_key",
-          targetId: record.id,
-          result: "allowed",
-          metadata: { name, keyPrefix: generated.keyPrefix, scopes }
-        });
+            await recordAuditEvent(db, {
+              organizationId: orgId,
+              actorUserId: request.user?.id ?? "unknown",
+              action: "api_key.created",
+              targetType: "api_key",
+              targetId: record.id,
+              result: "allowed",
+              metadata: { name, keyPrefix: generated.keyPrefix, scopes }
+            });
+
+            return record;
+          }
+        );
 
         return response.status(201).json({
           id: record.id,
@@ -160,7 +176,25 @@ export function createDeveloperRouter(options: DeveloperRouterOptions): Router {
         const orgId = getParam(request.params, "orgId");
         const keyId = getParam(request.params, "keyId");
 
-        const revoked = await revokeApiKey(options.db, keyId, orgId);
+        const revoked = await runInTenantTransaction(
+          options.db,
+          { organizationId: orgId },
+          async (db) => {
+            const revoked = await revokeApiKey(db, keyId, orgId);
+            if (revoked) {
+              await recordAuditEvent(db, {
+                organizationId: orgId,
+                actorUserId: request.user?.id ?? "unknown",
+                action: "api_key.revoked",
+                targetType: "api_key",
+                targetId: keyId,
+                result: "allowed",
+                metadata: {}
+              });
+            }
+            return revoked;
+          }
+        );
         if (!revoked) {
           return sendProblem(
             response,
@@ -170,16 +204,6 @@ export function createDeveloperRouter(options: DeveloperRouterOptions): Router {
             "API key does not exist or was previously revoked"
           );
         }
-
-        await recordAuditEvent(options.db, {
-          organizationId: orgId,
-          actorUserId: request.user?.id ?? "unknown",
-          action: "api_key.revoked",
-          targetType: "api_key",
-          targetId: keyId,
-          result: "allowed",
-          metadata: {}
-        });
 
         return response.status(200).json({ success: true, keyId });
       } catch (err) {
@@ -195,21 +219,28 @@ export function createDeveloperRouter(options: DeveloperRouterOptions): Router {
   );
 
   // GET /api/v1/organizations/:orgId/developer/webhooks
-  router.get("/webhooks", requireAuth, async (request: Request, response: Response) => {
-    try {
-      const orgId = getParam(request.params, "orgId");
-      const subs = await listWebhookSubscriptions(options.db, orgId);
-      return response.status(200).json(subs);
-    } catch (err) {
-      return sendProblem(
-        response,
-        500,
-        "INTERNAL_ERROR",
-        "Failed to list webhook subscriptions",
-        err instanceof Error ? err.message : "Internal error"
-      );
+  router.get(
+    "/webhooks",
+    requireAuth,
+    requireWritePermission,
+    async (request: Request, response: Response) => {
+      try {
+        const orgId = getParam(request.params, "orgId");
+        const subs = await runInTenantTransaction(options.db, { organizationId: orgId }, (db) =>
+          listWebhookSubscriptions(db, orgId)
+        );
+        return response.status(200).json(subs);
+      } catch (err) {
+        return sendProblem(
+          response,
+          500,
+          "INTERNAL_ERROR",
+          "Failed to list webhook subscriptions",
+          err instanceof Error ? err.message : "Internal error"
+        );
+      }
     }
-  });
+  );
 
   // POST /api/v1/organizations/:orgId/developer/webhooks
   router.post(
@@ -244,23 +275,31 @@ export function createDeveloperRouter(options: DeveloperRouterOptions): Router {
         }
 
         const secret = `whsec_${randomBytes(16).toString("hex")}`;
-        const sub = await createWebhookSubscription(options.db, {
-          organizationId: orgId,
-          name,
-          url,
-          secret,
-          events
-        });
+        const sub = await runInTenantTransaction(
+          options.db,
+          { organizationId: orgId },
+          async (db) => {
+            const sub = await createWebhookSubscription(db, {
+              organizationId: orgId,
+              name,
+              url,
+              secret,
+              events
+            });
 
-        await recordAuditEvent(options.db, {
-          organizationId: orgId,
-          actorUserId: request.user?.id ?? "unknown",
-          action: "webhook_subscription.created",
-          targetType: "webhook_subscription",
-          targetId: sub.id,
-          result: "allowed",
-          metadata: { name, url, events }
-        });
+            await recordAuditEvent(db, {
+              organizationId: orgId,
+              actorUserId: request.user?.id ?? "unknown",
+              action: "webhook_subscription.created",
+              targetType: "webhook_subscription",
+              targetId: sub.id,
+              result: "allowed",
+              metadata: { name, url, events }
+            });
+
+            return sub;
+          }
+        );
 
         return response.status(201).json(sub);
       } catch (err) {
@@ -285,7 +324,25 @@ export function createDeveloperRouter(options: DeveloperRouterOptions): Router {
         const orgId = getParam(request.params, "orgId");
         const webhookId = getParam(request.params, "webhookId");
 
-        const deleted = await deleteWebhookSubscription(options.db, webhookId, orgId);
+        const deleted = await runInTenantTransaction(
+          options.db,
+          { organizationId: orgId },
+          async (db) => {
+            const deleted = await deleteWebhookSubscription(db, webhookId, orgId);
+            if (deleted) {
+              await recordAuditEvent(db, {
+                organizationId: orgId,
+                actorUserId: request.user?.id ?? "unknown",
+                action: "webhook_subscription.deleted",
+                targetType: "webhook_subscription",
+                targetId: webhookId,
+                result: "allowed",
+                metadata: {}
+              });
+            }
+            return deleted;
+          }
+        );
         if (!deleted) {
           return sendProblem(
             response,
@@ -295,16 +352,6 @@ export function createDeveloperRouter(options: DeveloperRouterOptions): Router {
             "Subscription does not exist"
           );
         }
-
-        await recordAuditEvent(options.db, {
-          organizationId: orgId,
-          actorUserId: request.user?.id ?? "unknown",
-          action: "webhook_subscription.deleted",
-          targetType: "webhook_subscription",
-          targetId: webhookId,
-          result: "allowed",
-          metadata: {}
-        });
 
         return response.status(200).json({ success: true, webhookId });
       } catch (err) {

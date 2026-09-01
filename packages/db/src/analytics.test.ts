@@ -6,9 +6,11 @@ describe("Database Analytics Module (M6-03)", () => {
   const orgId = "org-123";
 
   it("calculates analytics overview metrics accurately", async () => {
+    const queries: string[] = [];
     const mockDb: DbClient = {
       async query(sql: string) {
         await Promise.resolve();
+        queries.push(sql);
         if (sql.includes("flowdesk.conversations")) {
           return {
             rows: [{ total: "50", open: "10", assigned: "30", resolved: "40" }],
@@ -38,6 +40,10 @@ describe("Database Analytics Module (M6-03)", () => {
     expect(metrics.totalMessages).toBe(200);
     expect(metrics.botMessages).toBe(150);
     expect(metrics.botAutomationRate).toBe(75);
+    expect(queries[0]).toContain("assigned_to_user_id IS NOT NULL");
+    expect(queries[0]).toContain("team_id IS NOT NULL");
+    expect(queries[0]).not.toContain("assigned_agent_id");
+    expect(queries[0]).not.toContain("assigned_team_id");
   });
 
   it("retrieves volume time series data points sorted chronologically", async () => {
