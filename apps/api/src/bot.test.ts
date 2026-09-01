@@ -662,4 +662,45 @@ describe("Bot Configuration & AI Draft Generation API", () => {
       errorDetail: "Key (organization_id, conversation_id)=(org1, c1) already exists."
     });
   });
+
+  it("successfully enqueues a draft when db is a pg.Pool without reusing client.connect()", async () => {
+    const mockDb = createMockDb();
+    const poolClient = {
+      query: mockDb.query.bind(mockDb),
+      release: () => {},
+      connect: async () => {
+        throw new Error("Client has already been connected. You cannot reuse a client.");
+      }
+    };
+    const pool = {
+      query: mockDb.query.bind(mockDb),
+      connect: async () => poolClient,
+      totalCount: 5,
+      idleCount: 3,
+      waitingCount: 0
+    };
+
+    const app = createApiApp({
+      service: "api",
+      version: "dev",
+      gitSha: "dev",
+      environment: "local",
+      auth: { db: pool as unknown as DbClient, config }
+    });
+
+    const cookie = serializeSessionCookie("bot-test-token-12345", false);
+    const res = (await request(app)
+      .post("/api/v1/organizations/org1/bot/draft/c1")
+      .set("Cookie", cookie)) as unknown as {
+      status: number;
+      body: { status?: string; runId?: string; sendable?: boolean };
+    };
+
+    expect(res.status).toBe(202);
+    expect(res.body).toMatchObject({
+      status: "queued",
+      sendable: false
+    });
+    expect(res.body.runId).toBeDefined();
+  });
 });

@@ -33,7 +33,12 @@ export async function withTenantTransaction<T>(
 }
 
 function isPool(db: DbClient): db is Pool {
-  return typeof (db as Pool).connect === "function";
+  return (
+    typeof (db as Pool).connect === "function" &&
+    typeof (db as PoolClient).release !== "function" &&
+    (typeof (db as Pool).totalCount === "number" ||
+      (db as { constructor?: { name?: string } }).constructor?.name === "Pool")
+  );
 }
 
 /**
