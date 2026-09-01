@@ -78,7 +78,7 @@ describe("Worker Message & Conversation Processing Pipeline (M2-06)", () => {
   const channelId = "chan-test-001";
   const phoneNumberId = "10987654321";
 
-  function createMockPipelineDb() {
+  function createMockPipelineDb(autoMode = false) {
     const conversations = new Map<
       string,
       {
@@ -124,6 +124,7 @@ describe("Worker Message & Conversation Processing Pipeline (M2-06)", () => {
       payload: { webhookEventId: string };
       published_at: Date | null;
     }> = [];
+    const botRuns: Array<{ mode: string; triggerMessageId: string }> = [];
 
     const db = {
       async query(queryText: string, values: unknown[] = []) {
@@ -188,7 +189,8 @@ describe("Worker Message & Conversation Processing Pipeline (M2-06)", () => {
             senderType: values[4] as string,
             providerMessageId: (values[6] as string | null) ?? null,
             content: values[7] as string,
-            status: values[8] as string
+            status: values[8] as string,
+            createdAt: new Date()
           };
           messages.set(id, m);
           return { rows: [m], rowCount: 1, command: "INSERT", oid: 0, fields: [] };
@@ -196,6 +198,63 @@ describe("Worker Message & Conversation Processing Pipeline (M2-06)", () => {
 
         if (sql.includes("UPDATE flowdesk.conversations SET last_message_at")) {
           return { rows: [], rowCount: 1, command: "UPDATE", oid: 0, fields: [] };
+        }
+
+        if (sql.includes("FROM flowdesk.bot_configs")) {
+          return autoMode
+            ? {
+                rows: [
+                  {
+                    id: "bot-config-auto-1",
+                    organization_id: orgId,
+                    mode: "auto",
+                    name: "Assistant",
+                    instructions: "Answer from approved knowledge.",
+                    tone: "professional",
+                    language: "id",
+                    model: "gemini-3.7-flash",
+                    confidence_threshold: 0.9,
+                    top_k: 5,
+                    emergency_disabled: false,
+                    metadata: {},
+                    created_at: new Date(),
+                    updated_at: new Date()
+                  }
+                ],
+                rowCount: 1
+              }
+            : { rows: [], rowCount: 0 };
+        }
+
+        if (sql.includes("FROM flowdesk.knowledge_versions")) {
+          return { rows: [], rowCount: 0 };
+        }
+
+        if (sql.includes("INSERT INTO flowdesk.bot_runs")) {
+          botRuns.push({ mode: values[9] as string, triggerMessageId: values[2] as string });
+          return {
+            rows: [
+              {
+                id: "bot-run-auto-1",
+                organization_id: orgId,
+                conversation_id: values[1],
+                trigger_message_id: values[2],
+                bot_config_id: values[3],
+                knowledge_version_id: null,
+                mode: values[9],
+                status: "queued",
+                citations: [],
+                metadata: {},
+                config_snapshot: {},
+                attempts: 0,
+                max_attempts: 3,
+                available_at: new Date(),
+                created_at: new Date(),
+                updated_at: new Date()
+              }
+            ],
+            rowCount: 1
+          };
         }
 
         if (sql.includes("FROM flowdesk.messages WHERE id = $1 AND organization_id = $2")) {
@@ -272,7 +331,7 @@ describe("Worker Message & Conversation Processing Pipeline (M2-06)", () => {
       }
     } as unknown as DbClient;
 
-    return { db, conversations, messages, webhookEvents, outboxEvents };
+    return { db, conversations, messages, webhookEvents, outboxEvents, botRuns };
   }
 
   it("processes inbound message, matching conversation and creating message idempotently", async () => {
@@ -308,6 +367,19 @@ describe("Worker Message & Conversation Processing Pipeline (M2-06)", () => {
 
     expect(secondResult.processedInboundCount).toBe(0);
     expect(messages.size).toBe(1); // exactly 1 message
+  });
+
+  it("queues one durable AUTO bot run from a new inbound when AUTO is explicitly enabled", async () => {
+    const { db, botRuns } = createMockPipelineDb(true);
+    const payload = fakeProvider.createInboundTextWebhook({
+      phoneNumberId,
+      from: "+62 812 3456 7890",
+      text: "Apakah garansi berlaku satu tahun?",
+      messageId: "wamid.auto.1"
+    });
+
+    await processWebhookPayload(db, { organizationId: orgId, rawPayload: payload });
+    expect(botRuns).toEqual([{ mode: "auto", triggerMessageId: "msg-1" }]);
   });
 
   it("reconciles outbound message delivery status updates", async () => {

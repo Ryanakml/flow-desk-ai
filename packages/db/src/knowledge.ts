@@ -2,7 +2,7 @@ import type { DbClient } from "./auth.js";
 
 export type KnowledgeSourceType = "text" | "file" | "url";
 export type KnowledgeSourceStatus = "pending" | "indexing" | "active" | "failed" | "archived";
-export type BotMode = "off" | "draft";
+export type BotMode = "off" | "draft" | "auto";
 export type BotTone = "professional" | "friendly" | "concise" | "formal";
 export type BotLanguage = "id" | "en" | "auto";
 export type BotRunStatus =
@@ -16,7 +16,7 @@ export type BotRunStatus =
   | "stale"
   | "cancelled"
   | "off";
-export type OperatorAction = "approved" | "edited" | "rejected" | "ignored";
+export type OperatorAction = "approved" | "edited" | "rejected" | "ignored" | "auto_sent";
 export type KnowledgeIngestionJobStatus = "queued" | "processing" | "completed" | "failed";
 
 export interface KnowledgeSource {
@@ -794,16 +794,16 @@ export async function upsertBotConfig(
       confidence_threshold, top_k, emergency_disabled, metadata
     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
     ON CONFLICT (organization_id) DO UPDATE SET
-      mode = COALESCE(EXCLUDED.mode, flowdesk.bot_configs.mode),
-      name = COALESCE(EXCLUDED.name, flowdesk.bot_configs.name),
-      instructions = COALESCE(EXCLUDED.instructions, flowdesk.bot_configs.instructions),
-      tone = COALESCE(EXCLUDED.tone, flowdesk.bot_configs.tone),
-      language = COALESCE(EXCLUDED.language, flowdesk.bot_configs.language),
-      model = COALESCE(EXCLUDED.model, flowdesk.bot_configs.model),
-      confidence_threshold = COALESCE(EXCLUDED.confidence_threshold, flowdesk.bot_configs.confidence_threshold),
-      top_k = COALESCE(EXCLUDED.top_k, flowdesk.bot_configs.top_k),
-      emergency_disabled = COALESCE(EXCLUDED.emergency_disabled, flowdesk.bot_configs.emergency_disabled),
-      metadata = COALESCE(EXCLUDED.metadata, flowdesk.bot_configs.metadata),
+      mode = CASE WHEN $12 THEN EXCLUDED.mode ELSE flowdesk.bot_configs.mode END,
+      name = CASE WHEN $13 THEN EXCLUDED.name ELSE flowdesk.bot_configs.name END,
+      instructions = CASE WHEN $14 THEN EXCLUDED.instructions ELSE flowdesk.bot_configs.instructions END,
+      tone = CASE WHEN $15 THEN EXCLUDED.tone ELSE flowdesk.bot_configs.tone END,
+      language = CASE WHEN $16 THEN EXCLUDED.language ELSE flowdesk.bot_configs.language END,
+      model = CASE WHEN $17 THEN EXCLUDED.model ELSE flowdesk.bot_configs.model END,
+      confidence_threshold = CASE WHEN $18 THEN EXCLUDED.confidence_threshold ELSE flowdesk.bot_configs.confidence_threshold END,
+      top_k = CASE WHEN $19 THEN EXCLUDED.top_k ELSE flowdesk.bot_configs.top_k END,
+      emergency_disabled = CASE WHEN $20 THEN EXCLUDED.emergency_disabled ELSE flowdesk.bot_configs.emergency_disabled END,
+      metadata = CASE WHEN $21 THEN EXCLUDED.metadata ELSE flowdesk.bot_configs.metadata END,
       updated_at = clock_timestamp()
     RETURNING *`,
     [
@@ -818,7 +818,17 @@ export async function upsertBotConfig(
       input.confidenceThreshold ?? 0.7,
       input.topK ?? 5,
       input.emergencyDisabled ?? false,
-      JSON.stringify(input.metadata ?? {})
+      JSON.stringify(input.metadata ?? {}),
+      input.mode !== undefined,
+      input.name !== undefined,
+      input.instructions !== undefined,
+      input.tone !== undefined,
+      input.language !== undefined,
+      input.model !== undefined,
+      input.confidenceThreshold !== undefined,
+      input.topK !== undefined,
+      input.emergencyDisabled !== undefined,
+      input.metadata !== undefined
     ]
   );
 
@@ -998,6 +1008,7 @@ export async function enqueueBotDraftRun(
     model: string;
     configSnapshot: Record<string, unknown>;
     inputMessageCreatedAt: Date;
+    mode?: BotMode;
   }
 ): Promise<BotRun> {
   const result = await db.query<BotRunRow>(
@@ -1005,7 +1016,7 @@ export async function enqueueBotDraftRun(
        organization_id, conversation_id, trigger_message_id, bot_config_id,
        knowledge_version_id, mode, status, requested_by_user_id, model,
        prompt_version, config_snapshot, input_message_created_at
-     ) VALUES ($1, $2, $3, $4, $5, 'draft', 'queued', $6, $7, 'm4-v1', $8, $9)
+     ) VALUES ($1, $2, $3, $4, $5, $10, 'queued', $6, $7, $11, $8, $9)
      ON CONFLICT (organization_id, conversation_id, trigger_message_id)
        WHERE trigger_message_id IS NOT NULL AND status IN ('queued', 'processing')
      DO UPDATE SET updated_at = flowdesk.bot_runs.updated_at
@@ -1019,7 +1030,9 @@ export async function enqueueBotDraftRun(
       input.requestedByUserId,
       input.model,
       JSON.stringify(input.configSnapshot),
-      input.inputMessageCreatedAt
+      input.inputMessageCreatedAt,
+      input.mode ?? "draft",
+      input.mode === "auto" ? "m5-auto-v1" : "m4-v1"
     ]
   );
   return mapBotRun(result.rows[0]!);

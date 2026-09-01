@@ -106,7 +106,8 @@ describe("database foundation", () => {
       "0023_m4_durable_bot_drafts.sql",
       "0024_m4_gemini_default_model.sql",
       "0025_m4_grant_public_schema_usage.sql",
-      "0026_m6_runtime_integrations_privileges.sql"
+      "0026_m6_runtime_integrations_privileges.sql",
+      "0027_m5_auto_mode.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -1206,6 +1207,40 @@ describe("database foundation", () => {
       );
       expect(failedRun?.status).toBe("provider_failed");
       expect(failedRun?.errorCode).toBe("AI_PROVIDER_ERROR");
+
+      // M5 #178: AUTO is accepted only when explicitly persisted, remains tenant-scoped,
+      // and one bot run cannot create two outbound messages even under a retry/race.
+      await admin.query("UPDATE flowdesk.bot_runs SET status = 'stale' WHERE id = $1", [third.id]);
+      await admin.query("UPDATE flowdesk.bot_configs SET mode = 'auto' WHERE id = $1", [configA]);
+      const autoRun = await withTenantTransaction(
+        pool,
+        { organizationId: organizationA },
+        (client) => enqueueBotDraftRun(client, { ...input, mode: "auto" })
+      );
+      expect(autoRun.mode).toBe("auto");
+      const hiddenAutoRun = await withTenantTransaction(
+        pool,
+        { organizationId: organizationB },
+        (client) => getLatestBotRunForConversation(client, organizationA, conversationA)
+      );
+      expect(hiddenAutoRun).toBeNull();
+
+      await admin.query(
+        `INSERT INTO flowdesk.messages
+           (organization_id, conversation_id, channel_id, direction, sender_type, content, status, metadata)
+         VALUES ($1, $2, $3, 'outbound', 'bot', 'AUTO answer', 'queued',
+                 jsonb_build_object('aiBotRunId', $4::text))`,
+        [organizationA, conversationA, channelA, autoRun.id]
+      );
+      await expect(
+        admin.query(
+          `INSERT INTO flowdesk.messages
+             (organization_id, conversation_id, channel_id, direction, sender_type, content, status, metadata)
+           VALUES ($1, $2, $3, 'outbound', 'bot', 'Duplicate AUTO answer', 'queued',
+                   jsonb_build_object('aiBotRunId', $4::text))`,
+          [organizationA, conversationA, channelA, autoRun.id]
+        )
+      ).rejects.toMatchObject({ code: "23505" });
     } finally {
       await admin.query("RESET ROLE").catch(() => undefined);
       await pool.end();

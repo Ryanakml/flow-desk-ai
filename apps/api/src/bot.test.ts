@@ -412,13 +412,14 @@ describe("Bot Configuration & AI Draft Generation API", () => {
       .send({
         instructions: "Custom support agent guidelines",
         tone: "friendly",
-        mode: "draft"
+        mode: "auto"
       })) as unknown as { status: number; body: unknown };
 
     expect(res.status).toBe(200);
-    const body = res.body as { instructions: string; tone: string };
+    const body = res.body as { instructions: string; tone: string; mode: string };
     expect(body.instructions).toBe("Custom support agent guidelines");
     expect(body.tone).toBe("friendly");
+    expect(body.mode).toBe("auto");
   });
 
   it("queues a durable AI draft run without calling the provider in the request", async () => {
