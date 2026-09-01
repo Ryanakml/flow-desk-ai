@@ -44,13 +44,12 @@ export interface BotRouterOptions {
   logError?: (event: {
     requestId: string;
     correlationId: string;
-    organizationId?: string;
-    conversationId?: string;
+    method: string;
+    path: string;
     errorName: string;
     errorMessage: string;
     errorCode?: string;
     errorConstraint?: string;
-    errorDetail?: string;
     stack?: string;
     [key: string]: unknown;
   }) => void;
@@ -388,6 +387,11 @@ export function createBotRouter(options: BotRouterOptions): Router {
       const errorPayload = {
         requestId,
         correlationId,
+        method: request.method,
+        path:
+          request.originalUrl ||
+          request.url ||
+          `/api/v1/organizations/${organizationId}/bot/draft/${conversationId}`,
         organizationId,
         conversationId,
         errorName: error instanceof Error ? error.name : "UnknownError",
