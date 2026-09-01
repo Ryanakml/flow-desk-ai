@@ -34,4 +34,23 @@ describe("createAiRuntime", () => {
     expect(runtime?.chatProvider.name).toBe("openai-chat-provider");
     expect(runtime?.embeddingProvider.name).toBe("openai-embedding-provider");
   });
+
+  it("constructs the real Gemini chat and embedding runtime from validated config", () => {
+    const runtime = createAiRuntime(
+      loadAiRuntimeConfig({
+        APP_ENV: "staging",
+        AI_PROVIDER: "gemini",
+        GEMINI_API_KEY: "synthetic-gemini-test-key-with-safe-length",
+        GEMINI_CHAT_MODEL: "gemini-3.7-flash",
+        GEMINI_EMBEDDING_MODEL: "gemini-embedding-2"
+      })
+    );
+    expect(runtime).toMatchObject({
+      providerType: "gemini",
+      chatModel: "gemini-3.7-flash",
+      embeddingModel: "gemini-embedding-2"
+    });
+    expect(runtime?.chatProvider.name).toBe("gemini-chat-provider");
+    expect(runtime?.embeddingProvider.name).toBe("gemini-embedding-provider");
+  });
 });

@@ -38,7 +38,7 @@ issues, or pull requests. The required runtime is Node.js 22 and pnpm 10.
    node scripts/scan-secrets.mjs
    ```
 
-Expected evidence: migration `0023` is recorded, the database test passes its tenant A/B negative
+Expected evidence: migrations `0023` and `0024` are recorded, the database test passes its tenant A/B negative
 case, all unit/browser suites pass, and the secret scanner reports no findings.
 
 ## 2. Local UI vertical slice with deterministic fake AI
@@ -82,19 +82,23 @@ Run each case in a disposable local organization:
 This is the only step that proves a real provider. It must run through the normal PR merge and staging
 deployment; do not deploy the feature branch manually.
 
-1. On the staging host, use `sudoedit /opt/flowdesk/shared/staging.env` and set
-   `AI_PROVIDER=openai`. Add the credential directly in the editor. Never print, paste into chat, or
-   export it through a shell command.
-2. Validate configuration shape without rendering values:
+1. Choose exactly one real provider. For the recommended synthetic development path, use
+   `AI_PROVIDER=gemini`, `GEMINI_CHAT_MODEL=gemini-3.7-flash`, and
+   `GEMINI_EMBEDDING_MODEL=gemini-embedding-2`. OpenAI remains optional through
+   `AI_PROVIDER=openai` and its corresponding model settings.
+2. On the staging host, use `sudoedit /opt/flowdesk/shared/staging.env` and add only the credential
+   required by the selected provider. Never print, paste into chat, or export it through a shell
+   command. Gemini free-tier proof must contain synthetic data only.
+3. Validate configuration shape without rendering values:
 
    ```bash
    cd "/opt/flowdesk/releases/$(cat /opt/flowdesk/shared/current-image)"
    docker compose --env-file /opt/flowdesk/shared/staging.env -f compose.yaml config --quiet
    ```
 
-3. Merge only after hosted CI is green. Confirm staging `/api/v1/build-info` reports the merge SHA.
-4. In the staging dashboard, create a uniquely named synthetic text source and wait for `Ready`.
-5. In a synthetic conversation, generate a draft and record only these non-secret facts:
+4. Merge only after hosted CI is green. Confirm staging `/api/v1/build-info` reports the merge SHA.
+5. In the staging dashboard, create a uniquely named synthetic text source and wait for `Ready`.
+6. In a synthetic conversation, generate a draft and record only these non-secret facts:
 
    - build SHA;
    - organization fixture label;
@@ -105,17 +109,17 @@ deployment; do not deploy the feature branch manually.
    - latency and cost estimate;
    - approval actor and outbound message ID.
 
-6. Confirm the worker metrics endpoint includes `ai_draft_runs_total`,
+7. Confirm the worker metrics endpoint includes `ai_draft_runs_total`,
    `ai_draft_duration_seconds`, token totals, and cost totals. Metrics must not contain organization
    IDs, prompts, customer content, or credentials.
-7. Inspect protected worker logs by run/request ID. Confirm logs contain no provider body, prompt,
+8. Inspect protected worker logs by run/request ID. Confirm logs contain no provider body, prompt,
    customer PII, or credential.
-8. Approve the draft in the UI and verify the normal WhatsApp outbox/delivery lifecycle. This proves
+9. Approve the draft in the UI and verify the normal WhatsApp outbox/delivery lifecycle. This proves
    the approval-to-outbound path; a real Meta recipient smoke is separate evidence.
 
 ## 5. Pass/fail rule
 
 M4 is release-proven only when automated CI, PostgreSQL tenant isolation, browser approval flow, and
 the staging real-provider slice are all green. Mock-provider tests alone never qualify as real-provider
-evidence. A real OpenAI draft without a real Meta delivery proves AI execution, but not external
-WhatsApp delivery.
+evidence. A real Gemini or OpenAI draft without a real Meta delivery proves AI execution, but not
+external WhatsApp delivery.

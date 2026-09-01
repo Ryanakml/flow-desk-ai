@@ -8,22 +8,22 @@
 
 ## Evidence levels
 
-| Capability                               | Code/unit                                               | PostgreSQL CI                 | Browser                 | Real OpenAI | Staging | Status              |
-| ---------------------------------------- | ------------------------------------------------------- | ----------------------------- | ----------------------- | ----------- | ------- | ------------------- |
-| Fail-closed provider configuration       | Yes                                                     | N/A                           | N/A                     | Not yet     | Not yet | Implemented         |
-| OpenAI chat and 1536d embedding adapters | Success/error/timeout fixtures                          | N/A                           | N/A                     | Not yet     | Not yet | Adapter-proven only |
-| Text/public-URL knowledge ingestion      | Yes                                                     | Migration/RLS job             | Processing/failure UI   | Not yet     | Not yet | Implemented         |
-| Durable idempotent draft worker          | Success, retry, no-evidence, safety                     | Tenant A/B and claim function | Refresh/approval flow   | Not yet     | Not yet | Implemented         |
-| Human approval-only outbound             | API replay test                                         | Transactional DB primitives   | Approve flow            | N/A         | Not yet | Implemented         |
-| Realtime draft visibility                | DB version trigger and authenticated organization rooms | RLS/version checks            | Poll/reconcile fallback | N/A         | Not yet | Implemented         |
-| Token/latency/cost observability         | Metric tests                                            | Durable bot run fields        | Status UI               | Not yet     | Not yet | Implemented         |
+| Capability                             | Code/unit                                               | PostgreSQL CI                 | Browser                 | Real provider | Staging | Status              |
+| -------------------------------------- | ------------------------------------------------------- | ----------------------------- | ----------------------- | ------------- | ------- | ------------------- |
+| Fail-closed provider configuration     | Yes                                                     | N/A                           | N/A                     | Not yet       | Not yet | Implemented         |
+| Gemini/OpenAI chat and 1536d embedding | Success/error/timeout fixtures                          | N/A                           | N/A                     | Not yet       | Not yet | Adapter-proven only |
+| Text/public-URL knowledge ingestion    | Yes                                                     | Migration/RLS job             | Processing/failure UI   | Not yet       | Not yet | Implemented         |
+| Durable idempotent draft worker        | Success, retry, no-evidence, safety                     | Tenant A/B and claim function | Refresh/approval flow   | Not yet       | Not yet | Implemented         |
+| Human approval-only outbound           | API replay test                                         | Transactional DB primitives   | Approve flow            | N/A           | Not yet | Implemented         |
+| Realtime draft visibility              | DB version trigger and authenticated organization rooms | RLS/version checks            | Poll/reconcile fallback | N/A           | Not yet | Implemented         |
+| Token/latency/cost observability       | Metric tests                                            | Durable bot run fields        | Status UI               | Not yet       | Not yet | Implemented         |
 
 ## Implemented flow
 
 ```text
 dashboard knowledge input
   -> tenant transaction + durable ingestion job
-  -> worker extraction/chunking/OpenAI embedding
+  -> worker extraction/chunking/selected-provider embedding
   -> tenant-filtered pgvector chunks
 
 agent Generate Draft
@@ -39,7 +39,8 @@ agent Generate Draft
 ```
 
 No inbound event automatically creates or sends an AI response. The persisted bot mode accepts only
-`off` and `draft`. The OpenAI credential is worker-only in the staging Compose file.
+`off` and `draft`. Gemini and OpenAI credentials are worker-only in the staging Compose file.
+Gemini is recommended for synthetic development; OpenAI is optional.
 
 ## Automated evidence
 
@@ -60,8 +61,8 @@ No inbound event automatically creates or sends an AI response. The persisted bo
 
 ## Evidence not yet claimed
 
-- No real OpenAI credential was used in this branch or CI.
-- No real OpenAI chat/embedding call has been observed on staging.
+- No real Gemini or OpenAI credential was used in this branch or CI.
+- No real Gemini or OpenAI chat/embedding call has been observed on staging.
 - No M4 staging dashboard run has been captured against the merge SHA.
 - No real Meta recipient delivery has been performed as part of this M4 PR.
 

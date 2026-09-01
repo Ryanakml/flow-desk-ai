@@ -290,6 +290,7 @@ export async function processBotDraftBatch(
             completionTokens: reply.completionTokens,
             latencyMs: Date.now() - startedAt,
             costEstimateMicrocents: Math.ceil((reply.promptTokens + reply.completionTokens) * 0.15),
+            model: options.chatModel,
             metadata: {
               provider: options.chatProvider.name,
               model: options.chatModel,

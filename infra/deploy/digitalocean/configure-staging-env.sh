@@ -61,6 +61,9 @@ printf '%s\n' \
   "META_ADMIN_SYSTEM_USER_ACCESS_TOKEN=replace-with-business-admin-system-user-access-token" \
   "META_GRAPH_API_BASE_URL=https://graph.facebook.com/v25.0" \
   "AI_PROVIDER=disabled" \
+  "GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta" \
+  "GEMINI_CHAT_MODEL=gemini-3.7-flash" \
+  "GEMINI_EMBEDDING_MODEL=gemini-embedding-2" \
   "OPENAI_BASE_URL=https://api.openai.com/v1" \
   "OPENAI_CHAT_MODEL=gpt-4o-mini" \
   "OPENAI_EMBEDDING_MODEL=text-embedding-3-small" \

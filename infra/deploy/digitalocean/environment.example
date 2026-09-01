@@ -21,6 +21,10 @@ META_ADMIN_SYSTEM_USER_ACCESS_TOKEN=replace-with-business-admin-system-user-acce
 META_GRAPH_API_BASE_URL=https://graph.facebook.com/v25.0
 # Keep disabled until a real credential is installed directly on the host.
 AI_PROVIDER=disabled
+GEMINI_API_KEY=replace-with-gemini-api-key
+GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta
+GEMINI_CHAT_MODEL=gemini-3.7-flash
+GEMINI_EMBEDDING_MODEL=gemini-embedding-2
 OPENAI_API_KEY=replace-with-openai-api-key
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_CHAT_MODEL=gpt-4o-mini

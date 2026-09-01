@@ -161,3 +161,135 @@ export class OpenAiChatProvider implements AiChatProvider {
     };
   }
 }
+
+export interface GeminiChatProviderConfig {
+  apiKey: string;
+  model?: string;
+  baseUrl?: string;
+  timeoutMs?: number;
+  maxOutputTokens?: number;
+  customFetcher?: typeof fetch;
+}
+
+/**
+ * Gemini Generate Content adapter for the stable Gemini Flash API.
+ */
+export class GeminiChatProvider implements AiChatProvider {
+  readonly name = "gemini-chat-provider";
+  readonly modelId: string;
+  private readonly apiKey: string;
+  private readonly baseUrl: string;
+  private readonly timeoutMs: number;
+  private readonly maxOutputTokens: number;
+  private readonly fetcher: typeof fetch;
+
+  constructor(config: GeminiChatProviderConfig) {
+    this.apiKey = config.apiKey;
+    this.modelId = config.model ?? "gemini-3.7-flash";
+    this.baseUrl = (config.baseUrl ?? "https://generativelanguage.googleapis.com/v1beta").replace(
+      /\/$/,
+      ""
+    );
+    this.timeoutMs = config.timeoutMs ?? 15_000;
+    this.maxOutputTokens = config.maxOutputTokens ?? 512;
+    this.fetcher = config.customFetcher ?? fetch;
+  }
+
+  async checkHealth(): Promise<ProviderHealth> {
+    await Promise.resolve();
+    return {
+      status: this.apiKey ? "available" : "unavailable",
+      checkedAt: new Date().toISOString()
+    };
+  }
+
+  async generateReplyDraft(systemPrompt: string, userMessage: string): Promise<AiChatResponse> {
+    if (!this.apiKey) {
+      throw new AiProviderError("AI_PROVIDER_CONFIGURATION");
+    }
+
+    let response: Response;
+    try {
+      response = await this.fetcher(
+        `${this.baseUrl}/models/${encodeURIComponent(this.modelId)}:generateContent`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": this.apiKey
+          },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: systemPrompt }] },
+            contents: [{ role: "user", parts: [{ text: userMessage }] }],
+            generationConfig: {
+              maxOutputTokens: this.maxOutputTokens,
+              thinkingConfig: { thinkingLevel: "low" }
+            }
+          }),
+          signal: AbortSignal.timeout(this.timeoutMs)
+        }
+      );
+    } catch (error) {
+      throw normalizeAiProviderFetchError(error);
+    }
+
+    if (!response.ok) {
+      throw classifyAiProviderHttpError(response.status);
+    }
+
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch (error) {
+      throw new AiProviderError("AI_PROVIDER_INVALID_RESPONSE", { cause: error });
+    }
+
+    if (!body || typeof body !== "object") {
+      throw new AiProviderError("AI_PROVIDER_INVALID_RESPONSE");
+    }
+
+    const parsed = body as {
+      candidates?: Array<{
+        content?: { parts?: Array<{ text?: unknown; thought?: unknown }> };
+      }>;
+      usageMetadata?: {
+        promptTokenCount?: unknown;
+        candidatesTokenCount?: unknown;
+        thoughtsTokenCount?: unknown;
+      };
+    };
+    const content =
+      parsed.candidates?.[0]?.content?.parts
+        ?.filter((part) => part.thought !== true && typeof part.text === "string")
+        .map((part) => part.text as string)
+        .join("")
+        .trim() ?? "";
+    if (!content) {
+      throw new AiProviderError("AI_PROVIDER_INVALID_RESPONSE");
+    }
+
+    const promptTokens =
+      typeof parsed.usageMetadata?.promptTokenCount === "number" &&
+      parsed.usageMetadata.promptTokenCount >= 0
+        ? parsed.usageMetadata.promptTokenCount
+        : 0;
+    const candidateTokens =
+      typeof parsed.usageMetadata?.candidatesTokenCount === "number" &&
+      parsed.usageMetadata.candidatesTokenCount >= 0
+        ? parsed.usageMetadata.candidatesTokenCount
+        : 0;
+    const thoughtTokens =
+      typeof parsed.usageMetadata?.thoughtsTokenCount === "number" &&
+      parsed.usageMetadata.thoughtsTokenCount >= 0
+        ? parsed.usageMetadata.thoughtsTokenCount
+        : 0;
+
+    return {
+      content,
+      reasoning: "Generated via Gemini Generate Content",
+      confidence: 0.9,
+      promptTokens,
+      completionTokens: candidateTokens + thoughtTokens
+    };
+  }
+}

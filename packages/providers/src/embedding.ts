@@ -156,3 +156,106 @@ export class OpenAiEmbeddingProvider implements AiEmbeddingProvider {
     });
   }
 }
+
+export interface GeminiEmbeddingProviderConfig {
+  apiKey: string;
+  model?: string;
+  baseUrl?: string;
+  timeoutMs?: number;
+  customFetcher?: typeof fetch;
+}
+
+/**
+ * Gemini batch embedding adapter using a 1536d projection compatible with the existing pgvector
+ * index.
+ */
+export class GeminiEmbeddingProvider implements AiEmbeddingProvider {
+  readonly name = "gemini-embedding-provider";
+  readonly dimensions = 1536;
+  readonly modelId: string;
+  private readonly apiKey: string;
+  private readonly baseUrl: string;
+  private readonly timeoutMs: number;
+  private readonly fetcher: typeof fetch;
+
+  constructor(config: GeminiEmbeddingProviderConfig) {
+    this.apiKey = config.apiKey;
+    this.modelId = config.model ?? "gemini-embedding-2";
+    this.baseUrl = (config.baseUrl ?? "https://generativelanguage.googleapis.com/v1beta").replace(
+      /\/$/,
+      ""
+    );
+    this.timeoutMs = config.timeoutMs ?? 15_000;
+    this.fetcher = config.customFetcher ?? fetch;
+  }
+
+  async checkHealth(): Promise<ProviderHealth> {
+    await Promise.resolve();
+    return {
+      status: this.apiKey ? "available" : "unavailable",
+      checkedAt: new Date().toISOString()
+    };
+  }
+
+  async generateEmbeddings(texts: string[]): Promise<GeneratedEmbedding[]> {
+    if (texts.length === 0) return [];
+    if (!this.apiKey) {
+      throw new AiProviderError("AI_PROVIDER_CONFIGURATION");
+    }
+
+    const modelResource = `models/${this.modelId}`;
+    let response: Response;
+    try {
+      response = await this.fetcher(
+        `${this.baseUrl}/models/${encodeURIComponent(this.modelId)}:batchEmbedContents`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": this.apiKey
+          },
+          body: JSON.stringify({
+            requests: texts.map((text) => ({
+              model: modelResource,
+              content: { parts: [{ text }] },
+              embedContentConfig: { outputDimensionality: this.dimensions }
+            }))
+          }),
+          signal: AbortSignal.timeout(this.timeoutMs)
+        }
+      );
+    } catch (error) {
+      throw normalizeAiProviderFetchError(error);
+    }
+
+    if (!response.ok) {
+      throw classifyAiProviderHttpError(response.status);
+    }
+
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch (error) {
+      throw new AiProviderError("AI_PROVIDER_INVALID_RESPONSE", { cause: error });
+    }
+
+    const parsed = body as { embeddings?: Array<{ values?: unknown }> };
+    if (!Array.isArray(parsed.embeddings) || parsed.embeddings.length !== texts.length) {
+      throw new AiProviderError("AI_PROVIDER_INVALID_RESPONSE");
+    }
+
+    return parsed.embeddings.map((item, index) => {
+      if (
+        !Array.isArray(item.values) ||
+        item.values.length !== this.dimensions ||
+        item.values.some((value) => typeof value !== "number" || !Number.isFinite(value))
+      ) {
+        throw new AiProviderError("AI_PROVIDER_INVALID_RESPONSE");
+      }
+      return {
+        embedding: item.values as number[],
+        tokenCount: Math.ceil((texts[index] ?? "").length / 4)
+      };
+    });
+  }
+}

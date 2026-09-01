@@ -87,6 +87,8 @@ export {
   type GeneratedEmbedding,
   type AiEmbeddingProvider,
   FakeEmbeddingProvider,
+  GeminiEmbeddingProvider,
+  type GeminiEmbeddingProviderConfig,
   OpenAiEmbeddingProvider,
   type OpenAiEmbeddingProviderConfig
 } from "./embedding.js";
@@ -94,6 +96,8 @@ export {
   type AiChatResponse,
   type AiChatProvider,
   FakeAiChatProvider,
+  GeminiChatProvider,
+  type GeminiChatProviderConfig,
   OpenAiChatProvider,
   type OpenAiChatProviderConfig
 } from "./chat.js";

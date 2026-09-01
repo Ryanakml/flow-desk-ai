@@ -814,7 +814,7 @@ export async function upsertBotConfig(
         "You are a helpful customer support assistant. Answer accurately based on provided context.",
       input.tone ?? "professional",
       input.language ?? "id",
-      input.model ?? "gpt-4o-mini",
+      input.model ?? "gemini-3.7-flash",
       input.confidenceThreshold ?? 0.7,
       input.topK ?? 5,
       input.emergencyDisabled ?? false,
@@ -1088,6 +1088,7 @@ export async function finishBotDraftRun(
     errorCode?: string | null;
     errorDetail?: string | null;
     metadata?: Record<string, unknown>;
+    model?: string | null;
   }
 ): Promise<void> {
   await db.query(
@@ -1096,6 +1097,7 @@ export async function finishBotDraftRun(
          confidence = $6, prompt_tokens = $7, completion_tokens = $8,
          total_tokens = $7 + $8, latency_ms = $9, cost_estimate_microcents = $10,
          error_code = $11, error_detail = $12, metadata = metadata || $13::jsonb,
+         model = COALESCE($14, model),
          completed_at = clock_timestamp(), updated_at = clock_timestamp()
      WHERE id = $1 AND status IN ('queued', 'processing')`,
     [
@@ -1111,7 +1113,8 @@ export async function finishBotDraftRun(
       input.costEstimateMicrocents ?? 0,
       input.errorCode ?? null,
       input.errorDetail ?? null,
-      JSON.stringify(input.metadata ?? {})
+      JSON.stringify(input.metadata ?? {}),
+      input.model ?? null
     ]
   );
 }

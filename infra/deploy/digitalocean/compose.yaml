@@ -36,6 +36,10 @@ x-api-meta-environment: &api-meta-environment
 
 x-worker-ai-environment: &worker-ai-environment
   AI_PROVIDER: ${AI_PROVIDER:-disabled}
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  GEMINI_BASE_URL: ${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta}
+  GEMINI_CHAT_MODEL: ${GEMINI_CHAT_MODEL:-gemini-3.7-flash}
+  GEMINI_EMBEDDING_MODEL: ${GEMINI_EMBEDDING_MODEL:-gemini-embedding-2}
   OPENAI_API_KEY: ${OPENAI_API_KEY:-}
   OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
   OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-4o-mini}

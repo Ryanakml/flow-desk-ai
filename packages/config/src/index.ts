@@ -108,7 +108,11 @@ const optionalAiSecret = z.preprocess(
 const aiRuntimeConfigSchema = z
   .object({
     APP_ENV: z.enum(["local", "preview", "staging", "production"]).default("local"),
-    AI_PROVIDER: z.enum(["disabled", "fake", "openai"]).default("disabled"),
+    AI_PROVIDER: z.enum(["disabled", "fake", "gemini", "openai"]).default("disabled"),
+    GEMINI_API_KEY: optionalAiSecret,
+    GEMINI_BASE_URL: z.url().default("https://generativelanguage.googleapis.com/v1beta"),
+    GEMINI_CHAT_MODEL: z.string().trim().min(1).default("gemini-3.7-flash"),
+    GEMINI_EMBEDDING_MODEL: z.string().trim().min(1).default("gemini-embedding-2"),
     OPENAI_API_KEY: optionalAiSecret,
     OPENAI_BASE_URL: z.url().default("https://api.openai.com/v1"),
     OPENAI_CHAT_MODEL: z.string().trim().min(1).default("gpt-4o-mini"),
@@ -118,6 +122,13 @@ const aiRuntimeConfigSchema = z
     AI_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(64).max(4_096).default(512)
   })
   .superRefine((config, context) => {
+    if (config.AI_PROVIDER === "gemini" && !config.GEMINI_API_KEY) {
+      context.addIssue({
+        code: "custom",
+        path: ["GEMINI_API_KEY"],
+        message: "GEMINI_API_KEY is required when AI_PROVIDER=gemini"
+      });
+    }
     if (config.AI_PROVIDER === "openai" && !config.OPENAI_API_KEY) {
       context.addIssue({
         code: "custom",
@@ -135,8 +146,21 @@ const aiRuntimeConfigSchema = z
         message: "AI_PROVIDER=fake is forbidden in staging and production"
       });
     }
+    const requiresHttps = config.APP_ENV === "staging" || config.APP_ENV === "production";
     if (
-      (config.APP_ENV === "staging" || config.APP_ENV === "production") &&
+      requiresHttps &&
+      config.AI_PROVIDER === "gemini" &&
+      !config.GEMINI_BASE_URL.startsWith("https://")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["GEMINI_BASE_URL"],
+        message: "GEMINI_BASE_URL must use HTTPS in staging and production"
+      });
+    }
+    if (
+      requiresHttps &&
+      config.AI_PROVIDER === "openai" &&
       !config.OPENAI_BASE_URL.startsWith("https://")
     ) {
       context.addIssue({

@@ -1,12 +1,22 @@
-import { FakeAiChatProvider, OpenAiChatProvider, type AiChatProvider } from "./chat.js";
+import {
+  FakeAiChatProvider,
+  GeminiChatProvider,
+  OpenAiChatProvider,
+  type AiChatProvider
+} from "./chat.js";
 import {
   FakeEmbeddingProvider,
+  GeminiEmbeddingProvider,
   OpenAiEmbeddingProvider,
   type AiEmbeddingProvider
 } from "./embedding.js";
 
 export interface AiProviderRuntimeConfig {
-  AI_PROVIDER: "disabled" | "fake" | "openai";
+  AI_PROVIDER: "disabled" | "fake" | "gemini" | "openai";
+  GEMINI_API_KEY?: string | undefined;
+  GEMINI_BASE_URL: string;
+  GEMINI_CHAT_MODEL: string;
+  GEMINI_EMBEDDING_MODEL: string;
   OPENAI_API_KEY?: string | undefined;
   OPENAI_BASE_URL: string;
   OPENAI_CHAT_MODEL: string;
@@ -17,7 +27,7 @@ export interface AiProviderRuntimeConfig {
 }
 
 export interface AiProviderRuntime {
-  providerType: "fake" | "openai";
+  providerType: "fake" | "gemini" | "openai";
   chatModel: string;
   embeddingModel: string;
   chatProvider: AiChatProvider;
@@ -36,6 +46,30 @@ export function createAiProviderRuntime(
       embeddingModel: "fake-embedding-provider",
       chatProvider: new FakeAiChatProvider(),
       embeddingProvider: new FakeEmbeddingProvider()
+    };
+  }
+
+  if (config.AI_PROVIDER === "gemini") {
+    if (!config.GEMINI_API_KEY) {
+      throw new Error("Validated Gemini configuration is missing its credential");
+    }
+    return {
+      providerType: "gemini",
+      chatModel: config.GEMINI_CHAT_MODEL,
+      embeddingModel: config.GEMINI_EMBEDDING_MODEL,
+      chatProvider: new GeminiChatProvider({
+        apiKey: config.GEMINI_API_KEY,
+        baseUrl: config.GEMINI_BASE_URL,
+        model: config.GEMINI_CHAT_MODEL,
+        timeoutMs: config.AI_CHAT_TIMEOUT_MS,
+        maxOutputTokens: config.AI_MAX_OUTPUT_TOKENS
+      }),
+      embeddingProvider: new GeminiEmbeddingProvider({
+        apiKey: config.GEMINI_API_KEY,
+        baseUrl: config.GEMINI_BASE_URL,
+        model: config.GEMINI_EMBEDDING_MODEL,
+        timeoutMs: config.AI_EMBEDDING_TIMEOUT_MS
+      })
     };
   }
 
