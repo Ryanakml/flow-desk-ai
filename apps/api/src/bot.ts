@@ -370,9 +370,7 @@ export function createBotRouter(options: BotRouterOptions): Router {
         currentRequestContext()?.requestId ??
         "unknown";
       const correlationId =
-        request.header("x-correlation-id") ??
-        currentRequestContext()?.correlationId ??
-        requestId;
+        request.header("x-correlation-id") ?? currentRequestContext()?.correlationId ?? requestId;
       const organizationId = getParam(request.params, "orgId");
       const conversationId = getParam(request.params, "conversationId");
 
