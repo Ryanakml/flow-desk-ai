@@ -1,52 +1,50 @@
-import { Router, type Request, type Response } from "express";
+import { createHash } from "node:crypto";
+import { Router, type Response } from "express";
 import {
-  type Problem,
+  BotDraftActionRequestSchema,
+  GenerateBotDraftResponseSchema,
+  MessageSchema,
   UpdateBotConfigRequestSchema,
-  GenerateBotDraftResponseSchema
+  type Problem
 } from "@flowdesk/contracts";
 import {
+  createOutboundMessageWithOutbox,
+  enqueueBotDraftRun,
   getBotConfig,
-  upsertBotConfig,
+  getBotRunById,
   getConversationWithMessages,
-  searchDocumentChunks,
+  getLatestKnowledgeVersion,
+  getLatestBotRunForConversation,
+  getOutboundMessageByBotRun,
+  markBotRunStale,
+  recordAuditEvent,
   recordBotRun,
-  type DbClient,
-  type BotTone,
+  runInTenantTransaction,
+  updateBotRunAction,
+  upsertBotConfig,
   type BotLanguage,
-  type BotMode
+  type BotMode,
+  type BotRun,
+  type BotTone,
+  type DbClient,
+  type MessageRecord
 } from "@flowdesk/db";
-import {
-  buildCitations,
-  formatKnowledgeContext,
-  assemblePromptContext,
-  type ConversationMessageContext
-} from "@flowdesk/domain";
-import { FakeEmbeddingProvider, FakeAiChatProvider } from "@flowdesk/providers";
-import {
-  checkPromptInjection,
-  redactPiiFromPrompt,
-  checkTokenBudget,
-  LlmCircuitBreaker
-} from "@flowdesk/security";
+import { calculateServiceWindow } from "@flowdesk/domain";
 import { createRequireAuthMiddleware } from "./auth.js";
 import { createRequireOrgPermissionMiddleware } from "./organizations.js";
-
-const embeddingProvider = new FakeEmbeddingProvider();
-const chatProvider = new FakeAiChatProvider();
-const llmCircuitBreaker = new LlmCircuitBreaker({
-  failureThreshold: 3,
-  recoveryTimeMs: 30_000,
-  name: "ai-chat-provider"
-});
 
 export interface BotRouterOptions {
   db: DbClient;
 }
 
 function getParam(params: Record<string, string | string[] | undefined>, key: string): string {
-  const val = params[key];
-  if (Array.isArray(val)) return val[0] ?? "";
-  return typeof val === "string" ? val : "";
+  const value = params[key];
+  if (Array.isArray(value)) return value[0] ?? "";
+  return typeof value === "string" ? value : "";
+}
+
+function toIso(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
 
 function sendProblem(
@@ -67,312 +65,493 @@ function sendProblem(
   return response.status(status).type("application/problem+json").json(problem);
 }
 
+function serializeBotRun(run: BotRun) {
+  return GenerateBotDraftResponseSchema.parse({
+    runId: run.id,
+    status: run.status === "completed" ? "drafted" : run.status,
+    suggestedContent: run.suggestedContent ?? "",
+    citations: run.citations.map((citation) => ({
+      chunkId: citation.chunkId,
+      documentTitle: citation.sourceTitle,
+      snippet: citation.snippet,
+      score: citation.score
+    })),
+    confidence: run.confidence ?? 0,
+    ...(run.reasoning ? { reasoning: run.reasoning } : {}),
+    sendable:
+      run.status === "completed" && Boolean(run.suggestedContent) && run.operatorAction === null,
+    errorCode: run.errorCode,
+    createdAt: toIso(run.createdAt),
+    updatedAt: toIso(run.updatedAt)
+  });
+}
+
+function serializeMessage(message: MessageRecord) {
+  return MessageSchema.parse({
+    ...message,
+    sentAt: message.sentAt ? toIso(message.sentAt) : null,
+    deliveredAt: message.deliveredAt ? toIso(message.deliveredAt) : null,
+    readAt: message.readAt ? toIso(message.readAt) : null,
+    createdAt: toIso(message.createdAt),
+    updatedAt: toIso(message.updatedAt)
+  });
+}
+
+function latestCustomerMessage(
+  messages: Array<{ id: string; senderType: string; createdAt: Date }>
+) {
+  return [...messages].reverse().find((message) => message.senderType === "customer") ?? null;
+}
+
+async function staleIfSuperseded(
+  db: DbClient,
+  run: BotRun,
+  messages: Array<{ id: string; senderType: string; createdAt: Date }>
+): Promise<BotRun> {
+  const latest = latestCustomerMessage(messages);
+  if (
+    run.triggerMessageId &&
+    latest &&
+    latest.id !== run.triggerMessageId &&
+    ["queued", "processing", "completed"].includes(run.status)
+  ) {
+    await markBotRunStale(db, run.id);
+    return (await getBotRunById(db, run.id)) ?? { ...run, status: "stale" };
+  }
+  return run;
+}
+
 export function createBotRouter(options: BotRouterOptions): Router {
   const router = Router({ mergeParams: true });
   const requireAuth = createRequireAuthMiddleware(options.db);
-  const requireViewPermission = createRequireOrgPermissionMiddleware(
-    options.db,
-    "conversation:read"
-  );
-  const requireAdminPermission = createRequireOrgPermissionMiddleware(
-    options.db,
-    "automation:publish"
-  );
+  const requireView = createRequireOrgPermissionMiddleware(options.db, "conversation:read");
+  const requireSend = createRequireOrgPermissionMiddleware(options.db, "message:send");
+  const requireAdmin = createRequireOrgPermissionMiddleware(options.db, "automation:publish");
 
-  // GET /api/v1/organizations/:orgId/bot/config
-  router.get(
-    "/config",
-    requireAuth,
-    requireViewPermission,
-    async (request: Request, response: Response) => {
-      try {
-        const orgId = getParam(request.params, "orgId");
-
-        let config = await getBotConfig(options.db, orgId);
-        if (!config) {
-          config = await upsertBotConfig(options.db, { organizationId: orgId });
-        }
-
-        return response.status(200).json(config);
-      } catch (err) {
-        return sendProblem(
-          response,
-          500,
-          "INTERNAL_ERROR",
-          "Internal error",
-          err instanceof Error ? err.message : "Failed to fetch bot config"
-        );
-      }
+  router.get("/config", requireAuth, requireView, async (request, response) => {
+    try {
+      const organizationId = getParam(request.params, "orgId");
+      const config = await runInTenantTransaction(
+        options.db,
+        { organizationId },
+        async (db) =>
+          (await getBotConfig(db, organizationId)) ?? upsertBotConfig(db, { organizationId })
+      );
+      return response.status(200).json(config);
+    } catch {
+      return sendProblem(
+        response,
+        500,
+        "INTERNAL_ERROR",
+        "Internal error",
+        "Failed to fetch bot configuration."
+      );
     }
-  );
+  });
 
-  // PUT /api/v1/organizations/:orgId/bot/config
-  router.put(
-    "/config",
-    requireAuth,
-    requireAdminPermission,
-    async (request: Request, response: Response) => {
-      try {
-        const orgId = getParam(request.params, "orgId");
-
-        const parseResult = UpdateBotConfigRequestSchema.safeParse(request.body);
-        if (!parseResult.success) {
-          return sendProblem(
-            response,
-            400,
-            "INVALID_REQUEST",
-            "Validation error",
-            parseResult.error.issues[0]?.message || "Invalid body"
-          );
-        }
-
-        const payload: {
-          organizationId: string;
-          instructions?: string;
-          tone?: BotTone;
-          language?: BotLanguage;
-          confidenceThreshold?: number;
-          topK?: number;
-          mode?: BotMode;
-          emergencyDisabled?: boolean;
-        } = { organizationId: orgId };
-
-        if (parseResult.data.instructions !== undefined)
-          payload.instructions = parseResult.data.instructions;
-        if (parseResult.data.tone !== undefined) payload.tone = parseResult.data.tone;
-        if (parseResult.data.language !== undefined) payload.language = parseResult.data.language;
-        if (parseResult.data.confidenceThreshold !== undefined)
-          payload.confidenceThreshold = parseResult.data.confidenceThreshold;
-        if (parseResult.data.topK !== undefined) payload.topK = parseResult.data.topK;
-        if (parseResult.data.mode !== undefined) payload.mode = parseResult.data.mode;
-        if (parseResult.data.emergencyDisabled !== undefined)
-          payload.emergencyDisabled = parseResult.data.emergencyDisabled;
-
-        const updated = await upsertBotConfig(options.db, payload);
-
-        return response.status(200).json(updated);
-      } catch (err) {
-        return sendProblem(
-          response,
-          500,
-          "INTERNAL_ERROR",
-          "Internal error",
-          err instanceof Error ? err.message : "Failed to update bot config"
-        );
-      }
+  router.put("/config", requireAuth, requireAdmin, async (request, response) => {
+    const parsed = UpdateBotConfigRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return sendProblem(
+        response,
+        400,
+        "INVALID_REQUEST",
+        "Validation error",
+        parsed.error.issues[0]?.message ?? "Invalid body"
+      );
     }
-  );
-
-  // POST /api/v1/organizations/:orgId/bot/draft/:conversationId
-  router.post(
-    "/draft/:conversationId",
-    requireAuth,
-    requireViewPermission,
-    async (request: Request, response: Response) => {
-      try {
-        const orgId = getParam(request.params, "orgId");
-        const conversationId = getParam(request.params, "conversationId");
-
-        const tenantContext = {
-          organizationId: orgId,
-          actorId: request.user!.id,
-          correlationId: response.getHeader("x-request-id")?.toString() || "req-id"
-        };
-
-        const startTime = Date.now();
-        let config = await getBotConfig(options.db, orgId);
-        if (!config) {
-          config = await upsertBotConfig(options.db, { organizationId: orgId });
-        }
-
-        if (config.mode === "off" || config.emergencyDisabled) {
-          const offRun = await recordBotRun(options.db, {
-            organizationId: orgId,
-            conversationId,
+    try {
+      const organizationId = getParam(request.params, "orgId");
+      const payload: {
+        organizationId: string;
+        instructions?: string;
+        tone?: BotTone;
+        language?: BotLanguage;
+        confidenceThreshold?: number;
+        topK?: number;
+        mode?: BotMode;
+        emergencyDisabled?: boolean;
+      } = { organizationId };
+      if (parsed.data.instructions !== undefined) payload.instructions = parsed.data.instructions;
+      if (parsed.data.tone !== undefined) payload.tone = parsed.data.tone;
+      if (parsed.data.language !== undefined) payload.language = parsed.data.language;
+      if (parsed.data.confidenceThreshold !== undefined) {
+        payload.confidenceThreshold = parsed.data.confidenceThreshold;
+      }
+      if (parsed.data.topK !== undefined) payload.topK = parsed.data.topK;
+      if (parsed.data.mode !== undefined) payload.mode = parsed.data.mode;
+      if (parsed.data.emergencyDisabled !== undefined) {
+        payload.emergencyDisabled = parsed.data.emergencyDisabled;
+      }
+      const updated = await runInTenantTransaction(options.db, { organizationId }, async (db) => {
+        const config = await upsertBotConfig(db, payload);
+        await recordAuditEvent(db, {
+          organizationId,
+          actorUserId: request.user!.id,
+          action: "bot:config:update",
+          targetType: "bot_config",
+          targetId: config.id,
+          result: "allowed",
+          metadata: {
             mode: config.mode,
-            status: "completed",
-            suggestedContent: "",
-            confidence: 0,
-            promptTokens: 0,
-            completionTokens: 0,
-            latencyMs: Date.now() - startTime,
-            costEstimateMicrocents: 0,
-            citations: []
-          });
+            emergencyDisabled: config.emergencyDisabled,
+            model: config.model
+          }
+        });
+        return config;
+      });
+      return response.status(200).json(updated);
+    } catch {
+      return sendProblem(
+        response,
+        500,
+        "INTERNAL_ERROR",
+        "Internal error",
+        "Failed to update bot configuration."
+      );
+    }
+  });
 
-          return response.status(200).json(
-            GenerateBotDraftResponseSchema.parse({
-              runId: offRun.id,
-              status: "off",
-              suggestedContent: "",
-              citations: [],
-              confidence: 0,
-              reasoning: "Bot mode is OFF or emergency disabled"
-            })
+  router.get(
+    "/draft/:conversationId/latest",
+    requireAuth,
+    requireView,
+    async (request, response) => {
+      try {
+        const organizationId = getParam(request.params, "orgId");
+        const conversationId = getParam(request.params, "conversationId");
+        const run = await runInTenantTransaction(options.db, { organizationId }, async (db) => {
+          const latestRun = await getLatestBotRunForConversation(
+            db,
+            organizationId,
+            conversationId
           );
-        }
-
-        const conversation = await getConversationWithMessages(
-          options.db,
-          tenantContext,
-          conversationId
-        );
-
-        if (!conversation) {
+          if (!latestRun) return null;
+          const conversation = await getConversationWithMessages(
+            db,
+            { organizationId },
+            conversationId
+          );
+          if (!conversation) return null;
+          return staleIfSuperseded(db, latestRun, conversation.messages);
+        });
+        if (!run) {
           return sendProblem(
             response,
             404,
-            "RESOURCE_NOT_FOUND",
-            "Resource not found",
-            `Conversation ${conversationId} not found`
+            "DRAFT_NOT_FOUND",
+            "Draft not found",
+            "No AI draft exists for this conversation."
           );
         }
+        return response.status(200).json(serializeBotRun(run));
+      } catch {
+        return sendProblem(
+          response,
+          500,
+          "INTERNAL_ERROR",
+          "Internal error",
+          "Failed to fetch the AI draft."
+        );
+      }
+    }
+  );
 
-        const recentMessages: ConversationMessageContext[] = conversation.messages.map((m) => ({
-          sender: m.senderType === "customer" ? "customer" : "operator",
-          text: String(m.content || ""),
-          sentAt: new Date(m.createdAt)
-        }));
-
-        const latestCustomerMsg =
-          [...recentMessages].reverse().find((m) => m.sender === "customer")?.text || "Hello";
-
-        // M4-07: 1. Prompt injection check on customer message
-        const injectionCheck = checkPromptInjection(latestCustomerMsg);
-        // Use sanitized message for all downstream processing
-        const safeCustomerMsg = injectionCheck.sanitized;
-
-        // M4-07: 2. PII redaction before sending to LLM
-        const piiRedaction = redactPiiFromPrompt(safeCustomerMsg);
-        const redactedMsg = piiRedaction.redacted;
-
-        // 1. Generate query embedding (use redacted msg to avoid PII in vector store)
-        const embeddings = await embeddingProvider.generateEmbeddings([redactedMsg]);
-        const queryEmbedding = embeddings[0]?.embedding ?? new Array<number>(1536).fill(0);
-
-        // 2. Perform vector search in pgvector
-        const rawChunks = await searchDocumentChunks(options.db, {
-          organizationId: orgId,
-          queryEmbedding,
-          topK: config.topK,
-          similarityThreshold: config.confidenceThreshold
-        });
-
-        // 3. Build citations & knowledge context
-        const citations = buildCitations(rawChunks);
-        const knowledgeContext = formatKnowledgeContext(citations);
-
-        // 4. Assemble prompt context
-        const promptContext = assemblePromptContext({
+  router.post("/draft/:conversationId", requireAuth, requireView, async (request, response) => {
+    try {
+      const organizationId = getParam(request.params, "orgId");
+      const conversationId = getParam(request.params, "conversationId");
+      const run = await runInTenantTransaction(options.db, { organizationId }, async (db) => {
+        const conversation = await getConversationWithMessages(
+          db,
+          { organizationId },
+          conversationId
+        );
+        if (!conversation) return null;
+        const existingConfig = await getBotConfig(db, organizationId);
+        const knowledgeVersion = await getLatestKnowledgeVersion(db, organizationId);
+        const config = existingConfig ?? (await upsertBotConfig(db, { organizationId }));
+        const trigger = latestCustomerMessage(conversation.messages);
+        const snapshot = {
           instructions: config.instructions,
           tone: config.tone,
           language: config.language,
-          knowledgeContext,
-          messages: recentMessages
-        });
-
-        // M4-07: 3. Token budget enforcement before calling LLM
-        const budgetCheck = checkTokenBudget(promptContext.systemInstructions, redactedMsg);
-        if (!budgetCheck.allowed) {
-          return sendProblem(
-            response,
-            422,
-            "BUDGET_EXCEEDED",
-            "Token budget exceeded",
-            budgetCheck.reason ?? "Prompt too large for configured token budget"
-          );
-        }
-
-        // M4-07: 4. Circuit-breaker-wrapped LLM call
-        const chatResponse = await llmCircuitBreaker.call(() =>
-          chatProvider.generateReplyDraft(promptContext.systemInstructions, redactedMsg)
-        );
-
-        const latencyMs = Date.now() - startTime;
-        const confidence = chatResponse.confidence ?? 0.85;
-        const runStatus = confidence >= config.confidenceThreshold ? "drafted" : "escalated";
-
-        const costEstimateMicrocents = Math.ceil(
-          (chatResponse.promptTokens + chatResponse.completionTokens) * 0.15
-        );
-
-        // 6. Record audit entry in bot_runs
-        const dbCitations = citations.map((c) => ({
-          chunkId: c.chunkId,
-          sourceTitle: c.documentTitle,
-          snippet: c.snippet,
-          score: c.score
-        }));
-
-        const botRun = await recordBotRun(options.db, {
-          organizationId: orgId,
-          conversationId,
+          confidenceThreshold: config.confidenceThreshold,
+          topK: config.topK,
           mode: config.mode,
-          status: citations.length > 0 ? "completed" : "fallback_no_evidence",
-          suggestedContent: chatResponse.content,
-          confidence,
-          reasoning: chatResponse.reasoning ?? null,
-          promptTokens: chatResponse.promptTokens,
-          completionTokens: chatResponse.completionTokens,
-          totalTokens: chatResponse.promptTokens + chatResponse.completionTokens,
-          latencyMs,
-          costEstimateMicrocents,
-          citations: dbCitations
-        });
+          emergencyDisabled: config.emergencyDisabled,
+          model: config.model,
+          botConfigUpdatedAt: toIso(config.updatedAt)
+        };
 
-        return response.status(200).json(
-          GenerateBotDraftResponseSchema.parse({
-            runId: botRun.id,
-            status: runStatus,
-            suggestedContent: chatResponse.content,
-            citations,
-            confidence,
-            reasoning: chatResponse.reasoning
-          })
-        );
-      } catch (err) {
+        let createdRun: BotRun;
+        if (config.mode === "off" || config.emergencyDisabled) {
+          createdRun = await recordBotRun(db, {
+            organizationId,
+            conversationId,
+            triggerMessageId: trigger?.id ?? null,
+            botConfigId: config.id,
+            knowledgeVersionId: knowledgeVersion?.id ?? null,
+            mode: config.mode,
+            status: "off",
+            requestedByUserId: request.user!.id,
+            model: config.model,
+            configSnapshot: snapshot,
+            inputMessageCreatedAt: trigger?.createdAt ?? null
+          });
+        } else {
+          if (!trigger) throw new Error("CUSTOMER_MESSAGE_REQUIRED");
+          createdRun = await enqueueBotDraftRun(db, {
+            organizationId,
+            conversationId,
+            triggerMessageId: trigger.id,
+            botConfigId: config.id,
+            knowledgeVersionId: knowledgeVersion?.id ?? null,
+            requestedByUserId: request.user!.id,
+            model: config.model,
+            configSnapshot: snapshot,
+            inputMessageCreatedAt: trigger.createdAt
+          });
+        }
+        await recordAuditEvent(db, {
+          organizationId,
+          actorUserId: request.user!.id,
+          action: "bot:draft:requested",
+          targetType: "bot_run",
+          targetId: createdRun.id,
+          result: "allowed",
+          metadata: { status: createdRun.status, conversationId }
+        });
+        return createdRun;
+      });
+
+      if (!run) {
         return sendProblem(
           response,
-          500,
-          "INTERNAL_ERROR",
-          "Internal error",
-          err instanceof Error ? err.message : "Failed to generate AI draft"
+          404,
+          "RESOURCE_NOT_FOUND",
+          "Resource not found",
+          "Conversation not found."
         );
       }
+      return response.status(run.status === "off" ? 200 : 202).json(serializeBotRun(run));
+    } catch (error) {
+      if (error instanceof Error && error.message === "CUSTOMER_MESSAGE_REQUIRED") {
+        return sendProblem(
+          response,
+          422,
+          "CUSTOMER_MESSAGE_REQUIRED",
+          "Customer message required",
+          "A customer message is required before generating a draft."
+        );
+      }
+      return sendProblem(
+        response,
+        500,
+        "INTERNAL_ERROR",
+        "Internal error",
+        "Failed to queue the AI draft."
+      );
     }
-  );
+  });
 
-  // POST /api/v1/organizations/:orgId/bot/emergency-stop
-  router.post(
-    "/emergency-stop",
-    requireAuth,
-    requireAdminPermission,
-    async (request: Request, response: Response) => {
-      try {
-        const orgId = getParam(request.params, "orgId");
-        const { enabled = true } = request.body as { enabled?: boolean; reason?: string };
+  router.post("/draft-runs/:runId/action", requireAuth, requireSend, async (request, response) => {
+    const parsed = BotDraftActionRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return sendProblem(
+        response,
+        400,
+        "INVALID_REQUEST",
+        "Validation error",
+        parsed.error.issues[0]?.message ?? "Invalid body"
+      );
+    }
+    try {
+      const organizationId = getParam(request.params, "orgId");
+      const runId = getParam(request.params, "runId");
+      const result = await runInTenantTransaction(options.db, { organizationId }, async (db) => {
+        const existing = await getOutboundMessageByBotRun(db, organizationId, runId);
+        if (existing) return { kind: "sent" as const, message: existing };
+        const run = await getBotRunById(db, runId);
+        if (!run) return { kind: "missing" as const };
+        const conversation = await getConversationWithMessages(
+          db,
+          { organizationId },
+          run.conversationId
+        );
+        if (!conversation) return { kind: "missing" as const };
+        const latest = latestCustomerMessage(conversation.messages);
+        if (!latest || latest.id !== run.triggerMessageId) {
+          await markBotRunStale(db, run.id);
+          return { kind: "stale" as const };
+        }
+        if (run.status !== "completed" || !run.suggestedContent || run.operatorAction) {
+          return { kind: "not_sendable" as const };
+        }
+        if (parsed.data.action === "rejected") {
+          await updateBotRunAction(db, {
+            botRunId: run.id,
+            action: "rejected",
+            userId: request.user!.id,
+            metadata: { rejectionReason: parsed.data.rejectionReason ?? "unspecified" }
+          });
+          await recordAuditEvent(db, {
+            organizationId,
+            actorUserId: request.user!.id,
+            action: "bot:draft:rejected",
+            targetType: "bot_run",
+            targetId: run.id,
+            result: "allowed"
+          });
+          return { kind: "rejected" as const, run: (await getBotRunById(db, run.id))! };
+        }
+        if (conversation.conversation.status === "closed") {
+          return { kind: "conversation_closed" as const };
+        }
+        const currentConfig = await getBotConfig(db, organizationId, { forShare: true });
+        if (currentConfig?.emergencyDisabled) return { kind: "bot_disabled" as const };
+        if (!calculateServiceWindow(conversation.conversation.lastInboundAt).isOpen) {
+          return { kind: "window_closed" as const };
+        }
+        const action = parsed.data.action === "edited" ? "edited" : "approved";
+        const finalContent = parsed.data.editedContent ?? run.suggestedContent;
+        const claimed = await updateBotRunAction(db, {
+          botRunId: run.id,
+          action,
+          userId: request.user!.id,
+          metadata: {
+            finalContentHash: createHash("sha256").update(finalContent, "utf8").digest("hex")
+          }
+        });
+        if (!claimed) {
+          const concurrent = await getOutboundMessageByBotRun(db, organizationId, run.id);
+          return concurrent
+            ? { kind: "sent" as const, message: concurrent }
+            : { kind: "not_sendable" as const };
+        }
+        const message = await createOutboundMessageWithOutbox(db, {
+          organizationId,
+          conversationId: run.conversationId,
+          senderUserId: request.user!.id,
+          content: finalContent,
+          correlationId: response.getHeader("x-request-id")?.toString(),
+          metadata: { aiBotRunId: run.id, aiDraftAction: action }
+        });
+        await recordAuditEvent(db, {
+          organizationId,
+          actorUserId: request.user!.id,
+          action: action === "edited" ? "bot:draft:edited" : "bot:draft:approved",
+          targetType: "bot_run",
+          targetId: run.id,
+          result: "allowed",
+          metadata: { outboundMessageId: message.id }
+        });
+        return { kind: "sent" as const, message };
+      });
 
-        const updatedConfig = await upsertBotConfig(options.db, {
-          organizationId: orgId,
+      if (result.kind === "missing") {
+        return sendProblem(
+          response,
+          404,
+          "DRAFT_NOT_FOUND",
+          "Draft not found",
+          "AI draft not found."
+        );
+      }
+      if (result.kind === "stale") {
+        return sendProblem(
+          response,
+          409,
+          "DRAFT_STALE",
+          "Draft is stale",
+          "A newer customer message makes this draft unsafe to send."
+        );
+      }
+      if (result.kind === "conversation_closed") {
+        return sendProblem(
+          response,
+          409,
+          "CONVERSATION_CLOSED",
+          "Conversation closed",
+          "A closed conversation cannot receive an approved AI draft."
+        );
+      }
+      if (result.kind === "bot_disabled") {
+        return sendProblem(
+          response,
+          409,
+          "BOT_DISABLED",
+          "AI assistant disabled",
+          "Emergency stop is active, so this draft cannot be sent."
+        );
+      }
+      if (result.kind === "not_sendable") {
+        return sendProblem(
+          response,
+          409,
+          "DRAFT_NOT_SENDABLE",
+          "Draft is not sendable",
+          "The draft is incomplete or was already actioned."
+        );
+      }
+      if (result.kind === "window_closed") {
+        return sendProblem(
+          response,
+          422,
+          "SERVICE_WINDOW_CLOSED",
+          "Service window closed",
+          "An approved WhatsApp template is required outside the service window."
+        );
+      }
+      if (result.kind === "rejected") {
+        return response.status(200).json({ run: serializeBotRun(result.run), message: null });
+      }
+      return response.status(201).json({ message: serializeMessage(result.message) });
+    } catch {
+      return sendProblem(
+        response,
+        500,
+        "INTERNAL_ERROR",
+        "Internal error",
+        "Failed to apply the draft action."
+      );
+    }
+  });
+
+  router.post("/emergency-stop", requireAuth, requireAdmin, async (request, response) => {
+    try {
+      const organizationId = getParam(request.params, "orgId");
+      const enabled = (request.body as { enabled?: boolean }).enabled ?? true;
+      const updated = await runInTenantTransaction(options.db, { organizationId }, async (db) => {
+        const config = await upsertBotConfig(db, {
+          organizationId,
           emergencyDisabled: enabled
         });
-
-        return response.status(200).json({
-          organizationId: orgId,
-          emergencyDisabled: updatedConfig.emergencyDisabled,
-          triggeredAt: new Date().toISOString()
+        await recordAuditEvent(db, {
+          organizationId,
+          actorUserId: request.user!.id,
+          action: enabled ? "bot:emergency-stop:enabled" : "bot:emergency-stop:disabled",
+          targetType: "bot_config",
+          targetId: config.id,
+          result: "allowed"
         });
-      } catch (err) {
-        return sendProblem(
-          response,
-          500,
-          "INTERNAL_ERROR",
-          "Internal error",
-          err instanceof Error ? err.message : "Failed to toggle emergency stop"
-        );
-      }
+        return config;
+      });
+      return response.status(200).json({
+        organizationId,
+        emergencyDisabled: updated.emergencyDisabled,
+        triggeredAt: new Date().toISOString()
+      });
+    } catch {
+      return sendProblem(
+        response,
+        500,
+        "INTERNAL_ERROR",
+        "Internal error",
+        "Failed to toggle emergency stop."
+      );
     }
-  );
+  });
 
   return router;
 }

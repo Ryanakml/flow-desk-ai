@@ -628,6 +628,7 @@ export interface CreateOutboundMessageWithOutboxInput {
   senderUserId: string;
   content: string;
   correlationId?: string | undefined;
+  metadata?: Record<string, unknown> | undefined;
   template?: OutboundTemplateMetadata | undefined;
   media?: OutboundMediaMetadata | undefined;
 }
@@ -658,11 +659,11 @@ export async function createOutboundMessageWithOutbox(
     senderUserId: input.senderUserId,
     content: input.content,
     status: "queued",
-    ...(input.template
-      ? { metadata: { template: input.template } }
-      : input.media
-        ? { metadata: { media: input.media } }
-        : {})
+    metadata: {
+      ...(input.metadata ?? {}),
+      ...(input.template ? { template: input.template } : {}),
+      ...(input.media ? { media: input.media } : {})
+    }
   });
 
   const outboxPayload = {
@@ -684,6 +685,28 @@ export async function createOutboundMessageWithOutbox(
   );
 
   return message;
+}
+
+export async function getOutboundMessageByBotRun(
+  client: DbClient,
+  organizationId: string,
+  botRunId: string
+): Promise<MessageRecord | null> {
+  const result = await client.query<MessageRecord>(
+    `SELECT
+       id, organization_id AS "organizationId", conversation_id AS "conversationId",
+       channel_id AS "channelId", direction, sender_type AS "senderType",
+       sender_user_id AS "senderUserId", provider_message_id AS "providerMessageId",
+       content, status, error_detail AS "errorDetail", metadata,
+       sent_at AS "sentAt", delivered_at AS "deliveredAt", read_at AS "readAt",
+       created_at AS "createdAt", updated_at AS "updatedAt"
+     FROM flowdesk.messages
+     WHERE organization_id = $1 AND direction = 'outbound'
+       AND metadata->>'aiBotRunId' = $2
+     ORDER BY created_at DESC LIMIT 1`,
+    [organizationId, botRunId]
+  );
+  return result.rows[0] ?? null;
 }
 
 export interface ClaimedOutboxEvent<TPayload = Record<string, unknown>> {

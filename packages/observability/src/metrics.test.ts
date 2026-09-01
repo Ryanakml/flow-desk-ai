@@ -13,6 +13,7 @@ import {
   recordRealtimeReconnectGap,
   recordRealtimeDroppedHint,
   recordMediaLifecycle,
+  recordAiDraftRun,
   getPrometheusMetrics,
   resetMetrics
 } from "./metrics.js";
@@ -102,5 +103,25 @@ describe("Prometheus Metrics (M1-08)", () => {
     const output = getPrometheusMetrics();
     expect(output).toContain('media_lifecycle_total{operation="scan",outcome="clean"} 1');
     expect(output).toContain('media_lifecycle_total{operation="retention",outcome="deleted"} 1');
+  });
+
+  it("exports AI outcome, latency, token, and cost metrics without tenant labels", () => {
+    recordAiDraftRun({
+      provider: "openai",
+      status: "completed",
+      durationSeconds: 1.25,
+      promptTokens: 120,
+      completionTokens: 30,
+      costMicrocents: 225
+    });
+    const output = getPrometheusMetrics();
+    expect(output).toContain('ai_draft_runs_total{provider="openai",status="completed"} 1');
+    expect(output).toContain(
+      'ai_draft_duration_seconds_sum{provider="openai",status="completed"} 1.250000'
+    );
+    expect(output).toContain('ai_draft_prompt_tokens_total{provider="openai"} 120');
+    expect(output).toContain('ai_draft_completion_tokens_total{provider="openai"} 30');
+    expect(output).toContain('ai_draft_cost_microcents_total{provider="openai"} 225');
+    expect(output).not.toContain("organization_id");
   });
 });

@@ -43,7 +43,7 @@
 
 - **Outcome:** ingested documents are normalized, chunked idempotently, and embedded via provider adapters into pgvector.
 - **Depends on:** M4-02.
-- **Scope:** token-aware text chunking with overlap; SHA-256 chunk content hashing for deduplication; `AiEmbeddingProvider` adapter contract (OpenAI `text-embedding-3-small` / 1536d and deterministic `FakeEmbeddingProvider`); transactional batch chunk insertion.
+- **Scope:** token-aware text chunking with overlap; SHA-256 chunk content hashing for deduplication; `AiEmbeddingProvider` adapter contract (Gemini `gemini-embedding-2` or OpenAI `text-embedding-3-small`, both 1536d, plus deterministic `FakeEmbeddingProvider`); transactional batch chunk insertion.
 - **Acceptance:** identical content yields identical hashes without duplicate embeddings; provider rate-limits/retries are handled with exponential backoff; embedding failures mark source status as failed without orphan chunks.
 - **Design:** idempotent worker outbox consumer with batch embedding generation and transaction-scoped insertion.
 - **Cross-cutting:** providers/worker/contracts/tests `update`.
@@ -71,7 +71,7 @@
 
 - **Outcome:** AI generates safe, structured reply drafts with citations and confidence metrics based on conversation context.
 - **Depends on:** M4-04.
-- **Scope:** Bot configuration REST API (`GET`/`PUT` bot config); draft generation trigger on incoming messages; `AiChatProvider` adapter (OpenAI / Anthropic / Fake); structured prompt generation; audit record creation in `bot_runs`.
+- **Scope:** Bot configuration REST API (`GET`/`PUT` bot config); draft generation trigger on incoming messages; `AiChatProvider` adapter (Gemini / OpenAI / Fake); structured prompt generation; audit record creation in `bot_runs`.
 - **Acceptance:** draft mode only—no outbound intent is created autonomously; bot runs record exact model, prompt, latency, tokens, citations, and confidence; bot is disabled if emergency switch is active.
 - **Design:** outbox-driven AI draft generation worker with structured JSON response schema and audit persistence.
 - **Cross-cutting:** API/worker/contracts/observability/tests `new`.

@@ -96,6 +96,87 @@ export function loadMediaConfig(environment: NodeJS.ProcessEnv = process.env): M
   return mediaConfigSchema.parse(environment);
 }
 
+const optionalAiSecret = z.preprocess(
+  (value) =>
+    typeof value === "string" &&
+    (value.trim() === "" || value.trim().toLowerCase().startsWith("replace-with-"))
+      ? undefined
+      : value,
+  z.string().trim().min(20).optional()
+);
+
+const aiRuntimeConfigSchema = z
+  .object({
+    APP_ENV: z.enum(["local", "preview", "staging", "production"]).default("local"),
+    AI_PROVIDER: z.enum(["disabled", "fake", "gemini", "openai"]).default("disabled"),
+    GEMINI_API_KEY: optionalAiSecret,
+    GEMINI_BASE_URL: z.url().default("https://generativelanguage.googleapis.com/v1beta"),
+    GEMINI_CHAT_MODEL: z.string().trim().min(1).default("gemini-3.7-flash"),
+    GEMINI_EMBEDDING_MODEL: z.string().trim().min(1).default("gemini-embedding-2"),
+    OPENAI_API_KEY: optionalAiSecret,
+    OPENAI_BASE_URL: z.url().default("https://api.openai.com/v1"),
+    OPENAI_CHAT_MODEL: z.string().trim().min(1).default("gpt-4o-mini"),
+    OPENAI_EMBEDDING_MODEL: z.string().trim().min(1).default("text-embedding-3-small"),
+    AI_CHAT_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(15_000),
+    AI_EMBEDDING_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(15_000),
+    AI_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(64).max(4_096).default(512)
+  })
+  .superRefine((config, context) => {
+    if (config.AI_PROVIDER === "gemini" && !config.GEMINI_API_KEY) {
+      context.addIssue({
+        code: "custom",
+        path: ["GEMINI_API_KEY"],
+        message: "GEMINI_API_KEY is required when AI_PROVIDER=gemini"
+      });
+    }
+    if (config.AI_PROVIDER === "openai" && !config.OPENAI_API_KEY) {
+      context.addIssue({
+        code: "custom",
+        path: ["OPENAI_API_KEY"],
+        message: "OPENAI_API_KEY is required when AI_PROVIDER=openai"
+      });
+    }
+    if (
+      config.AI_PROVIDER === "fake" &&
+      (config.APP_ENV === "staging" || config.APP_ENV === "production")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["AI_PROVIDER"],
+        message: "AI_PROVIDER=fake is forbidden in staging and production"
+      });
+    }
+    const requiresHttps = config.APP_ENV === "staging" || config.APP_ENV === "production";
+    if (
+      requiresHttps &&
+      config.AI_PROVIDER === "gemini" &&
+      !config.GEMINI_BASE_URL.startsWith("https://")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["GEMINI_BASE_URL"],
+        message: "GEMINI_BASE_URL must use HTTPS in staging and production"
+      });
+    }
+    if (
+      requiresHttps &&
+      config.AI_PROVIDER === "openai" &&
+      !config.OPENAI_BASE_URL.startsWith("https://")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["OPENAI_BASE_URL"],
+        message: "OPENAI_BASE_URL must use HTTPS in staging and production"
+      });
+    }
+  });
+
+export type AiRuntimeConfig = z.infer<typeof aiRuntimeConfigSchema>;
+
+export function loadAiRuntimeConfig(environment: NodeJS.ProcessEnv = process.env): AiRuntimeConfig {
+  return aiRuntimeConfigSchema.parse(environment);
+}
+
 export const authConfigSchema = z.object({
   AUTH_OIDC_ISSUER: z.string().url().default("https://flowdesk.local.auth0.com/"),
   AUTH_OIDC_CLIENT_ID: z.string().min(1).default("flowdesk-local-client"),

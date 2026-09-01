@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  loadAiRuntimeConfig,
   loadAuthConfig,
   loadChannelEncryptionConfig,
   loadHttpConfig,
@@ -46,6 +47,86 @@ describe("loadMediaConfig", () => {
 
   it("fails closed when staging media dependencies are absent", () => {
     expect(() => loadMediaConfig({ APP_ENV: "staging" })).toThrow();
+  });
+});
+
+describe("loadAiRuntimeConfig", () => {
+  it("defaults to a disabled AI runtime instead of silently selecting a fake provider", () => {
+    expect(loadAiRuntimeConfig({})).toMatchObject({
+      AI_PROVIDER: "disabled",
+      GEMINI_CHAT_MODEL: "gemini-3.7-flash",
+      GEMINI_EMBEDDING_MODEL: "gemini-embedding-2",
+      OPENAI_CHAT_MODEL: "gpt-4o-mini",
+      OPENAI_EMBEDDING_MODEL: "text-embedding-3-small",
+      AI_CHAT_TIMEOUT_MS: 15_000,
+      AI_EMBEDDING_TIMEOUT_MS: 15_000,
+      AI_MAX_OUTPUT_TOKENS: 512
+    });
+  });
+
+  it("requires a non-placeholder credential when Gemini is enabled", () => {
+    expect(() => loadAiRuntimeConfig({ AI_PROVIDER: "gemini" })).toThrow();
+    expect(() =>
+      loadAiRuntimeConfig({
+        AI_PROVIDER: "gemini",
+        GEMINI_API_KEY: "replace-with-gemini-api-key"
+      })
+    ).toThrow();
+    expect(
+      loadAiRuntimeConfig({
+        AI_PROVIDER: "gemini",
+        GEMINI_API_KEY: "synthetic-gemini-test-key-with-safe-length"
+      })
+    ).toMatchObject({
+      AI_PROVIDER: "gemini",
+      GEMINI_API_KEY: "synthetic-gemini-test-key-with-safe-length"
+    });
+  });
+
+  it("requires a non-placeholder credential when OpenAI is enabled", () => {
+    expect(() => loadAiRuntimeConfig({ AI_PROVIDER: "openai" })).toThrow();
+    expect(() =>
+      loadAiRuntimeConfig({
+        AI_PROVIDER: "openai",
+        OPENAI_API_KEY: "replace-with-openai-api-key"
+      })
+    ).toThrow();
+    expect(
+      loadAiRuntimeConfig({
+        AI_PROVIDER: "openai",
+        OPENAI_API_KEY: "synthetic-test-key-with-safe-length"
+      })
+    ).toMatchObject({
+      AI_PROVIDER: "openai",
+      OPENAI_API_KEY: "synthetic-test-key-with-safe-length"
+    });
+  });
+
+  it("allows explicit local fake use but rejects it in staging and production", () => {
+    expect(loadAiRuntimeConfig({ APP_ENV: "local", AI_PROVIDER: "fake" })).toMatchObject({
+      AI_PROVIDER: "fake"
+    });
+    expect(() => loadAiRuntimeConfig({ APP_ENV: "staging", AI_PROVIDER: "fake" })).toThrow();
+    expect(() => loadAiRuntimeConfig({ APP_ENV: "production", AI_PROVIDER: "fake" })).toThrow();
+  });
+
+  it("requires HTTPS provider transport outside local and preview environments", () => {
+    expect(() =>
+      loadAiRuntimeConfig({
+        APP_ENV: "staging",
+        AI_PROVIDER: "openai",
+        OPENAI_API_KEY: "synthetic-test-key-with-safe-length",
+        OPENAI_BASE_URL: "http://provider.invalid/v1"
+      })
+    ).toThrow();
+    expect(() =>
+      loadAiRuntimeConfig({
+        APP_ENV: "staging",
+        AI_PROVIDER: "gemini",
+        GEMINI_API_KEY: "synthetic-gemini-test-key-with-safe-length",
+        GEMINI_BASE_URL: "http://provider.invalid/v1beta"
+      })
+    ).toThrow();
   });
 });
 
@@ -176,5 +257,30 @@ describe("docker compose deployment contract", () => {
       /x-app-environment:[\s\S]*?x-api-meta-environment:/
     )?.[0];
     expect(sharedEnvironment).toContain("META_GRAPH_API_BASE_URL");
+  });
+
+  it("passes AI configuration only to the worker and defaults staging AI to disabled", () => {
+    const composePath = path.resolve(__dirname, "../../../infra/deploy/digitalocean/compose.yaml");
+    const composeContent = fs.readFileSync(composePath, "utf-8");
+    const sharedEnvironment = composeContent.match(
+      /x-app-environment:[\s\S]*?x-api-meta-environment:/
+    )?.[0];
+    const aiEnvironment = composeContent.match(
+      /x-worker-ai-environment:[\s\S]*?x-ingress-webhook-environment:/
+    )?.[0];
+    const apiService = composeContent.match(/\n {2}api:[\s\S]*?\n {2}ingress:/)?.[0];
+    const workerService = composeContent.match(/\n {2}worker:[\s\S]*?\n {2}scheduler:/)?.[0];
+
+    expect(sharedEnvironment).not.toContain("OPENAI_API_KEY");
+    expect(sharedEnvironment).not.toContain("GEMINI_API_KEY");
+    expect(aiEnvironment).toContain("AI_PROVIDER: ${AI_PROVIDER:-disabled}");
+    expect(aiEnvironment).toContain("GEMINI_API_KEY: ${GEMINI_API_KEY:-}");
+    expect(aiEnvironment).toContain("GEMINI_CHAT_MODEL: ${GEMINI_CHAT_MODEL:-gemini-3.7-flash}");
+    expect(aiEnvironment).toContain(
+      "GEMINI_EMBEDDING_MODEL: ${GEMINI_EMBEDDING_MODEL:-gemini-embedding-2}"
+    );
+    expect(aiEnvironment).toContain("OPENAI_API_KEY: ${OPENAI_API_KEY:-}");
+    expect(apiService).not.toContain("*worker-ai-environment");
+    expect(workerService).toContain("*worker-ai-environment");
   });
 });

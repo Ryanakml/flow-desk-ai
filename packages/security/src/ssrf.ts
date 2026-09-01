@@ -163,6 +163,30 @@ export interface AntiSsrfFetchResult {
   byteSize: number;
 }
 
+async function readBoundedText(response: Response, maxSizeBytes: number): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let byteSize = 0;
+  let content = "";
+  while (true) {
+    const readResult = (await reader.read()) as { done: boolean; value?: Uint8Array };
+    if (readResult.done) break;
+    const value = readResult.value;
+    if (!value) continue;
+    byteSize += value.byteLength;
+    if (byteSize > maxSizeBytes) {
+      await reader.cancel();
+      throw new SsrfProtectionError(
+        `Response body exceeds limit of ${maxSizeBytes} bytes.`,
+        "EXCEEDS_SIZE_LIMIT"
+      );
+    }
+    content += decoder.decode(value, { stream: true });
+  }
+  return content + decoder.decode();
+}
+
 /**
  * Fetches external content safely with anti-SSRF protection, size caps, timeouts, and redirect validation.
  */
@@ -193,7 +217,7 @@ export async function fetchWithAntiSsrf(
         signal: controller.signal,
         redirect: "manual",
         headers: {
-          UserAgent: "FlowDesk-KnowledgeIngestion/1.0 (+https://flowdesk.dev)"
+          "User-Agent": "FlowDesk-KnowledgeIngestion/1.0 (+https://flowdesk.dev)"
         }
       });
     } catch (err: unknown) {
@@ -205,8 +229,6 @@ export async function fetchWithAntiSsrf(
         `Failed to fetch target URL: ${err instanceof Error ? err.message : String(err)}`,
         "FETCH_FAILED"
       );
-    } finally {
-      clearTimeout(timeoutTimer);
     }
 
     // Handle Manual Redirects to prevent SSRF via 3xx redirects to internal IPs
@@ -220,26 +242,40 @@ export async function fetchWithAntiSsrf(
       }
       currentUrl = new URL(redirectLocation, validatedUrl.toString()).toString();
       redirectCount++;
+      clearTimeout(timeoutTimer);
       continue;
     }
 
     if (!response.ok) {
+      clearTimeout(timeoutTimer);
       throw new SsrfProtectionError(
         `HTTP Error ${response.status}: ${response.statusText}`,
-        "HTTP_ERROR"
+        response.status >= 500 ? "HTTP_5XX" : "HTTP_ERROR"
       );
     }
 
     const contentType = response.headers.get("content-type") || "text/plain";
     const contentLength = response.headers.get("content-length");
     if (contentLength && Number(contentLength) > maxSizeBytes) {
+      clearTimeout(timeoutTimer);
       throw new SsrfProtectionError(
         `Response body size (${contentLength} bytes) exceeds limit of ${maxSizeBytes} bytes.`,
         "EXCEEDS_SIZE_LIMIT"
       );
     }
 
-    const textContent = await response.text();
+    let textContent: string;
+    try {
+      textContent = await readBoundedText(response, maxSizeBytes);
+    } catch (err: unknown) {
+      if (err instanceof SsrfProtectionError) throw err;
+      if (err instanceof Error && err.name === "AbortError") {
+        throw new SsrfProtectionError(`Request timed out after ${timeoutMs}ms.`, "FETCH_TIMEOUT");
+      }
+      throw new SsrfProtectionError("Failed to read target response body.", "FETCH_FAILED");
+    } finally {
+      clearTimeout(timeoutTimer);
+    }
     const byteSize = Buffer.byteLength(textContent, "utf-8");
     if (byteSize > maxSizeBytes) {
       throw new SsrfProtectionError(

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import type { Conversation } from "@flowdesk/contracts";
@@ -113,5 +113,126 @@ describe("InboxView operational browser states (M3-08)", () => {
     expect(
       results.violations.filter((item) => ["serious", "critical"].includes(item.impact ?? ""))
     ).toEqual([]);
+  });
+
+  it("restores a worker draft and sends only through explicit approval", async () => {
+    let generated = false;
+    const runId = "d0000000-0000-7000-8000-000000000001";
+    const now = "2026-08-28T10:01:00.000Z";
+    const draft = (status: "queued" | "drafted") => ({
+      runId,
+      status,
+      suggestedContent: status === "drafted" ? "Garansi berlaku satu tahun." : "",
+      citations:
+        status === "drafted"
+          ? [
+              {
+                chunkId: "chunk-1",
+                documentTitle: "Warranty policy",
+                snippet: "Garansi produk berlaku satu tahun.",
+                score: 0.91
+              }
+            ]
+          : [],
+      confidence: status === "drafted" ? 0.92 : 0,
+      sendable: status === "drafted",
+      errorCode: null,
+      createdAt: now,
+      updatedAt: now
+    });
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      await Promise.resolve();
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/conversations/workspace-resources")) {
+        return new Response(JSON.stringify({ queues: [], tags: [], savedFilters: [] }), {
+          status: 200
+        });
+      }
+      if (url === `/api/v1/organizations/${orgId}/conversations`) {
+        return new Response(JSON.stringify({ items: [first], nextCursor: null }), { status: 200 });
+      }
+      if (url === `/api/v1/organizations/${orgId}/conversations/${first.id}`) {
+        return new Response(
+          JSON.stringify({ conversation: first, messages: [], notes: [], tags: [] }),
+          { status: 200 }
+        );
+      }
+      if (url.endsWith(`/bot/draft/${first.id}/latest`)) {
+        if (!generated) {
+          return new Response(
+            JSON.stringify({
+              type: "about:blank",
+              title: "Draft not found",
+              status: 404,
+              code: "DRAFT_NOT_FOUND",
+              detail: "No draft",
+              requestId: "test"
+            }),
+            { status: 404 }
+          );
+        }
+        return new Response(JSON.stringify(draft("drafted")), { status: 200 });
+      }
+      if (url.endsWith(`/bot/draft/${first.id}`) && method === "POST") {
+        generated = true;
+        return new Response(JSON.stringify(draft("queued")), { status: 202 });
+      }
+      if (url.endsWith(`/bot/draft-runs/${runId}/action`) && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            message: {
+              id: "e0000000-0000-7000-8000-000000000001",
+              organizationId: orgId,
+              conversationId: first.id,
+              channelId: first.channelId,
+              direction: "outbound",
+              senderType: "agent",
+              senderUserId: userId,
+              providerMessageId: null,
+              content: "Garansi berlaku satu tahun.",
+              status: "queued",
+              errorDetail: null,
+              sentAt: now,
+              deliveredAt: null,
+              readAt: null,
+              createdAt: now,
+              updatedAt: now
+            }
+          }),
+          { status: 201 }
+        );
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+    const user = userEvent.setup();
+    render(
+      <InboxView
+        organizationId={orgId}
+        userRole="agent"
+        sessionUserId={userId}
+        fetcher={fetcher}
+        initialConversations={[first]}
+        initialActiveConversation={first}
+        initialMessages={[]}
+      />
+    );
+
+    await user.click(await screen.findByTestId("copilot-generate-btn"));
+    expect(screen.getByTestId("copilot-loading")).toBeTruthy();
+    await waitFor(
+      () => expect(screen.getByTestId("copilot-draft-text").textContent).toContain("Garansi"),
+      {
+        timeout: 2_500
+      }
+    );
+    await user.click(screen.getByTestId("copilot-approve-btn"));
+    await waitFor(() => expect(screen.queryByTestId("copilot-draft-card")).toBeNull());
+    expect(screen.getByText("Garansi berlaku satu tahun.")).toBeTruthy();
+    const actionCall = fetcher.mock.calls.find(([input]) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      return url.includes("/draft-runs/");
+    });
+    expect(actionCall?.[1]).toMatchObject({ method: "POST" });
   });
 });

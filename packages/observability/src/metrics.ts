@@ -21,6 +21,11 @@ const realtimeAuthorizationDenialsTotal = new Map<string, CounterMetric>();
 const realtimeReconnectGapsTotal = new Map<string, CounterMetric>();
 const realtimeDroppedHintsTotal = new Map<string, CounterMetric>();
 const mediaLifecycleTotal = new Map<string, CounterMetric>();
+const aiDraftRunsTotal = new Map<string, CounterMetric>();
+const aiDraftDuration = new Map<string, HistogramMetric>();
+const aiDraftPromptTokensTotal = new Map<string, CounterMetric>();
+const aiDraftCompletionTokensTotal = new Map<string, CounterMetric>();
+const aiDraftCostMicrocentsTotal = new Map<string, CounterMetric>();
 let realtimeActiveConnections = 0;
 let outboxPendingEvents = 0;
 let outboxOldestEventAgeSeconds = 0;
@@ -113,6 +118,17 @@ function incrementCounter(
   else target.set(key, { value: 1, labels });
 }
 
+function addCounter(
+  target: Map<string, CounterMetric>,
+  labels: Record<string, string>,
+  value: number
+): void {
+  const key = serializeLabels(labels);
+  const existing = target.get(key);
+  if (existing) existing.value += value;
+  else target.set(key, { value, labels });
+}
+
 export function recordWhatsAppWebhookProcessed(result: "processed" | "failed"): void {
   incrementCounter(whatsappWebhookProcessedTotal, { result });
 }
@@ -155,6 +171,37 @@ export function recordMediaLifecycle(operation: "scan" | "retention", outcome: s
   incrementCounter(mediaLifecycleTotal, { operation, outcome });
 }
 
+export function recordAiDraftRun(input: {
+  provider: string;
+  status: string;
+  durationSeconds: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  costMicrocents?: number;
+}): void {
+  const labels = { provider: input.provider, status: input.status };
+  incrementCounter(aiDraftRunsTotal, labels);
+  const key = serializeLabels(labels);
+  const duration = aiDraftDuration.get(key);
+  if (duration) {
+    duration.count += 1;
+    duration.sum += Math.max(0, input.durationSeconds);
+  } else {
+    aiDraftDuration.set(key, {
+      count: 1,
+      sum: Math.max(0, input.durationSeconds),
+      labels
+    });
+  }
+  addCounter(aiDraftPromptTokensTotal, { provider: input.provider }, input.promptTokens ?? 0);
+  addCounter(
+    aiDraftCompletionTokensTotal,
+    { provider: input.provider },
+    input.completionTokens ?? 0
+  );
+  addCounter(aiDraftCostMicrocentsTotal, { provider: input.provider }, input.costMicrocents ?? 0);
+}
+
 export function resetMetrics(): void {
   httpRequestsTotal.clear();
   httpRequestDuration.clear();
@@ -168,6 +215,11 @@ export function resetMetrics(): void {
   realtimeReconnectGapsTotal.clear();
   realtimeDroppedHintsTotal.clear();
   mediaLifecycleTotal.clear();
+  aiDraftRunsTotal.clear();
+  aiDraftDuration.clear();
+  aiDraftPromptTokensTotal.clear();
+  aiDraftCompletionTokensTotal.clear();
+  aiDraftCostMicrocentsTotal.clear();
   realtimeActiveConnections = 0;
   outboxPendingEvents = 0;
   outboxOldestEventAgeSeconds = 0;
@@ -270,6 +322,30 @@ export function getPrometheusMetrics(): string {
   lines.push("# TYPE media_lifecycle_total counter");
   for (const item of mediaLifecycleTotal.values()) {
     lines.push(`media_lifecycle_total{${serializeLabels(item.labels)}} ${item.value}`);
+  }
+
+  lines.push("# HELP ai_draft_runs_total Durable AI draft outcomes by provider and status.");
+  lines.push("# TYPE ai_draft_runs_total counter");
+  for (const item of aiDraftRunsTotal.values()) {
+    lines.push(`ai_draft_runs_total{${serializeLabels(item.labels)}} ${item.value}`);
+  }
+  lines.push("# HELP ai_draft_duration_seconds AI draft processing duration.");
+  lines.push("# TYPE ai_draft_duration_seconds summary");
+  for (const item of aiDraftDuration.values()) {
+    lines.push(`ai_draft_duration_seconds_count{${serializeLabels(item.labels)}} ${item.count}`);
+    lines.push(
+      `ai_draft_duration_seconds_sum{${serializeLabels(item.labels)}} ${item.sum.toFixed(6)}`
+    );
+  }
+  for (const [name, values] of [
+    ["ai_draft_prompt_tokens_total", aiDraftPromptTokensTotal],
+    ["ai_draft_completion_tokens_total", aiDraftCompletionTokensTotal],
+    ["ai_draft_cost_microcents_total", aiDraftCostMicrocentsTotal]
+  ] as const) {
+    lines.push(`# TYPE ${name} counter`);
+    for (const item of values.values()) {
+      lines.push(`${name}{${serializeLabels(item.labels)}} ${item.value}`);
+    }
   }
 
   return lines.join("\n") + "\n";

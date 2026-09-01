@@ -9,6 +9,18 @@ export interface HealthCheckedProvider {
 }
 
 export {
+  AiProviderError,
+  classifyAiProviderHttpError,
+  normalizeAiProviderFetchError,
+  type AiProviderErrorCode
+} from "./ai-error.js";
+export {
+  createAiProviderRuntime,
+  type AiProviderRuntime,
+  type AiProviderRuntimeConfig
+} from "./ai-runtime.js";
+
+export {
   type VerifiedIdentityClaims,
   type IdentityProvider,
   MockIdentityProvider,
@@ -75,6 +87,8 @@ export {
   type GeneratedEmbedding,
   type AiEmbeddingProvider,
   FakeEmbeddingProvider,
+  GeminiEmbeddingProvider,
+  type GeminiEmbeddingProviderConfig,
   OpenAiEmbeddingProvider,
   type OpenAiEmbeddingProviderConfig
 } from "./embedding.js";
@@ -82,6 +96,8 @@ export {
   type AiChatResponse,
   type AiChatProvider,
   FakeAiChatProvider,
+  GeminiChatProvider,
+  type GeminiChatProviderConfig,
   OpenAiChatProvider,
   type OpenAiChatProviderConfig
 } from "./chat.js";

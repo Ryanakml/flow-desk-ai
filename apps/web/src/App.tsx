@@ -24,6 +24,7 @@ import { InboxView } from "./InboxView.js";
 import { ChannelsView } from "./ChannelsView.js";
 import { DeveloperSettingsView } from "./DeveloperSettingsView.js";
 import { AnalyticsView } from "./AnalyticsView.js";
+import { KnowledgeView } from "./KnowledgeView.js";
 import "./styles.css";
 
 function FlowDeskIcon({ size = 20 }: { size?: number }) {
@@ -59,7 +60,14 @@ function FlowDeskIcon({ size = 20 }: { size?: number }) {
 }
 
 type Tab =
-  "conversations" | "analytics" | "workspace" | "channels" | "developer" | "team" | "audit";
+  | "conversations"
+  | "analytics"
+  | "knowledge"
+  | "workspace"
+  | "channels"
+  | "developer"
+  | "team"
+  | "audit";
 
 export function App() {
   const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
@@ -653,6 +661,15 @@ export function App() {
         </button>
         <button
           type="button"
+          onClick={() => setActiveTab("knowledge")}
+          className={`tab-btn ${activeTab === "knowledge" ? "active" : ""}`}
+          id="tab-knowledge"
+          data-testid="tab-knowledge"
+        >
+          AI Knowledge
+        </button>
+        <button
+          type="button"
           onClick={() => setActiveTab("workspace")}
           className={`tab-btn ${activeTab === "workspace" ? "active" : ""}`}
           id="tab-workspace"
@@ -727,6 +744,14 @@ export function App() {
 
         {/* Tab: Real-Time Analytics Engine & SLA */}
         {activeTab === "analytics" && selectedOrgId && <AnalyticsView orgId={selectedOrgId} />}
+
+        {activeTab === "knowledge" && selectedOrgId && (
+          <KnowledgeView
+            orgId={selectedOrgId}
+            canManage={hasPermission(currentRole, "automation:publish")}
+            showToast={(message, type) => showToast(message, type === "error")}
+          />
+        )}
 
         {/* Tab: Self-Service WhatsApp Channels */}
         {activeTab === "channels" && selectedOrgId && (

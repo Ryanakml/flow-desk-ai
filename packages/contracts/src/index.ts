@@ -793,7 +793,55 @@ export const GenerateDownloadUrlResponseSchema = z.object({
 });
 export type GenerateDownloadUrlResponse = z.infer<typeof GenerateDownloadUrlResponseSchema>;
 
-// M4: Bot Configuration and AI Draft schemas
+// M4: Knowledge ingestion, Bot Configuration and AI Draft schemas
+export const KnowledgeSourceStateSchema = z.enum([
+  "queued",
+  "processing",
+  "ready",
+  "failed",
+  "archived"
+]);
+
+export const KnowledgeSourceSchema = z.object({
+  id: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  type: z.enum(["text", "file", "url"]),
+  name: z.string(),
+  sourceUri: z.string().url().nullable(),
+  status: KnowledgeSourceStateSchema,
+  statusReason: z.string().nullable(),
+  byteSize: z.number().int().nonnegative(),
+  lastIndexedAt: z.string().datetime({ offset: true }).nullable(),
+  createdAt: z.string().datetime({ offset: true }),
+  updatedAt: z.string().datetime({ offset: true })
+});
+export type KnowledgeSourceResponse = z.infer<typeof KnowledgeSourceSchema>;
+
+export const ListKnowledgeSourcesResponseSchema = z.object({
+  sources: z.array(KnowledgeSourceSchema)
+});
+export type ListKnowledgeSourcesResponse = z.infer<typeof ListKnowledgeSourcesResponseSchema>;
+
+export const CreateKnowledgeSourceRequestSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("text"),
+    name: z.string().trim().min(1).max(200),
+    content: z.string().trim().min(1).max(500_000)
+  }),
+  z.object({
+    type: z.literal("url"),
+    name: z.string().trim().min(1).max(200),
+    url: z.string().url().max(2_048)
+  })
+]);
+export type CreateKnowledgeSourceRequest = z.infer<typeof CreateKnowledgeSourceRequestSchema>;
+
+export const CreateKnowledgeSourceResponseSchema = z.object({
+  source: KnowledgeSourceSchema,
+  jobId: z.string().uuid()
+});
+export type CreateKnowledgeSourceResponse = z.infer<typeof CreateKnowledgeSourceResponseSchema>;
+
 export const BotConfigSchema = z.object({
   id: z.string().uuid(),
   organizationId: z.string().uuid(),
@@ -831,13 +879,59 @@ export type CitationResponse = z.infer<typeof CitationSchema>;
 
 export const GenerateBotDraftResponseSchema = z.object({
   runId: z.string().uuid(),
-  status: z.enum(["drafted", "escalated", "off"]),
+  status: z.enum([
+    "queued",
+    "processing",
+    "drafted",
+    "no_evidence",
+    "safety_blocked",
+    "budget_exceeded",
+    "provider_failed",
+    "stale",
+    "cancelled",
+    "off"
+  ]),
   suggestedContent: z.string(),
   citations: z.array(CitationSchema),
   confidence: z.number(),
-  reasoning: z.string().optional()
+  reasoning: z.string().optional(),
+  sendable: z.boolean(),
+  errorCode: z.string().nullable(),
+  createdAt: z.string().datetime({ offset: true }),
+  updatedAt: z.string().datetime({ offset: true })
 });
 export type GenerateBotDraftResponse = z.infer<typeof GenerateBotDraftResponseSchema>;
+
+export const BotDraftActionRequestSchema = z
+  .object({
+    action: z.enum(["approved", "edited", "rejected"]),
+    editedContent: z.string().trim().min(1).max(4000).optional(),
+    rejectionReason: z.enum(["not_helpful", "incorrect", "unsafe", "other"]).optional()
+  })
+  .superRefine((value, context) => {
+    if (value.action === "edited" && !value.editedContent) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["editedContent"],
+        message: "editedContent is required for an edited draft"
+      });
+    }
+    if (value.action !== "edited" && value.editedContent !== undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["editedContent"],
+        message: "editedContent is only accepted for an edited draft"
+      });
+    }
+    if (value.action !== "rejected" && value.rejectionReason !== undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["rejectionReason"],
+        message: "rejectionReason is only accepted for a rejected draft"
+      });
+    }
+  });
+export type BotDraftActionRequest = z.infer<typeof BotDraftActionRequestSchema>;
 
 // M5: Routing Rules schemas
 export const RoutingConditionSchema = z.object({

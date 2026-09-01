@@ -39,6 +39,8 @@ function createMockDb(): DbClient {
   }
   const botConfigs = new Map<string, MockBotConfigRow>();
   const botRuns = new Map<string, Record<string, unknown>>();
+  const outboundMessages = new Map<string, Record<string, unknown>>();
+  let conversationStatus: "open" | "closed" = "open";
 
   users.set("u1", {
     id: "u1",
@@ -70,6 +72,27 @@ function createMockDb(): DbClient {
 
   const queryMock = async (sql: string, params?: unknown[]) => {
     await Promise.resolve();
+    if (sql === "TEST_COMPLETE_BOT_RUN") {
+      const run = botRuns.get(params?.[0] as string);
+      if (run) {
+        run["status"] = "completed";
+        run["suggested_content"] = "Garansi resmi berlaku satu tahun.";
+        run["confidence"] = 0.92;
+        run["citations"] = [
+          {
+            chunkId: "chunk1",
+            sourceTitle: "Policy Guide",
+            snippet: "Garansi berlaku satu tahun.",
+            score: 0.9
+          }
+        ];
+      }
+      return { rows: [] };
+    }
+    if (sql === "TEST_CLOSE_CONVERSATION") {
+      conversationStatus = "closed";
+      return { rows: [] };
+    }
     if (sql.includes("INSERT INTO flowdesk.bot_configs")) {
       const orgId = params?.[0] as string;
       const existing: MockBotConfigRow = botConfigs.get(orgId) || {
@@ -136,19 +159,57 @@ function createMockDb(): DbClient {
         rows: [
           {
             id: "c1",
-            organization_id: "org1",
-            channel_id: "ch1",
-            contact_id: "cnt1",
-            status: "open",
+            organizationId: "org1",
+            channelId: "ch1",
+            customerPhone: "+628123456789",
+            customerName: "Customer",
+            status: conversationStatus,
             priority: "normal",
-            assigned_operator_user_id: null,
-            assigned_queue_id: null,
-            service_window_expires_at: new Date().toISOString(),
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
+            assignedToUserId: null,
+            queueId: null,
+            teamId: null,
+            botPaused: false,
+            version: 1,
+            lastMessageAt: new Date(),
+            lastInboundAt: new Date(),
+            metadata: {},
+            createdAt: new Date(),
+            updatedAt: new Date()
           }
         ]
       };
+    }
+
+    if (sql.includes("metadata->>'aiBotRunId'")) {
+      const found = [...outboundMessages.values()].find(
+        (message) => (message["metadata"] as Record<string, unknown>)["aiBotRunId"] === params?.[1]
+      );
+      return { rows: found ? [found] : [] };
+    }
+
+    if (sql.includes("INSERT INTO flowdesk.messages")) {
+      const id = randomUUID();
+      const message = {
+        id,
+        organizationId: "00000000-0000-7000-8000-0000000000a1",
+        conversationId: "00000000-0000-7000-8000-0000000000c1",
+        channelId: "00000000-0000-7000-8000-0000000000b1",
+        direction: params?.[3],
+        senderType: params?.[4],
+        senderUserId: "00000000-0000-7000-8000-0000000000e1",
+        providerMessageId: params?.[6],
+        content: params?.[7],
+        status: params?.[8],
+        errorDetail: null,
+        metadata: JSON.parse(params?.[9] as string) as Record<string, unknown>,
+        sentAt: params?.[10],
+        deliveredAt: null,
+        readAt: null,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+      outboundMessages.set(id, message);
+      return { rows: [message] };
     }
 
     if (sql.toLowerCase().includes("messages")) {
@@ -156,15 +217,22 @@ function createMockDb(): DbClient {
         rows: [
           {
             id: "msg1",
-            organization_id: "org1",
-            conversation_id: "c1",
-            sender_type: "customer",
-            sender_user_id: null,
-            body_text: "Apakah garansi produk berlaku 1 tahun?",
-            message_type: "text",
+            organizationId: "org1",
+            conversationId: "c1",
+            channelId: "ch1",
+            direction: "inbound",
+            senderType: "customer",
+            senderUserId: null,
+            providerMessageId: "provider-msg1",
+            content: "Apakah garansi produk berlaku 1 tahun?",
             status: "delivered",
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
+            errorDetail: null,
+            metadata: {},
+            sentAt: new Date(),
+            deliveredAt: new Date(),
+            readAt: null,
+            createdAt: new Date(),
+            updatedAt: new Date()
           }
         ]
       };
@@ -183,19 +251,23 @@ function createMockDb(): DbClient {
       };
     }
 
-    if (sql.toLowerCase().includes("bot_runs")) {
+    if (sql.includes("INSERT INTO flowdesk.audit_logs")) {
+      return { rows: [{ id: randomUUID(), occurred_at: new Date() }] };
+    }
+
+    if (sql.includes("INSERT INTO flowdesk.bot_runs")) {
       const runId = randomUUID();
       const mockRun = {
         id: runId,
         organization_id: "org1",
         conversation_id: "c1",
-        trigger_message_id: null,
-        bot_config_id: null,
-        knowledge_version_id: null,
+        trigger_message_id: params?.[2] ?? null,
+        bot_config_id: params?.[3] ?? null,
+        knowledge_version_id: (params?.[4] as string | null) ?? null,
         mode: "draft",
-        status: "drafted",
-        suggested_content: "AI reply draft content",
-        confidence_score: "0.85",
+        status: sql.includes("'queued'") ? "queued" : "off",
+        suggested_content: null,
+        confidence: null,
         prompt_tokens: 100,
         completion_tokens: 20,
         total_tokens: 120,
@@ -203,10 +275,51 @@ function createMockDb(): DbClient {
         cost_estimate_microcents: 5,
         citations: [],
         reasoning: null,
-        created_at: new Date()
+        error_code: null,
+        error_detail: null,
+        requested_by_user_id: "u1",
+        model: "gpt-4o-mini",
+        prompt_version: "m4-v1",
+        config_snapshot: {},
+        input_message_created_at: new Date(),
+        attempts: 0,
+        max_attempts: 3,
+        available_at: new Date(),
+        claimed_at: null,
+        completed_at: null,
+        metadata: {},
+        operator_action: null,
+        operator_action_at: null,
+        operator_user_id: null,
+        created_at: new Date(),
+        updated_at: new Date()
       };
       botRuns.set(runId, mockRun);
       return { rows: [mockRun] };
+    }
+
+    if (sql.includes("SELECT * FROM flowdesk.bot_runs WHERE id")) {
+      const run = botRuns.get(params?.[0] as string);
+      return { rows: run ? [run] : [] };
+    }
+
+    if (sql.includes("FROM flowdesk.bot_runs") && sql.includes("ORDER BY created_at DESC")) {
+      const run = [...botRuns.values()].at(-1);
+      return { rows: run ? [run] : [] };
+    }
+
+    if (sql.includes("SET operator_action")) {
+      const run = botRuns.get(params?.[2] as string);
+      if (!run || run["status"] !== "completed" || run["operator_action"]) return { rows: [] };
+      run["operator_action"] = params?.[0];
+      run["operator_user_id"] = params?.[1];
+      return { rows: [{ id: run["id"] }] };
+    }
+
+    if (sql.includes("SET status = 'stale'")) {
+      const run = botRuns.get(params?.[0] as string);
+      if (run) run["status"] = "stale";
+      return { rows: run ? [{ id: run["id"] }] : [] };
     }
 
     if (sql.toLowerCase().includes("auth_sessions")) {
@@ -308,7 +421,7 @@ describe("Bot Configuration & AI Draft Generation API", () => {
     expect(body.tone).toBe("friendly");
   });
 
-  it("generates AI draft response with citations for a conversation", async () => {
+  it("queues a durable AI draft run without calling the provider in the request", async () => {
     const db = createMockDb();
     const app = createApiApp({
       service: "api",
@@ -324,18 +437,144 @@ describe("Bot Configuration & AI Draft Generation API", () => {
       .post("/api/v1/organizations/org1/bot/draft/c1")
       .set("Cookie", cookieHeader)) as unknown as { status: number; body: unknown };
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(202);
     const body = res.body as {
       status: string;
       runId: string;
-      suggestedContent: string;
-      citations: Array<{ documentTitle: string }>;
+      sendable: boolean;
     };
-    expect(body.status).toBe("drafted");
+    expect(body.status).toBe("queued");
     expect(body.runId).toBeDefined();
-    expect(body.suggestedContent).toBeDefined();
-    expect(body.citations).toHaveLength(1);
-    expect(body.citations[0]?.documentTitle).toBe("Policy Guide");
+    expect(body.sendable).toBe(false);
+  });
+
+  it("can queue when the API process has no AI credential because only the worker calls AI", async () => {
+    const db = createMockDb();
+    const app = createApiApp({
+      service: "api",
+      version: "dev",
+      gitSha: "dev",
+      environment: "local",
+      auth: { db, config }
+    });
+
+    const res = (await request(app)
+      .post("/api/v1/organizations/org1/bot/draft/c1")
+      .set("Cookie", serializeSessionCookie("bot-test-token-12345", false))) as unknown as {
+      status: number;
+      body: { code?: string; detail?: string };
+    };
+
+    expect(res.status).toBe(202);
+    expect(res.body).toMatchObject({ status: "queued", sendable: false });
+  });
+
+  it("restores a completed durable draft after refresh and approves it idempotently", async () => {
+    const db = createMockDb();
+    const app = createApiApp({
+      service: "api",
+      version: "dev",
+      gitSha: "dev",
+      environment: "local",
+      auth: { db, config }
+    });
+    const cookie = serializeSessionCookie("bot-test-token-12345", false);
+    const queued = (await request(app)
+      .post("/api/v1/organizations/org1/bot/draft/c1")
+      .set("Cookie", cookie)) as unknown as {
+      status: number;
+      body: { runId: string };
+    };
+    await db.query("TEST_COMPLETE_BOT_RUN", [queued.body.runId]);
+
+    const restored = (await request(app)
+      .get("/api/v1/organizations/org1/bot/draft/c1/latest")
+      .set("Cookie", cookie)) as unknown as {
+      status: number;
+      body: { runId: string; status: string; sendable: boolean };
+    };
+    expect(restored.status).toBe(200);
+    expect(restored.body).toMatchObject({
+      runId: queued.body.runId,
+      status: "drafted",
+      sendable: true
+    });
+
+    const firstApproval = (await request(app)
+      .post(`/api/v1/organizations/org1/bot/draft-runs/${queued.body.runId}/action`)
+      .set("Cookie", cookie)
+      .send({ action: "approved" })) as unknown as {
+      status: number;
+      body: { message: { id: string; content: string } };
+    };
+    const replay = (await request(app)
+      .post(`/api/v1/organizations/org1/bot/draft-runs/${queued.body.runId}/action`)
+      .set("Cookie", cookie)
+      .send({ action: "approved" })) as unknown as {
+      status: number;
+      body: { message: { id: string } };
+    };
+    expect(firstApproval.status).toBe(201);
+    expect(firstApproval.body.message.content).toContain("Garansi resmi");
+    expect(replay.status).toBe(201);
+    expect(replay.body.message.id).toBe(firstApproval.body.message.id);
+  });
+
+  it("blocks approval when the conversation was closed after draft generation", async () => {
+    const db = createMockDb();
+    const app = createApiApp({
+      service: "api",
+      version: "dev",
+      gitSha: "dev",
+      environment: "local",
+      auth: { db, config }
+    });
+    const cookie = serializeSessionCookie("bot-test-token-12345", false);
+    const queued = (await request(app)
+      .post("/api/v1/organizations/org1/bot/draft/c1")
+      .set("Cookie", cookie)) as unknown as { body: { runId: string } };
+    await db.query("TEST_COMPLETE_BOT_RUN", [queued.body.runId]);
+    await db.query("TEST_CLOSE_CONVERSATION");
+
+    const approval = (await request(app)
+      .post(`/api/v1/organizations/org1/bot/draft-runs/${queued.body.runId}/action`)
+      .set("Cookie", cookie)
+      .send({ action: "approved" })) as unknown as {
+      status: number;
+      body: { code: string };
+    };
+    expect(approval.status).toBe(409);
+    expect(approval.body.code).toBe("CONVERSATION_CLOSED");
+  });
+
+  it("blocks approval when emergency stop activates after draft generation", async () => {
+    const db = createMockDb();
+    const app = createApiApp({
+      service: "api",
+      version: "dev",
+      gitSha: "dev",
+      environment: "local",
+      auth: { db, config }
+    });
+    const cookie = serializeSessionCookie("bot-test-token-12345", false);
+    const queued = (await request(app)
+      .post("/api/v1/organizations/org1/bot/draft/c1")
+      .set("Cookie", cookie)) as unknown as { body: { runId: string } };
+    await db.query("TEST_COMPLETE_BOT_RUN", [queued.body.runId]);
+    await request(app)
+      .post("/api/v1/organizations/org1/bot/emergency-stop")
+      .set("Cookie", cookie)
+      .send({ enabled: true });
+
+    const approval = (await request(app)
+      .post(`/api/v1/organizations/org1/bot/draft-runs/${queued.body.runId}/action`)
+      .set("Cookie", cookie)
+      .send({ action: "approved" })) as unknown as {
+      status: number;
+      body: { code: string };
+    };
+    expect(approval.status).toBe(409);
+    expect(approval.body.code).toBe("BOT_DISABLED");
   });
 
   it("triggers emergency stop for organization bot", async () => {

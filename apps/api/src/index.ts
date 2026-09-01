@@ -71,7 +71,14 @@ const app = createApiApp({
   logError: (event) => logger.error(event, "http.request.failed")
 });
 const server = app.listen(config.PORT, "0.0.0.0", () =>
-  logger.info({ port: config.PORT, host: "0.0.0.0" }, "api.started")
+  logger.info(
+    {
+      port: config.PORT,
+      host: "0.0.0.0",
+      aiExecution: "worker-only"
+    },
+    "api.started"
+  )
 );
 
 // Attach Socket.IO realtime server to the same HTTP server.

@@ -16,8 +16,35 @@ import {
   softDeleteAttachment,
   listExpiredAttachments
 } from "./attachments.js";
+import { readFileSync, existsSync } from "node:fs";
+import { enqueueBotDraftRun, getLatestBotRunForConversation } from "./knowledge.js";
 
 const executeFile = promisify(execFile);
+
+if (!process.env["DATABASE_MIGRATOR_URL"]) {
+  try {
+    const envPath = fileURLToPath(new URL("../../../.env", import.meta.url));
+    if (existsSync(envPath)) {
+      const envContent = readFileSync(envPath, "utf8");
+      for (const line of envContent.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        const idx = trimmed.indexOf("=");
+        if (idx > 0) {
+          const key = trimmed.slice(0, idx).trim();
+          let val = trimmed.slice(idx + 1).trim();
+          if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
+          if (!process.env[key]) {
+            process.env[key] = val;
+          }
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
+
 const connectionString = process.env["DATABASE_MIGRATOR_URL"];
 const migrationScript = fileURLToPath(new URL("../scripts/migrate.mjs", import.meta.url));
 
@@ -65,7 +92,10 @@ describe("database foundation", () => {
       "0018_user_organization_discovery.sql",
       "0019_m5_routing_rules.sql",
       "0020_m6_developer_integrations.sql",
-      "0021_m6_meta_embedded_signup.sql"
+      "0021_m6_meta_embedded_signup.sql",
+      "0022_m4_knowledge_ingestion_jobs.sql",
+      "0023_m4_durable_bot_drafts.sql",
+      "0024_m4_gemini_default_model.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -186,13 +216,15 @@ describe("database foundation", () => {
        JOIN pg_roles AS owner ON owner.oid = procedure.proowner
        WHERE namespace.nspname = 'flowdesk'
          AND procedure.proname IN (
-           'claim_attachment_scan_events', 'claim_outbox_events', 'list_attachment_retention_candidates',
+           'claim_attachment_scan_events', 'claim_bot_draft_runs', 'claim_knowledge_ingestion_jobs', 'claim_outbox_events', 'list_attachment_retention_candidates',
            'list_user_organizations', 'messaging_operational_snapshot', 'record_whatsapp_webhook'
          )
        ORDER BY procedure.proname`
     );
     expect(functions.rows).toEqual([
       { proname: "claim_attachment_scan_events", owner: "flowdesk_system" },
+      { proname: "claim_bot_draft_runs", owner: "flowdesk_system" },
+      { proname: "claim_knowledge_ingestion_jobs", owner: "flowdesk_system" },
       { proname: "claim_outbox_events", owner: "flowdesk_system" },
       { proname: "list_attachment_retention_candidates", owner: "flowdesk_system" },
       { proname: "list_user_organizations", owner: "flowdesk_system" },
@@ -231,6 +263,7 @@ describe("database foundation", () => {
       "idempotency_keys",
       "identities",
       "invitations",
+      "knowledge_ingestion_jobs",
       "knowledge_sources",
       "knowledge_versions",
       "memberships",
@@ -281,6 +314,7 @@ describe("database foundation", () => {
       "documents",
       "idempotency_keys",
       "invitations",
+      "knowledge_ingestion_jobs",
       "knowledge_sources",
       "knowledge_versions",
       "memberships",
@@ -861,12 +895,135 @@ describe("database foundation", () => {
     }
   });
 
+  it("keeps durable bot draft enqueue, dedupe, claim, and reads tenant-isolated (M4-R3)", async () => {
+    const pool = new Pool({ connectionString });
+    const organizationA = "00000000-0000-7000-8000-0000000000d1";
+    const organizationB = "00000000-0000-7000-8000-0000000000d2";
+    const channelA = "00000000-0000-7000-8000-0000000001d1";
+    const conversationA = "00000000-0000-7000-8000-0000000002d1";
+    const messageA = "00000000-0000-7000-8000-0000000003d1";
+    const configA = "00000000-0000-7000-8000-0000000004d1";
+    const organizations = [organizationA, organizationB];
+
+    try {
+      await admin.query("DELETE FROM flowdesk.bot_runs WHERE organization_id = ANY($1::uuid[])", [
+        organizations
+      ]);
+      await admin.query(
+        "DELETE FROM flowdesk.bot_configs WHERE organization_id = ANY($1::uuid[])",
+        [organizations]
+      );
+      await admin.query("DELETE FROM flowdesk.messages WHERE organization_id = ANY($1::uuid[])", [
+        organizations
+      ]);
+      await admin.query(
+        "DELETE FROM flowdesk.conversations WHERE organization_id = ANY($1::uuid[])",
+        [organizations]
+      );
+      await admin.query("DELETE FROM flowdesk.contacts WHERE organization_id = ANY($1::uuid[])", [
+        organizations
+      ]);
+      await admin.query("DELETE FROM flowdesk.channels WHERE organization_id = ANY($1::uuid[])", [
+        organizations
+      ]);
+      await admin.query(
+        "DELETE FROM flowdesk.realtime_versions WHERE organization_id = ANY($1::uuid[])",
+        [organizations]
+      );
+      await admin.query("DELETE FROM flowdesk.organizations WHERE id = ANY($1::uuid[])", [
+        organizations
+      ]);
+
+      await admin.query(
+        `INSERT INTO flowdesk.organizations (id, slug, display_name) VALUES
+         ($1, 'm4-draft-a', 'M4 Draft A'), ($2, 'm4-draft-b', 'M4 Draft B')`,
+        organizations
+      );
+      await admin.query(
+        `INSERT INTO flowdesk.channels
+           (id, organization_id, type, name, phone_number_id, waba_id, encrypted_credentials, status)
+         VALUES ($1, $2, 'whatsapp', 'M4 test', 'm4-phone-a', 'm4-waba-a', 'fixture', 'active')`,
+        [channelA, organizationA]
+      );
+      await admin.query(
+        `INSERT INTO flowdesk.conversations
+           (id, organization_id, channel_id, customer_phone, status)
+         VALUES ($1, $2, $3, '+62000000001', 'open')`,
+        [conversationA, organizationA, channelA]
+      );
+      await admin.query(
+        `INSERT INTO flowdesk.messages
+           (id, organization_id, conversation_id, channel_id, direction, sender_type, content, status)
+         VALUES ($1, $2, $3, $4, 'inbound', 'customer', 'Apakah garansi satu tahun?', 'delivered')`,
+        [messageA, organizationA, conversationA, channelA]
+      );
+      await admin.query(
+        `INSERT INTO flowdesk.bot_configs (id, organization_id, mode)
+         VALUES ($1, $2, 'draft')`,
+        [configA, organizationA]
+      );
+
+      const input = {
+        organizationId: organizationA,
+        conversationId: conversationA,
+        triggerMessageId: messageA,
+        botConfigId: configA,
+        knowledgeVersionId: null,
+        requestedByUserId: null,
+        model: "test-model",
+        configSnapshot: {
+          instructions: "Use approved knowledge only.",
+          tone: "professional",
+          language: "id",
+          confidenceThreshold: 0.7,
+          topK: 5,
+          emergencyDisabled: false
+        },
+        inputMessageCreatedAt: new Date()
+      };
+      const first = await withTenantTransaction(pool, { organizationId: organizationA }, (client) =>
+        enqueueBotDraftRun(client, input)
+      );
+      const duplicate = await withTenantTransaction(
+        pool,
+        { organizationId: organizationA },
+        (client) => enqueueBotDraftRun(client, input)
+      );
+      expect(duplicate.id).toBe(first.id);
+      expect(first.status).toBe("queued");
+
+      const visibleA = await withTenantTransaction(
+        pool,
+        { organizationId: organizationA },
+        (client) => getLatestBotRunForConversation(client, organizationA, conversationA)
+      );
+      const invisibleB = await withTenantTransaction(
+        pool,
+        { organizationId: organizationB },
+        (client) => getLatestBotRunForConversation(client, organizationA, conversationA)
+      );
+      expect(visibleA?.id).toBe(first.id);
+      expect(invisibleB).toBeNull();
+
+      await admin.query("SET ROLE flowdesk_runtime");
+      const claimed = await admin.query<{ id: string; organization_id: string }>(
+        "SELECT id, organization_id FROM flowdesk.claim_bot_draft_runs(50)"
+      );
+      await admin.query("RESET ROLE");
+      expect(claimed.rows).toContainEqual({ id: first.id, organization_id: organizationA });
+    } finally {
+      await admin.query("RESET ROLE").catch(() => undefined);
+      await pool.end();
+    }
+  });
+
   it("forces RLS on every M4 knowledge and vector table and creates HNSW index (M4-01)", async () => {
     const m4Tables = [
       "bot_configs",
       "bot_runs",
       "document_chunks",
       "documents",
+      "knowledge_ingestion_jobs",
       "knowledge_sources",
       "knowledge_versions"
     ];

@@ -34,6 +34,20 @@ x-api-meta-environment: &api-meta-environment
   META_SYSTEM_USER_ID: ${META_SYSTEM_USER_ID:-replace-with-flowdesk-system-user-id}
   META_ADMIN_SYSTEM_USER_ACCESS_TOKEN: ${META_ADMIN_SYSTEM_USER_ACCESS_TOKEN:-replace-with-business-admin-system-user-access-token}
 
+x-worker-ai-environment: &worker-ai-environment
+  AI_PROVIDER: ${AI_PROVIDER:-disabled}
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  GEMINI_BASE_URL: ${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta}
+  GEMINI_CHAT_MODEL: ${GEMINI_CHAT_MODEL:-gemini-3.7-flash}
+  GEMINI_EMBEDDING_MODEL: ${GEMINI_EMBEDDING_MODEL:-gemini-embedding-2}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+  OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-4o-mini}
+  OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+  AI_CHAT_TIMEOUT_MS: ${AI_CHAT_TIMEOUT_MS:-15000}
+  AI_EMBEDDING_TIMEOUT_MS: ${AI_EMBEDDING_TIMEOUT_MS:-15000}
+  AI_MAX_OUTPUT_TOKENS: ${AI_MAX_OUTPUT_TOKENS:-512}
+
 x-ingress-webhook-environment: &ingress-webhook-environment
   WEBHOOK_VERIFY_TOKEN: ${WEBHOOK_VERIFY_TOKEN:?WEBHOOK_VERIFY_TOKEN is required}
   WEBHOOK_APP_SECRET: ${WEBHOOK_APP_SECRET:?WEBHOOK_APP_SECRET is required}
@@ -106,7 +120,7 @@ services:
     <<: *app-defaults
     image: ${IMAGE_REGISTRY:-ghcr.io/ryanakml}/flowdesk-worker:${IMAGE_TAG}
     environment:
-      <<: *app-environment
+      <<: [*app-environment, *worker-ai-environment]
       PORT: "4002"
 
   scheduler:

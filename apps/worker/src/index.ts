@@ -1,4 +1,5 @@
 import {
+  loadAiRuntimeConfig,
   loadChannelEncryptionConfig,
   loadHttpConfig,
   loadMediaConfig,
@@ -16,18 +17,22 @@ import { processOutboxWebhookBatch } from "./normalization.js";
 import { processOutboxOutboundBatch, dispatchOutboundMessage } from "./dispatch.js";
 import {
   ClamAvScanner,
+  createAiProviderRuntime,
   FakeMalwareScanner,
   MetaWhatsAppProvider,
   S3ObjectStore
 } from "@flowdesk/providers";
 import { processAttachmentScanBatch } from "./media-scanner.js";
 import { processAttachmentRetentionBatch } from "./media-retention.js";
+import { processKnowledgeIngestionBatch } from "./knowledge-ingestion.js";
+import { processBotDraftBatch } from "./bot-drafts.js";
 
 export { processOutboxOutboundBatch, dispatchOutboundMessage };
 
 const config = loadHttpConfig("worker", Number(process.env["WORKER_HEALTH_PORT"] ?? 4002));
 const channelEncryptionConfig = loadChannelEncryptionConfig();
 const whatsAppGraphApiConfig = loadWhatsAppGraphApiConfig();
+const aiRuntime = createAiProviderRuntime(loadAiRuntimeConfig());
 const logger = createLogger({
   service: config.SERVICE_NAME,
   environment: config.APP_ENV,
@@ -94,6 +99,24 @@ if (dbPool) {
         },
         10
       ),
+      ...(aiRuntime
+        ? [
+            processKnowledgeIngestionBatch(
+              dbPool,
+              { embeddingProvider: aiRuntime.embeddingProvider },
+              5
+            ),
+            processBotDraftBatch(
+              dbPool,
+              {
+                chatProvider: aiRuntime.chatProvider,
+                embeddingProvider: aiRuntime.embeddingProvider,
+                chatModel: aiRuntime.chatModel
+              },
+              5
+            )
+          ]
+        : []),
       ...(storage
         ? [
             processAttachmentScanBatch(dbPool, { storage, scanner, logger: mediaLogger }, 10),
@@ -115,12 +138,27 @@ if (dbPool) {
           ]
         : [])
     ])
-      .then(([webhookCount = 0, outboundCount = 0, scanCount = 0, retentionCount = 0]) => {
-        if (webhookCount > 0 || outboundCount > 0 || scanCount > 0 || retentionCount > 0) {
+      .then((counts) => {
+        const [webhookCount = 0, outboundCount = 0] = counts;
+        const knowledgeCount = aiRuntime ? (counts[2] ?? 0) : 0;
+        const botDraftCount = aiRuntime ? (counts[3] ?? 0) : 0;
+        const mediaOffset = aiRuntime ? 4 : 2;
+        const scanCount = counts[mediaOffset] ?? 0;
+        const retentionCount = counts[mediaOffset + 1] ?? 0;
+        if (
+          webhookCount > 0 ||
+          outboundCount > 0 ||
+          knowledgeCount > 0 ||
+          botDraftCount > 0 ||
+          scanCount > 0 ||
+          retentionCount > 0
+        ) {
           logger.info(
             {
               webhookProcessed: webhookCount,
               outboundProcessed: outboundCount,
+              knowledgeProcessed: knowledgeCount,
+              botDraftProcessed: botDraftCount,
               attachmentScanned: scanCount,
               attachmentRetained: retentionCount
             },
@@ -164,7 +202,16 @@ const server = createProcessHealthServer({
 });
 
 server.listen(config.PORT, "0.0.0.0", () =>
-  logger.info({ port: config.PORT, host: "0.0.0.0", claimsJobs: Boolean(dbPool) }, "worker.started")
+  logger.info(
+    {
+      port: config.PORT,
+      host: "0.0.0.0",
+      claimsJobs: Boolean(dbPool),
+      aiProvider: aiRuntime?.providerType ?? "disabled",
+      aiEmbeddingModel: aiRuntime?.embeddingModel ?? null
+    },
+    "worker.started"
+  )
 );
 
 function shutdown(signal: string) {

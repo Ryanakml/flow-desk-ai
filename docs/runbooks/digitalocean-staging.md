@@ -27,6 +27,40 @@ sudo --preserve-env=WEBHOOK_APP_SECRET ./configure-staging-env.sh https://stagin
 unset WEBHOOK_APP_SECRET
 ```
 
+## AI provider runtime
+
+The AI worker starts with `AI_PROVIDER=disabled` unless a provider is selected explicitly. In this
+mode, the rest of FlowDesk remains available and draft requests remain durable but unprocessed.
+`AI_PROVIDER=fake` is allowed only for local or preview testing and is rejected during staging or
+production startup.
+
+Gemini is the recommended provider for synthetic development and OpenAI remains optional. Both
+credentials are server-only and are passed only to the worker container. They are not shared with
+the web, API, ingress, scheduler, image build, or GitHub Actions. To enable the Gemini runtime, edit
+`/opt/flowdesk/shared/staging.env` directly on the host with `sudoedit`; set `AI_PROVIDER=gemini` and
+add `GEMINI_API_KEY` without printing it in shell history or logs. Keep the stable
+`GEMINI_CHAT_MODEL=gemini-3.7-flash` and `GEMINI_EMBEDDING_MODEL=gemini-embedding-2` defaults unless a
+reviewed migration requires otherwise. The embedding adapter explicitly requests 1536 dimensions.
+
+To select OpenAI instead, set `AI_PROVIDER=openai` and add `OPENAI_API_KEY`; no Gemini credential is
+required in that mode. Never commit the edited environment file. Use only synthetic data on the
+Gemini free tier because its data-use terms differ from the paid tier; customer-data testing requires
+an approved provider/tier privacy review.
+
+Validate only the shape of the deployment without rendering environment values:
+
+```bash
+cd "/opt/flowdesk/releases/$(cat /opt/flowdesk/shared/current-image)"
+docker compose --env-file /opt/flowdesk/shared/staging.env -f compose.yaml config --quiet
+```
+
+The next merge-triggered release recreates the API with the host configuration. Startup logs expose
+only the selected provider and model identifiers, never the credential. A real staging smoke must
+create a draft through the authenticated API, verify the persisted run status, token usage, latency,
+and citations, then confirm that no outbound message is sent by draft generation alone. The worker
+persists the actual runtime chat model on the completed bot run and records the provider identifier
+in its audit metadata.
+
 ## Automated release
 
 Pull requests execute all quality/database/Terraform gates and cached image builds but never contact staging. A push to `main` after every required job succeeds performs the release:
