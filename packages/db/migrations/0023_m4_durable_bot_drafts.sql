@@ -120,6 +120,7 @@ ALTER FUNCTION flowdesk.claim_bot_draft_runs(integer) OWNER TO flowdesk_system;
 REVOKE ALL ON FUNCTION flowdesk.claim_bot_draft_runs(integer) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION flowdesk.claim_bot_draft_runs(integer) TO flowdesk_runtime;
 GRANT SELECT, UPDATE ON flowdesk.bot_runs TO flowdesk_system;
+GRANT SELECT, INSERT, UPDATE ON flowdesk.realtime_versions TO flowdesk_system;
 
 DROP TRIGGER IF EXISTS bot_runs_bump_realtime_version ON flowdesk.bot_runs;
 CREATE TRIGGER bot_runs_bump_realtime_version
