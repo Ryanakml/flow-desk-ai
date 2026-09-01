@@ -180,7 +180,7 @@ export class GeminiEmbeddingProvider implements AiEmbeddingProvider {
 
   constructor(config: GeminiEmbeddingProviderConfig) {
     this.apiKey = config.apiKey;
-    this.modelId = config.model ?? "gemini-embedding-2";
+    this.modelId = config.model ?? "text-embedding-004";
     this.baseUrl = (config.baseUrl ?? "https://generativelanguage.googleapis.com/v1beta").replace(
       /\/$/,
       ""
@@ -217,8 +217,7 @@ export class GeminiEmbeddingProvider implements AiEmbeddingProvider {
           body: JSON.stringify({
             requests: texts.map((text) => ({
               model: modelResource,
-              content: { parts: [{ text }] },
-              embedContentConfig: { outputDimensionality: this.dimensions }
+              content: { parts: [{ text }] }
             }))
           }),
           signal: AbortSignal.timeout(this.timeoutMs)
@@ -247,13 +246,21 @@ export class GeminiEmbeddingProvider implements AiEmbeddingProvider {
     return parsed.embeddings.map((item, index) => {
       if (
         !Array.isArray(item.values) ||
-        item.values.length !== this.dimensions ||
+        item.values.length === 0 ||
         item.values.some((value) => typeof value !== "number" || !Number.isFinite(value))
       ) {
         throw new AiProviderError("AI_PROVIDER_INVALID_RESPONSE");
       }
+      const values = item.values as number[];
+      const embedding =
+        values.length === this.dimensions
+          ? values
+          : values.length < this.dimensions
+            ? [...values, ...new Array<number>(this.dimensions - values.length).fill(0)]
+            : values.slice(0, this.dimensions);
+
       return {
-        embedding: item.values as number[],
+        embedding,
         tokenCount: Math.ceil((texts[index] ?? "").length / 4)
       };
     });
