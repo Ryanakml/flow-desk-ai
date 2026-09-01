@@ -230,14 +230,14 @@ describe("docker compose deployment contract", () => {
     expect(sharedEnvironment).toContain("META_GRAPH_API_BASE_URL");
   });
 
-  it("passes AI configuration only to the API and defaults staging AI to disabled", () => {
+  it("passes AI configuration only to the worker and defaults staging AI to disabled", () => {
     const composePath = path.resolve(__dirname, "../../../infra/deploy/digitalocean/compose.yaml");
     const composeContent = fs.readFileSync(composePath, "utf-8");
     const sharedEnvironment = composeContent.match(
       /x-app-environment:[\s\S]*?x-api-meta-environment:/
     )?.[0];
     const aiEnvironment = composeContent.match(
-      /x-api-ai-environment:[\s\S]*?x-ingress-webhook-environment:/
+      /x-worker-ai-environment:[\s\S]*?x-ingress-webhook-environment:/
     )?.[0];
     const apiService = composeContent.match(/\n {2}api:[\s\S]*?\n {2}ingress:/)?.[0];
     const workerService = composeContent.match(/\n {2}worker:[\s\S]*?\n {2}scheduler:/)?.[0];
@@ -245,7 +245,7 @@ describe("docker compose deployment contract", () => {
     expect(sharedEnvironment).not.toContain("OPENAI_API_KEY");
     expect(aiEnvironment).toContain("AI_PROVIDER: ${AI_PROVIDER:-disabled}");
     expect(aiEnvironment).toContain("OPENAI_API_KEY: ${OPENAI_API_KEY:-}");
-    expect(apiService).toContain("*api-ai-environment");
-    expect(workerService).toContain("*api-ai-environment");
+    expect(apiService).not.toContain("*worker-ai-environment");
+    expect(workerService).toContain("*worker-ai-environment");
   });
 });
