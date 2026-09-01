@@ -668,13 +668,12 @@ describe("Bot Configuration & AI Draft Generation API", () => {
     const poolClient = {
       query: mockDb.query.bind(mockDb),
       release: () => {},
-      connect: async () => {
-        throw new Error("Client has already been connected. You cannot reuse a client.");
-      }
+      connect: () =>
+        Promise.reject(new Error("Client has already been connected. You cannot reuse a client."))
     };
     const pool = {
       query: mockDb.query.bind(mockDb),
-      connect: async () => poolClient,
+      connect: () => Promise.resolve(poolClient),
       totalCount: 5,
       idleCount: 3,
       waitingCount: 0

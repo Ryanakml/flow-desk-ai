@@ -27,6 +27,7 @@ describe("runInTenantTransaction nested client reuse", () => {
   it("reuses the active PoolClient inside nested transaction calls without re-connecting", async () => {
     const queryLog: string[] = [];
     const clientQuery = vi.fn().mockImplementation(async (sql: string) => {
+      await Promise.resolve();
       queryLog.push(sql);
       if (sql.includes("FROM flowdesk.conversations")) {
         return {
@@ -76,7 +77,7 @@ describe("runInTenantTransaction nested client reuse", () => {
     });
 
     const mockPoolClient: Partial<PoolClient> = {
-      query: clientQuery as unknown as PoolClient["query"],
+      query: clientQuery,
       release: vi.fn(),
       connect: vi
         .fn()
@@ -86,7 +87,7 @@ describe("runInTenantTransaction nested client reuse", () => {
     };
 
     const mockPool: Partial<Pool> = {
-      connect: vi.fn().mockResolvedValue(mockPoolClient as PoolClient),
+      connect: vi.fn().mockResolvedValue(mockPoolClient),
       totalCount: 10,
       idleCount: 5,
       waitingCount: 0
