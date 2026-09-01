@@ -1093,9 +1093,9 @@ export async function finishBotDraftRun(
 ): Promise<void> {
   await db.query(
     `UPDATE flowdesk.bot_runs
-     SET status = $2, suggested_content = $3, citations = $4, reasoning = $5,
-         confidence = $6, prompt_tokens = $7, completion_tokens = $8,
-         total_tokens = $7 + $8, latency_ms = $9, cost_estimate_microcents = $10,
+     SET status = $2, suggested_content = $3, citations = $4::jsonb, reasoning = $5,
+         confidence = $6, prompt_tokens = $7::integer, completion_tokens = $8::integer,
+         total_tokens = ($7::integer + $8::integer), latency_ms = $9, cost_estimate_microcents = $10,
          error_code = $11, error_detail = $12, metadata = metadata || $13::jsonb,
          model = COALESCE($14, model),
          completed_at = clock_timestamp(), updated_at = clock_timestamp()

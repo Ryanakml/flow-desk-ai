@@ -21,6 +21,7 @@ import {
   createKnowledgeSource,
   createDocumentWithChunks,
   enqueueBotDraftRun,
+  finishBotDraftRun,
   getLatestBotRunForConversation,
   searchDocumentChunks
 } from "./knowledge.js";
@@ -1018,6 +1019,98 @@ describe("database foundation", () => {
       );
       await admin.query("RESET ROLE");
       expect(claimed.rows).toContainEqual({ id: first.id, organization_id: organizationA });
+
+      // 1. Transition processing -> completed (with tokens, citations, and model)
+      await withTenantTransaction(pool, { organizationId: organizationA }, (client) =>
+        finishBotDraftRun(client, {
+          id: first.id,
+          status: "completed",
+          suggestedContent: "Halo! Ada yang bisa kami bantu?",
+          citations: [
+            {
+              chunkId: "00000000-0000-0000-0000-000000000001",
+              sourceTitle: "FAQ",
+              snippet: "Jam operasional 09.00 - 17.00",
+              score: 0.95
+            }
+          ],
+          promptTokens: 120,
+          completionTokens: 30,
+          latencyMs: 350,
+          model: "gemini-3.7-flash"
+        })
+      );
+
+      const completedRun = await withTenantTransaction(
+        pool,
+        { organizationId: organizationA },
+        (client) => getLatestBotRunForConversation(client, organizationA, conversationA)
+      );
+      expect(completedRun?.status).toBe("completed");
+      expect(completedRun?.suggestedContent).toBe("Halo! Ada yang bisa kami bantu?");
+      expect(completedRun?.totalTokens).toBe(150);
+      expect(completedRun?.model).toBe("gemini-3.7-flash");
+      expect(completedRun?.citations).toHaveLength(1);
+
+      // 2. Transition processing -> no_evidence
+      const secondInput = {
+        ...input,
+        triggerMessageId: messageA
+      };
+      // Reset trigger to allow enqueueing another run
+      await admin.query("UPDATE flowdesk.bot_runs SET status = 'stale' WHERE id = $1", [first.id]);
+      const second = await withTenantTransaction(
+        pool,
+        { organizationId: organizationA },
+        (client) => enqueueBotDraftRun(client, secondInput)
+      );
+      await admin.query("SET ROLE flowdesk_runtime");
+      await admin.query("SELECT flowdesk.claim_bot_draft_runs(50)");
+      await admin.query("RESET ROLE");
+
+      await withTenantTransaction(pool, { organizationId: organizationA }, (client) =>
+        finishBotDraftRun(client, {
+          id: second.id,
+          status: "no_evidence",
+          latencyMs: 150,
+          model: "gemini-3.7-flash"
+        })
+      );
+
+      const noEvidenceRun = await withTenantTransaction(
+        pool,
+        { organizationId: organizationA },
+        (client) => getLatestBotRunForConversation(client, organizationA, conversationA)
+      );
+      expect(noEvidenceRun?.status).toBe("no_evidence");
+      expect(noEvidenceRun?.totalTokens).toBe(0);
+
+      // 3. Transition processing -> failed
+      await admin.query("UPDATE flowdesk.bot_runs SET status = 'stale' WHERE id = $1", [second.id]);
+      const third = await withTenantTransaction(pool, { organizationId: organizationA }, (client) =>
+        enqueueBotDraftRun(client, secondInput)
+      );
+      await admin.query("SET ROLE flowdesk_runtime");
+      await admin.query("SELECT flowdesk.claim_bot_draft_runs(50)");
+      await admin.query("RESET ROLE");
+
+      await withTenantTransaction(pool, { organizationId: organizationA }, (client) =>
+        finishBotDraftRun(client, {
+          id: third.id,
+          status: "provider_failed",
+          errorCode: "AI_PROVIDER_ERROR",
+          errorDetail: "Rate limited upstream",
+          latencyMs: 50
+        })
+      );
+
+      const failedRun = await withTenantTransaction(
+        pool,
+        { organizationId: organizationA },
+        (client) => getLatestBotRunForConversation(client, organizationA, conversationA)
+      );
+      expect(failedRun?.status).toBe("provider_failed");
+      expect(failedRun?.errorCode).toBe("AI_PROVIDER_ERROR");
     } finally {
       await admin.query("RESET ROLE").catch(() => undefined);
       await pool.end();
