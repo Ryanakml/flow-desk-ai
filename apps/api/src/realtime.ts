@@ -38,6 +38,7 @@ export interface RealtimeServerOptions {
   redisUrl?: string | undefined;
   redisRequired?: boolean | undefined;
   authorizationRecheckMs?: number | undefined;
+  databasePollMs?: number | undefined;
 }
 
 export interface PublishRealtimeHintInput {
@@ -231,6 +232,39 @@ export function createRealtimeServer(httpServer: HttpServer, options: RealtimeSe
     }
   }
 
+  const observedVersions = new Map<string, number>();
+  let pollingVersions = false;
+  const databasePoll = setInterval(() => {
+    if (pollingVersions) return;
+    pollingVersions = true;
+    const organizations = new Set<string>();
+    for (const socket of io.sockets.sockets.values()) {
+      const data = socket.data as RealtimeSocketData;
+      if (data.organizationId) organizations.add(data.organizationId);
+    }
+    void Promise.all(
+      [...organizations].map(async (organizationId) => {
+        const current = await runInTenantTransaction(options.db, { organizationId }, (client) =>
+          getRealtimeVersion(client, organizationId)
+        );
+        const previous = observedVersions.get(organizationId);
+        observedVersions.set(organizationId, current);
+        if (previous === undefined || current <= previous) return;
+        const hint = RealtimeHintSchema.parse({
+          schemaVersion: 1,
+          organizationId,
+          resourceType: "organization",
+          resourceId: organizationId,
+          version: current
+        });
+        await emitToRoom(`organization:${organizationId}`, hint);
+      })
+    ).finally(() => {
+      pollingVersions = false;
+    });
+  }, options.databasePollMs ?? 1_000);
+  databasePoll.unref();
+
   return {
     io,
     ready,
@@ -256,6 +290,7 @@ export function createRealtimeServer(httpServer: HttpServer, options: RealtimeSe
       return hint;
     },
     async close(): Promise<void> {
+      clearInterval(databasePoll);
       await io.close();
       await Promise.all([publisher?.quit(), subscriber?.quit()]);
     }

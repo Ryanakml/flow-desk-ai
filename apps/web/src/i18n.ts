@@ -43,6 +43,10 @@ const messages = {
     copilotEdit: "Edit in Composer",
     copilotReject: "Dismiss",
     copilotFallback: "No relevant knowledge found. The AI cannot generate a grounded reply.",
+    copilotSafetyBlocked: "Draft blocked by AI safety checks. A human must reply.",
+    copilotBudgetExceeded: "The conversation is too large for the configured AI budget.",
+    copilotProviderFailed: "The AI provider failed after bounded retries. Try again later.",
+    copilotStale: "A newer customer message arrived. Generate a fresh draft.",
     copilotOff: "AI Copilot is currently disabled by your administrator.",
     copilotError: "Failed to generate draft. Please try again.",
     copilotReasoningLabel: "Reasoning"
@@ -90,6 +94,10 @@ const messages = {
     copilotReject: "Abaikan",
     copilotFallback:
       "Tidak ada pengetahuan relevan. AI tidak dapat membuat balasan yang terverifikasi.",
+    copilotSafetyBlocked: "Draf diblokir pemeriksaan keamanan AI. Agen harus membalas manual.",
+    copilotBudgetExceeded: "Percakapan terlalu besar untuk batas penggunaan AI saat ini.",
+    copilotProviderFailed: "Provider AI gagal setelah percobaan terbatas. Coba lagi nanti.",
+    copilotStale: "Ada pesan pelanggan yang lebih baru. Buat draf baru.",
     copilotOff: "AI Kopilot saat ini dinonaktifkan oleh administrator.",
     copilotError: "Gagal membuat draf. Silakan coba lagi.",
     copilotReasoningLabel: "Alasan"

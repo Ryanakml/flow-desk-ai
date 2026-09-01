@@ -498,6 +498,30 @@ export async function generateBotDraft(
   return GenerateBotDraftResponseSchema.parse(await handleResponse<unknown>(res));
 }
 
+export async function getLatestBotDraft(
+  orgId: string,
+  conversationId: string,
+  fetcher: typeof fetch = fetch
+): Promise<GenerateBotDraftResponse> {
+  const res = await fetcher(`/api/v1/organizations/${orgId}/bot/draft/${conversationId}/latest`);
+  return GenerateBotDraftResponseSchema.parse(await handleResponse<unknown>(res));
+}
+
+export async function applyBotDraftAction(
+  orgId: string,
+  runId: string,
+  body: { action: "approved" | "edited" | "rejected"; editedContent?: string },
+  fetcher: typeof fetch = fetch
+): Promise<Message | null> {
+  const res = await fetcher(`/api/v1/organizations/${orgId}/bot/draft-runs/${runId}/action`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  const data = await handleResponse<{ message?: unknown }>(res);
+  return data.message ? MessageSchema.parse(data.message) : null;
+}
+
 // M6-01: Self-Service Channels API
 export interface ChannelClientRecord {
   id: string;

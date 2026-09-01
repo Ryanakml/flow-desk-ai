@@ -24,7 +24,9 @@ import {
   previewTemplate,
   type ConversationTemplateItem,
   ApiError,
-  generateBotDraft
+  generateBotDraft,
+  getLatestBotDraft,
+  applyBotDraftAction
 } from "./api.js";
 import { useRealtimeSync } from "./realtime.js";
 import { inboxMessages, type InboxLocale } from "./i18n.js";
@@ -113,6 +115,7 @@ export function InboxView({
   const [copilotError, setCopilotError] = useState<string | null>(null);
   const [showCitations, setShowCitations] = useState(false);
   const [isApprovingSend, setIsApprovingSend] = useState(false);
+  const [copilotEditingRunId, setCopilotEditingRunId] = useState<string | null>(null);
 
   // UI IDs
   const searchInputId = useId();
@@ -188,6 +191,26 @@ export function InboxView({
     [organizationId, fetcher]
   );
 
+  const loadCopilotDraft = useCallback(
+    async (conversationId: string, clearWhenMissing = false) => {
+      try {
+        const draft = await getLatestBotDraft(organizationId, conversationId, fetcher);
+        setCopilotDraft(draft);
+        setCopilotLoading(draft.status === "queued" || draft.status === "processing");
+        setCopilotError(null);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) {
+          if (clearWhenMissing) setCopilotDraft(null);
+          setCopilotLoading(false);
+          return;
+        }
+        setCopilotLoading(false);
+        setCopilotError(error instanceof Error ? error.message : "draft_error");
+      }
+    },
+    [organizationId, fetcher]
+  );
+
   // Initial load and filter change trigger
   useEffect(() => {
     void loadConversations(false);
@@ -209,8 +232,20 @@ export function InboxView({
   useEffect(() => {
     if (selectedConversationId) {
       void loadThread(selectedConversationId);
+      void loadCopilotDraft(selectedConversationId, true);
     }
-  }, [selectedConversationId, loadThread]);
+  }, [selectedConversationId, loadThread, loadCopilotDraft]);
+
+  useEffect(() => {
+    if (!selectedConversationId) return;
+    const timer = window.setInterval(
+      () => {
+        void loadCopilotDraft(selectedConversationId);
+      },
+      copilotDraft?.status === "queued" || copilotDraft?.status === "processing" ? 1_000 : 5_000
+    );
+    return () => window.clearInterval(timer);
+  }, [selectedConversationId, copilotDraft?.status, loadCopilotDraft]);
 
   // Receive tenant-scoped invalidation hints via authenticated Socket.IO and
   // reload authoritative state through the REST API.
@@ -222,10 +257,12 @@ export function InboxView({
       setHasConflict(false);
       void loadConversations(true);
       if (selectedConversationId) void loadThread(selectedConversationId);
+      if (selectedConversationId) void loadCopilotDraft(selectedConversationId);
     },
     onHint: (hint) => {
       if (hint.resourceType === "conversation" || hint.resourceType === "organization") {
         void loadConversations(true);
+        if (selectedConversationId) void loadCopilotDraft(selectedConversationId);
       }
       if (hint.resourceType === "message" || hint.resourceId === selectedConversationId) {
         if (selectedConversationId) void loadThread(selectedConversationId);
@@ -464,13 +501,25 @@ export function InboxView({
     setActionError(null);
 
     try {
-      const sent = await sendOutboundMessage(
-        organizationId,
-        activeConversation.id,
-        { content: text },
-        `client-msg-${tempId}`,
-        fetcher
-      );
+      const sent = copilotEditingRunId
+        ? await applyBotDraftAction(
+            organizationId,
+            copilotEditingRunId,
+            { action: "edited", editedContent: text },
+            fetcher
+          )
+        : await sendOutboundMessage(
+            organizationId,
+            activeConversation.id,
+            { content: text },
+            `client-msg-${tempId}`,
+            fetcher
+          );
+      if (!sent) throw new Error("The AI draft action did not create an outbound message.");
+      if (copilotEditingRunId) {
+        setCopilotEditingRunId(null);
+        setCopilotDraft(null);
+      }
 
       // Replace optimistic message with actual created record
       setMessages((prev) => prev.map((m) => (m === optimisticMessage ? sent : m)));
@@ -630,14 +679,13 @@ export function InboxView({
     if (!activeConversation || copilotLoading) return;
     setCopilotLoading(true);
     setCopilotError(null);
-    setCopilotDraft(null);
     setShowCitations(false);
     try {
       const draft = await generateBotDraft(organizationId, activeConversation.id, fetcher);
       setCopilotDraft(draft);
+      setCopilotLoading(draft.status === "queued" || draft.status === "processing");
     } catch (err: unknown) {
       setCopilotError(err instanceof Error ? err.message : "draft_error");
-    } finally {
       setCopilotLoading(false);
     }
   }, [activeConversation, organizationId, fetcher, copilotLoading]);
@@ -645,38 +693,17 @@ export function InboxView({
   const handleCopilotApprove = async () => {
     if (!copilotDraft?.suggestedContent || !activeConversation || isApprovingSend) return;
     setIsApprovingSend(true);
-    const text = copilotDraft.suggestedContent;
-    const tempId = `copilot-${Date.now()}`;
-    const optimistic: Message = {
-      id: "00000000-0000-0000-0000-000000000000",
-      organizationId,
-      conversationId: activeConversation.id,
-      channelId: activeConversation.channelId,
-      direction: "outbound",
-      senderType: "agent",
-      senderUserId: sessionUserId,
-      providerMessageId: null,
-      content: text,
-      status: "queued",
-      errorDetail: null,
-      sentAt: new Date().toISOString(),
-      deliveredAt: null,
-      readAt: null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    setMessages((prev) => [...prev, optimistic]);
-    setCopilotDraft(null);
-    setShowCitations(false);
     try {
-      const sent = await sendOutboundMessage(
+      const sent = await applyBotDraftAction(
         organizationId,
-        activeConversation.id,
-        { content: text },
-        `copilot-approve-${tempId}`,
+        copilotDraft.runId,
+        { action: "approved" },
         fetcher
       );
-      setMessages((prev) => prev.map((m) => (m === optimistic ? sent : m)));
+      if (!sent) throw new Error("Approval did not create an outbound message.");
+      setMessages((prev) => [...prev.filter((message) => message.id !== sent.id), sent]);
+      setCopilotDraft(null);
+      setShowCitations(false);
       setConversations((prev) =>
         prev.map((c) =>
           c.id === activeConversation.id ? { ...c, lastMessageAt: sent.createdAt } : c
@@ -685,9 +712,6 @@ export function InboxView({
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to send";
       setActionError(msg);
-      setMessages((prev) =>
-        prev.map((m) => (m === optimistic ? { ...m, status: "failed", errorDetail: msg } : m))
-      );
     } finally {
       setIsApprovingSend(false);
     }
@@ -696,19 +720,35 @@ export function InboxView({
   const handleCopilotEdit = () => {
     if (!copilotDraft?.suggestedContent) return;
     setComposerText(copilotDraft.suggestedContent);
-    setCopilotDraft(null);
+    setCopilotEditingRunId(copilotDraft.runId);
     setShowCitations(false);
   };
 
-  const handleCopilotReject = () => {
-    setCopilotDraft(null);
-    setCopilotError(null);
-    setShowCitations(false);
+  const handleCopilotReject = async () => {
+    if (!copilotDraft || isApprovingSend) return;
+    setIsApprovingSend(true);
+    try {
+      await applyBotDraftAction(
+        organizationId,
+        copilotDraft.runId,
+        { action: "rejected" },
+        fetcher
+      );
+      setCopilotDraft(null);
+      setCopilotEditingRunId(null);
+      setCopilotError(null);
+      setShowCitations(false);
+    } catch (error) {
+      setCopilotError(error instanceof Error ? error.message : "draft_error");
+    } finally {
+      setIsApprovingSend(false);
+    }
   };
 
   // Clear draft on conversation switch
   useEffect(() => {
     setCopilotDraft(null);
+    setCopilotEditingRunId(null);
     setCopilotError(null);
     setShowCitations(false);
   }, [selectedConversationId]);
@@ -1289,7 +1329,7 @@ export function InboxView({
               onGenerate={() => void handleGenerateDraft()}
               onApprove={() => void handleCopilotApprove()}
               onEdit={handleCopilotEdit}
-              onReject={handleCopilotReject}
+              onReject={() => void handleCopilotReject()}
               onToggleCitations={() => setShowCitations((prev) => !prev)}
             />
 
@@ -1602,9 +1642,28 @@ function CopilotPanel({
   onReject,
   onToggleCitations
 }: CopilotPanelProps) {
-  const hasDraft = draft !== null && draft.status !== "off";
+  const hasDraft = draft?.status === "drafted" && draft.sendable;
   const isOff = draft?.status === "off";
-  const isFallback = draft?.status === "escalated";
+  const isFallback =
+    draft !== null &&
+    [
+      "no_evidence",
+      "safety_blocked",
+      "budget_exceeded",
+      "provider_failed",
+      "stale",
+      "cancelled"
+    ].includes(draft.status);
+  const fallbackMessage =
+    draft?.status === "safety_blocked"
+      ? t.copilotSafetyBlocked
+      : draft?.status === "budget_exceeded"
+        ? t.copilotBudgetExceeded
+        : draft?.status === "provider_failed"
+          ? t.copilotProviderFailed
+          : draft?.status === "stale" || draft?.status === "cancelled"
+            ? t.copilotStale
+            : t.copilotFallback;
 
   return (
     <section className="copilot-panel" aria-label={t.copilotTitle} data-testid="copilot-panel">
@@ -1666,7 +1725,7 @@ function CopilotPanel({
 
       {!loading && !error && isFallback && (
         <p className="copilot-fallback-msg" data-testid="copilot-fallback">
-          {t.copilotFallback}
+          {fallbackMessage}
         </p>
       )}
 
@@ -1724,7 +1783,7 @@ function CopilotPanel({
           )}
 
           <div className="copilot-actions" role="group" aria-label="Copilot draft actions">
-            {canSend && (
+            {canSend && draft.sendable && (
               <button
                 type="button"
                 className="btn btn-sm btn-copilot-approve"

@@ -120,6 +120,7 @@ export {
   recordRealtimeReconnectGap,
   recordRealtimeDroppedHint,
   recordMediaLifecycle,
+  recordAiDraftRun,
   getPrometheusMetrics,
   resetMetrics
 } from "./metrics.js";

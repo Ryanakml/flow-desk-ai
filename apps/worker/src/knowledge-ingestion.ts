@@ -147,6 +147,7 @@ export async function processKnowledgeIngestionBatch(
             }))
           });
           await completeKnowledgeSourceIngestion(tenantDb, {
+            organizationId: claimed.organizationId,
             sourceId: source.id,
             contentHash,
             byteSize

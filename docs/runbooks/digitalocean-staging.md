@@ -29,13 +29,13 @@ unset WEBHOOK_APP_SECRET
 
 ## AI provider runtime
 
-The API starts with `AI_PROVIDER=disabled` unless a provider is selected explicitly. In this mode,
-the rest of FlowDesk remains available, while draft generation fails closed with the stable
-`AI_PROVIDER_CONFIGURATION` response. `AI_PROVIDER=fake` is allowed only for local or preview
-testing and is rejected during staging or production startup.
+The AI worker starts with `AI_PROVIDER=disabled` unless a provider is selected explicitly. In this
+mode, the rest of FlowDesk remains available and draft requests remain durable but unprocessed.
+`AI_PROVIDER=fake` is allowed only for local or preview testing and is rejected during staging or
+production startup.
 
-The OpenAI credential is server-only and is passed only to the API container. It is not shared with
-the web, ingress, worker, scheduler, image build, or GitHub Actions. To enable the real runtime,
+The OpenAI credential is server-only and is passed only to the worker container. It is not shared
+with the web, API, ingress, scheduler, image build, or GitHub Actions. To enable the real runtime,
 edit `/opt/flowdesk/shared/staging.env` directly on the host with `sudoedit`; set
 `AI_PROVIDER=openai` and add `OPENAI_API_KEY` without printing it in shell history or logs. Keep the
 default `OPENAI_BASE_URL`, `OPENAI_CHAT_MODEL`, and `OPENAI_EMBEDDING_MODEL` unless a reviewed

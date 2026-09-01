@@ -1,5 +1,4 @@
 import {
-  loadAiRuntimeConfig,
   loadAuthConfig,
   loadChannelEncryptionConfig,
   loadHttpConfig,
@@ -11,7 +10,6 @@ import { createLogger, initializeTelemetry } from "@flowdesk/observability";
 import { Pool } from "pg";
 import { MetaWhatsAppProvider, S3ObjectStore } from "@flowdesk/providers";
 import { createApiApp } from "./app.js";
-import { createAiRuntime } from "./ai-runtime.js";
 import { createRealtimeServer } from "./realtime.js";
 
 const config = loadHttpConfig("api", Number(process.env["API_PORT"] ?? 4000));
@@ -29,8 +27,6 @@ const logger = createLogger({
 const databaseUrl = process.env["DATABASE_URL"];
 const dbPool = databaseUrl ? new Pool({ connectionString: databaseUrl }) : undefined;
 const authConfig = loadAuthConfig();
-const aiRuntimeConfig = loadAiRuntimeConfig();
-const aiRuntime = createAiRuntime(aiRuntimeConfig);
 const channelEncryptionConfig = loadChannelEncryptionConfig();
 const metaEmbeddedSignupConfig = loadMetaEmbeddedSignupConfig();
 const whatsAppGraphApiConfig = loadWhatsAppGraphApiConfig();
@@ -66,7 +62,6 @@ const app = createApiApp({
           whatsappProvider: new MetaWhatsAppProvider({
             graphApiBaseUrl: whatsAppGraphApiConfig.META_GRAPH_API_BASE_URL
           }),
-          ...(aiRuntime ? { ai: aiRuntime } : {}),
           ...(metaEmbeddedSignupConfig ? { embeddedSignup: metaEmbeddedSignupConfig } : {})
         }
       }
@@ -80,9 +75,7 @@ const server = app.listen(config.PORT, "0.0.0.0", () =>
     {
       port: config.PORT,
       host: "0.0.0.0",
-      aiProvider: aiRuntime?.providerType ?? "disabled",
-      aiChatModel: aiRuntime?.chatModel ?? null,
-      aiEmbeddingModel: aiRuntime?.embeddingModel ?? null
+      aiExecution: "worker-only"
     },
     "api.started"
   )

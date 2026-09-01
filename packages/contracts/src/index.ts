@@ -879,13 +879,51 @@ export type CitationResponse = z.infer<typeof CitationSchema>;
 
 export const GenerateBotDraftResponseSchema = z.object({
   runId: z.string().uuid(),
-  status: z.enum(["drafted", "escalated", "off"]),
+  status: z.enum([
+    "queued",
+    "processing",
+    "drafted",
+    "no_evidence",
+    "safety_blocked",
+    "budget_exceeded",
+    "provider_failed",
+    "stale",
+    "cancelled",
+    "off"
+  ]),
   suggestedContent: z.string(),
   citations: z.array(CitationSchema),
   confidence: z.number(),
-  reasoning: z.string().optional()
+  reasoning: z.string().optional(),
+  sendable: z.boolean(),
+  errorCode: z.string().nullable(),
+  createdAt: z.string().datetime({ offset: true }),
+  updatedAt: z.string().datetime({ offset: true })
 });
 export type GenerateBotDraftResponse = z.infer<typeof GenerateBotDraftResponseSchema>;
+
+export const BotDraftActionRequestSchema = z
+  .object({
+    action: z.enum(["approved", "edited", "rejected"]),
+    editedContent: z.string().trim().min(1).max(4000).optional()
+  })
+  .superRefine((value, context) => {
+    if (value.action === "edited" && !value.editedContent) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["editedContent"],
+        message: "editedContent is required for an edited draft"
+      });
+    }
+    if (value.action !== "edited" && value.editedContent !== undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["editedContent"],
+        message: "editedContent is only accepted for an edited draft"
+      });
+    }
+  });
+export type BotDraftActionRequest = z.infer<typeof BotDraftActionRequestSchema>;
 
 // M5: Routing Rules schemas
 export const RoutingConditionSchema = z.object({

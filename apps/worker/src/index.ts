@@ -25,6 +25,7 @@ import {
 import { processAttachmentScanBatch } from "./media-scanner.js";
 import { processAttachmentRetentionBatch } from "./media-retention.js";
 import { processKnowledgeIngestionBatch } from "./knowledge-ingestion.js";
+import { processBotDraftBatch } from "./bot-drafts.js";
 
 export { processOutboxOutboundBatch, dispatchOutboundMessage };
 
@@ -104,6 +105,15 @@ if (dbPool) {
               dbPool,
               { embeddingProvider: aiRuntime.embeddingProvider },
               5
+            ),
+            processBotDraftBatch(
+              dbPool,
+              {
+                chatProvider: aiRuntime.chatProvider,
+                embeddingProvider: aiRuntime.embeddingProvider,
+                chatModel: aiRuntime.chatModel
+              },
+              5
             )
           ]
         : []),
@@ -131,13 +141,15 @@ if (dbPool) {
       .then((counts) => {
         const [webhookCount = 0, outboundCount = 0] = counts;
         const knowledgeCount = aiRuntime ? (counts[2] ?? 0) : 0;
-        const mediaOffset = aiRuntime ? 3 : 2;
+        const botDraftCount = aiRuntime ? (counts[3] ?? 0) : 0;
+        const mediaOffset = aiRuntime ? 4 : 2;
         const scanCount = counts[mediaOffset] ?? 0;
         const retentionCount = counts[mediaOffset + 1] ?? 0;
         if (
           webhookCount > 0 ||
           outboundCount > 0 ||
           knowledgeCount > 0 ||
+          botDraftCount > 0 ||
           scanCount > 0 ||
           retentionCount > 0
         ) {
@@ -146,6 +158,7 @@ if (dbPool) {
               webhookProcessed: webhookCount,
               outboundProcessed: outboundCount,
               knowledgeProcessed: knowledgeCount,
+              botDraftProcessed: botDraftCount,
               attachmentScanned: scanCount,
               attachmentRetained: retentionCount
             },

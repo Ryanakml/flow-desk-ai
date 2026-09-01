@@ -34,7 +34,7 @@ x-api-meta-environment: &api-meta-environment
   META_SYSTEM_USER_ID: ${META_SYSTEM_USER_ID:-replace-with-flowdesk-system-user-id}
   META_ADMIN_SYSTEM_USER_ACCESS_TOKEN: ${META_ADMIN_SYSTEM_USER_ACCESS_TOKEN:-replace-with-business-admin-system-user-access-token}
 
-x-api-ai-environment: &api-ai-environment
+x-worker-ai-environment: &worker-ai-environment
   AI_PROVIDER: ${AI_PROVIDER:-disabled}
   OPENAI_API_KEY: ${OPENAI_API_KEY:-}
   OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
@@ -102,7 +102,7 @@ services:
     <<: *app-defaults
     image: ${IMAGE_REGISTRY:-ghcr.io/ryanakml}/flowdesk-api:${IMAGE_TAG}
     environment:
-      <<: [*app-environment, *api-meta-environment, *api-ai-environment]
+      <<: [*app-environment, *api-meta-environment]
       PORT: "4000"
 
   ingress:
@@ -116,7 +116,7 @@ services:
     <<: *app-defaults
     image: ${IMAGE_REGISTRY:-ghcr.io/ryanakml}/flowdesk-worker:${IMAGE_TAG}
     environment:
-      <<: [*app-environment, *api-ai-environment]
+      <<: [*app-environment, *worker-ai-environment]
       PORT: "4002"
 
   scheduler:

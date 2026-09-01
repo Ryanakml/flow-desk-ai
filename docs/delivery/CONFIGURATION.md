@@ -16,3 +16,10 @@ All processes read environment variables through `@flowdesk/config`; direct read
 Environment isolation is strict: local, preview, staging, and production never share database, Redis, bucket, provider sender, or secrets.
 
 M3 media runtime variables are validated together. Staging and production require `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, and `CLAMAV_HOST`; startup fails before work is accepted if any is absent. `S3_ENDPOINT` is optional for AWS and required by local MinIO, while `S3_FORCE_PATH_STYLE` defaults false. `CLAMAV_PORT` defaults to `3310`. Retention defaults are `MEDIA_CLEAN_RETENTION_DAYS=90` and `MEDIA_REJECTED_RETENTION_DAYS=7`; policy changes require product/privacy approval and a deletion rehearsal.
+
+M4 AI runtime variables are worker-only. `AI_PROVIDER` defaults to `disabled`; `fake` is rejected in
+staging and production; `openai` requires a server-injected `OPENAI_API_KEY`, HTTPS base URL, chat and
+embedding model IDs, bounded timeouts, and an output-token cap. The key is not passed to web, API,
+ingress, scheduler, image builds, or CI. Provider/model identifiers may appear in protected metrics
+and run audit metadata; credentials, prompts, retrieved content, provider bodies, and customer PII
+must not appear in logs or metric labels.

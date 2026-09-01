@@ -5,7 +5,17 @@ export type KnowledgeSourceStatus = "pending" | "indexing" | "active" | "failed"
 export type BotMode = "off" | "draft";
 export type BotTone = "professional" | "friendly" | "concise" | "formal";
 export type BotLanguage = "id" | "en" | "auto";
-export type BotRunStatus = "started" | "completed" | "failed" | "fallback_no_evidence";
+export type BotRunStatus =
+  | "queued"
+  | "processing"
+  | "completed"
+  | "no_evidence"
+  | "safety_blocked"
+  | "budget_exceeded"
+  | "provider_failed"
+  | "stale"
+  | "cancelled"
+  | "off";
 export type OperatorAction = "approved" | "edited" | "rejected" | "ignored";
 export type KnowledgeIngestionJobStatus = "queued" | "processing" | "completed" | "failed";
 
@@ -124,8 +134,20 @@ export interface BotRun {
   operatorActionAt: Date | null;
   operatorUserId: string | null;
   errorDetail: string | null;
+  errorCode: string | null;
+  requestedByUserId: string | null;
+  model: string | null;
+  promptVersion: string;
+  configSnapshot: Record<string, unknown>;
+  inputMessageCreatedAt: Date | null;
+  attempts: number;
+  maxAttempts: number;
+  availableAt: Date;
+  claimedAt: Date | null;
+  completedAt: Date | null;
   metadata: Record<string, unknown>;
   createdAt: Date;
+  updatedAt: Date;
 }
 
 // ----------------------------------------------------------------------
@@ -464,7 +486,7 @@ export async function replaceKnowledgeSourceDocument(
 
 export async function completeKnowledgeSourceIngestion(
   db: DbClient,
-  input: { sourceId: string; contentHash: string; byteSize: number }
+  input: { organizationId: string; sourceId: string; contentHash: string; byteSize: number }
 ): Promise<void> {
   await db.query(
     `UPDATE flowdesk.knowledge_sources
@@ -473,6 +495,64 @@ export async function completeKnowledgeSourceIngestion(
      WHERE id = $1`,
     [input.sourceId, input.contentHash, input.byteSize]
   );
+  await db.query(`SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))`, [
+    input.organizationId
+  ]);
+  await db.query(
+    `INSERT INTO flowdesk.knowledge_versions (
+       organization_id, version_number, title, snapshot_metadata
+     )
+     SELECT $1,
+            COALESCE(MAX(version_number), 0) + 1,
+            'Knowledge snapshot',
+            jsonb_build_object(
+              'activeSourceCount', (
+                SELECT COUNT(*) FROM flowdesk.knowledge_sources
+                WHERE organization_id = $1 AND status = 'active' AND deleted_at IS NULL
+              ),
+              'activeSourceIds', (
+                SELECT COALESCE(jsonb_agg(id ORDER BY id), '[]'::jsonb)
+                FROM flowdesk.knowledge_sources
+                WHERE organization_id = $1 AND status = 'active' AND deleted_at IS NULL
+              )
+            )
+     FROM flowdesk.knowledge_versions
+     WHERE organization_id = $1`,
+    [input.organizationId]
+  );
+}
+
+export async function getLatestKnowledgeVersion(
+  db: DbClient,
+  organizationId: string
+): Promise<KnowledgeVersion | null> {
+  const result = await db.query<{
+    id: string;
+    organization_id: string;
+    version_number: number;
+    title: string;
+    snapshot_metadata: Record<string, unknown>;
+    created_by_user_id: string | null;
+    created_at: Date;
+  }>(
+    `SELECT * FROM flowdesk.knowledge_versions
+     WHERE organization_id = $1
+     ORDER BY version_number DESC
+     LIMIT 1`,
+    [organizationId]
+  );
+  const row = result.rows[0];
+  return row
+    ? {
+        id: row.id,
+        organizationId: row.organization_id,
+        versionNumber: row.version_number,
+        title: row.title,
+        snapshotMetadata: row.snapshot_metadata,
+        createdByUserId: row.created_by_user_id,
+        createdAt: row.created_at
+      }
+    : null;
 }
 
 function mapKnowledgeIngestionJob(row: {
@@ -778,39 +858,24 @@ export async function recordBotRun(
     totalTokens?: number;
     latencyMs?: number;
     costEstimateMicrocents?: number;
+    requestedByUserId?: string | null;
+    model?: string | null;
+    promptVersion?: string;
+    configSnapshot?: Record<string, unknown>;
+    inputMessageCreatedAt?: Date | null;
     metadata?: Record<string, unknown>;
   }
 ): Promise<BotRun> {
-  const res = await db.query<{
-    id: string;
-    organization_id: string;
-    conversation_id: string;
-    trigger_message_id: string | null;
-    bot_config_id: string | null;
-    knowledge_version_id: string | null;
-    mode: BotMode;
-    status: BotRunStatus;
-    suggested_content: string | null;
-    citations: Array<{ chunkId: string; sourceTitle: string; snippet: string; score: number }>;
-    reasoning: string | null;
-    confidence: number | null;
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-    latency_ms: number;
-    cost_estimate_microcents: string;
-    operator_action: OperatorAction | null;
-    operator_action_at: Date | null;
-    operator_user_id: string | null;
-    error_detail: string | null;
-    metadata: Record<string, unknown>;
-    created_at: Date;
-  }>(
+  const res = await db.query<BotRunRow>(
     `INSERT INTO flowdesk.bot_runs (
       organization_id, conversation_id, trigger_message_id, bot_config_id, knowledge_version_id,
       mode, status, suggested_content, citations, reasoning, confidence,
-      prompt_tokens, completion_tokens, total_tokens, latency_ms, cost_estimate_microcents, metadata
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+      prompt_tokens, completion_tokens, total_tokens, latency_ms, cost_estimate_microcents,
+      requested_by_user_id, model, prompt_version, config_snapshot,
+      input_message_created_at, metadata, completed_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+              $15, $16, $17, $18, $19, $20, $21, $22,
+              CASE WHEN $7 IN ('queued', 'processing') THEN NULL ELSE clock_timestamp() END)
     RETURNING *`,
     [
       input.organizationId,
@@ -829,11 +894,56 @@ export async function recordBotRun(
       input.totalTokens ?? 0,
       input.latencyMs ?? 0,
       input.costEstimateMicrocents ?? 0,
+      input.requestedByUserId ?? null,
+      input.model ?? null,
+      input.promptVersion ?? "m4-v1",
+      JSON.stringify(input.configSnapshot ?? {}),
+      input.inputMessageCreatedAt ?? null,
       JSON.stringify(input.metadata ?? {})
     ]
   );
+  return mapBotRun(res.rows[0]!);
+}
 
-  const row = res.rows[0]!;
+interface BotRunRow {
+  id: string;
+  organization_id: string;
+  conversation_id: string;
+  trigger_message_id: string | null;
+  bot_config_id: string | null;
+  knowledge_version_id: string | null;
+  mode: BotMode;
+  status: BotRunStatus;
+  suggested_content: string | null;
+  citations: Array<{ chunkId: string; sourceTitle: string; snippet: string; score: number }>;
+  reasoning: string | null;
+  confidence: number | null;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  latency_ms: number;
+  cost_estimate_microcents: string | number;
+  operator_action: OperatorAction | null;
+  operator_action_at: Date | null;
+  operator_user_id: string | null;
+  error_code: string | null;
+  error_detail: string | null;
+  requested_by_user_id: string | null;
+  model: string | null;
+  prompt_version: string;
+  config_snapshot: Record<string, unknown>;
+  input_message_created_at: Date | null;
+  attempts: number;
+  max_attempts: number;
+  available_at: Date;
+  claimed_at: Date | null;
+  completed_at: Date | null;
+  metadata: Record<string, unknown>;
+  created_at: Date;
+  updated_at: Date;
+}
+
+function mapBotRun(row: BotRunRow): BotRun {
   return {
     id: row.id,
     organizationId: row.organization_id,
@@ -844,21 +954,192 @@ export async function recordBotRun(
     mode: row.mode,
     status: row.status,
     suggestedContent: row.suggested_content,
-    citations: row.citations,
+    citations: row.citations ?? [],
     reasoning: row.reasoning,
-    confidence: row.confidence ? Number(row.confidence) : null,
-    promptTokens: row.prompt_tokens,
-    completionTokens: row.completion_tokens,
-    totalTokens: row.total_tokens,
-    latencyMs: row.latency_ms,
-    costEstimateMicrocents: Number(row.cost_estimate_microcents),
-    operatorAction: row.operator_action,
-    operatorActionAt: row.operator_action_at,
-    operatorUserId: row.operator_user_id,
-    errorDetail: row.error_detail,
-    metadata: row.metadata,
-    createdAt: row.created_at
+    confidence:
+      row.confidence === null || row.confidence === undefined ? null : Number(row.confidence),
+    promptTokens: row.prompt_tokens ?? 0,
+    completionTokens: row.completion_tokens ?? 0,
+    totalTokens: row.total_tokens ?? 0,
+    latencyMs: row.latency_ms ?? 0,
+    costEstimateMicrocents: Number(row.cost_estimate_microcents ?? 0),
+    operatorAction: row.operator_action ?? null,
+    operatorActionAt: row.operator_action_at ?? null,
+    operatorUserId: row.operator_user_id ?? null,
+    errorCode: row.error_code ?? null,
+    errorDetail: row.error_detail ?? null,
+    requestedByUserId: row.requested_by_user_id ?? null,
+    model: row.model ?? null,
+    promptVersion: row.prompt_version ?? "m4-v1",
+    configSnapshot: row.config_snapshot ?? {},
+    inputMessageCreatedAt: row.input_message_created_at ?? null,
+    attempts: row.attempts ?? 0,
+    maxAttempts: row.max_attempts ?? 3,
+    availableAt: row.available_at ?? row.created_at,
+    claimedAt: row.claimed_at ?? null,
+    completedAt: row.completed_at ?? null,
+    metadata: row.metadata ?? {},
+    createdAt: row.created_at,
+    updatedAt: row.updated_at ?? row.created_at
   };
+}
+
+export async function enqueueBotDraftRun(
+  db: DbClient,
+  input: {
+    organizationId: string;
+    conversationId: string;
+    triggerMessageId: string;
+    botConfigId: string;
+    knowledgeVersionId: string | null;
+    requestedByUserId: string | null;
+    model: string;
+    configSnapshot: Record<string, unknown>;
+    inputMessageCreatedAt: Date;
+  }
+): Promise<BotRun> {
+  const result = await db.query<BotRunRow>(
+    `INSERT INTO flowdesk.bot_runs (
+       organization_id, conversation_id, trigger_message_id, bot_config_id,
+       knowledge_version_id, mode, status, requested_by_user_id, model,
+       prompt_version, config_snapshot, input_message_created_at
+     ) VALUES ($1, $2, $3, $4, $5, 'draft', 'queued', $6, $7, 'm4-v1', $8, $9)
+     ON CONFLICT (organization_id, conversation_id, trigger_message_id)
+       WHERE trigger_message_id IS NOT NULL AND status IN ('queued', 'processing')
+     DO UPDATE SET updated_at = flowdesk.bot_runs.updated_at
+     RETURNING *`,
+    [
+      input.organizationId,
+      input.conversationId,
+      input.triggerMessageId,
+      input.botConfigId,
+      input.knowledgeVersionId,
+      input.requestedByUserId,
+      input.model,
+      JSON.stringify(input.configSnapshot),
+      input.inputMessageCreatedAt
+    ]
+  );
+  return mapBotRun(result.rows[0]!);
+}
+
+export async function getBotRunById(db: DbClient, id: string): Promise<BotRun | null> {
+  const result = await db.query<BotRunRow>(`SELECT * FROM flowdesk.bot_runs WHERE id = $1`, [id]);
+  return result.rows[0] ? mapBotRun(result.rows[0]) : null;
+}
+
+export async function getLatestBotRunForConversation(
+  db: DbClient,
+  organizationId: string,
+  conversationId: string
+): Promise<BotRun | null> {
+  const result = await db.query<BotRunRow>(
+    `SELECT * FROM flowdesk.bot_runs
+     WHERE organization_id = $1 AND conversation_id = $2
+     ORDER BY created_at DESC LIMIT 1`,
+    [organizationId, conversationId]
+  );
+  return result.rows[0] ? mapBotRun(result.rows[0]) : null;
+}
+
+export async function claimBotDraftRuns(
+  db: DbClient,
+  limit = 10
+): Promise<
+  Array<{
+    id: string;
+    organizationId: string;
+    conversationId: string;
+    attempts: number;
+    maxAttempts: number;
+  }>
+> {
+  const result = await db.query<{
+    id: string;
+    organization_id: string;
+    conversation_id: string;
+    attempts: number;
+    max_attempts: number;
+  }>(`SELECT * FROM flowdesk.claim_bot_draft_runs($1::integer)`, [limit]);
+  return result.rows.map((row) => ({
+    id: row.id,
+    organizationId: row.organization_id,
+    conversationId: row.conversation_id,
+    attempts: row.attempts,
+    maxAttempts: row.max_attempts
+  }));
+}
+
+export async function finishBotDraftRun(
+  db: DbClient,
+  input: {
+    id: string;
+    status: Exclude<BotRunStatus, "queued" | "processing">;
+    suggestedContent?: string | null;
+    citations?: Array<{ chunkId: string; sourceTitle: string; snippet: string; score: number }>;
+    reasoning?: string | null;
+    confidence?: number | null;
+    promptTokens?: number;
+    completionTokens?: number;
+    latencyMs?: number;
+    costEstimateMicrocents?: number;
+    errorCode?: string | null;
+    errorDetail?: string | null;
+    metadata?: Record<string, unknown>;
+  }
+): Promise<void> {
+  await db.query(
+    `UPDATE flowdesk.bot_runs
+     SET status = $2, suggested_content = $3, citations = $4, reasoning = $5,
+         confidence = $6, prompt_tokens = $7, completion_tokens = $8,
+         total_tokens = $7 + $8, latency_ms = $9, cost_estimate_microcents = $10,
+         error_code = $11, error_detail = $12, metadata = metadata || $13::jsonb,
+         completed_at = clock_timestamp(), updated_at = clock_timestamp()
+     WHERE id = $1 AND status IN ('queued', 'processing')`,
+    [
+      input.id,
+      input.status,
+      input.suggestedContent ?? null,
+      JSON.stringify(input.citations ?? []),
+      input.reasoning ?? null,
+      input.confidence ?? null,
+      input.promptTokens ?? 0,
+      input.completionTokens ?? 0,
+      input.latencyMs ?? 0,
+      input.costEstimateMicrocents ?? 0,
+      input.errorCode ?? null,
+      input.errorDetail ?? null,
+      JSON.stringify(input.metadata ?? {})
+    ]
+  );
+}
+
+export async function requeueBotDraftRun(
+  db: DbClient,
+  input: { id: string; availableAt: Date; errorCode: string; errorDetail: string }
+): Promise<void> {
+  await db.query(
+    `UPDATE flowdesk.bot_runs
+     SET status = 'queued', available_at = $2, claimed_at = NULL,
+         error_code = $3, error_detail = $4, updated_at = clock_timestamp()
+     WHERE id = $1 AND status = 'processing'`,
+    [input.id, input.availableAt, input.errorCode, input.errorDetail]
+  );
+}
+
+export async function markBotRunStale(db: DbClient, id: string): Promise<boolean> {
+  const result = await db.query(
+    `UPDATE flowdesk.bot_runs
+     SET status = 'stale', error_code = 'NEWER_CUSTOMER_MESSAGE',
+         error_detail = 'A newer customer message arrived before this draft was used.',
+         completed_at = COALESCE(completed_at, clock_timestamp()),
+         updated_at = clock_timestamp()
+     WHERE id = $1 AND status IN ('queued', 'processing', 'completed')
+       AND operator_action IS NULL
+     RETURNING id`,
+    [id]
+  );
+  return Boolean(result.rows[0]);
 }
 
 export async function updateBotRunAction(
@@ -868,11 +1149,14 @@ export async function updateBotRunAction(
     action: OperatorAction;
     userId?: string | null;
   }
-): Promise<void> {
-  await db.query(
+): Promise<boolean> {
+  const result = await db.query(
     `UPDATE flowdesk.bot_runs
-     SET operator_action = $1, operator_action_at = clock_timestamp(), operator_user_id = $2
-     WHERE id = $3`,
+     SET operator_action = $1, operator_action_at = clock_timestamp(), operator_user_id = $2,
+         updated_at = clock_timestamp()
+     WHERE id = $3 AND status = 'completed' AND operator_action IS NULL
+     RETURNING id`,
     [input.action, input.userId ?? null, input.botRunId]
   );
+  return Boolean(result.rows[0]);
 }
