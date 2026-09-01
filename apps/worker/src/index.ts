@@ -103,7 +103,14 @@ if (dbPool) {
         ? [
             processKnowledgeIngestionBatch(
               dbPool,
-              { embeddingProvider: aiRuntime.embeddingProvider },
+              {
+                embeddingProvider: aiRuntime.embeddingProvider,
+                logger: {
+                  error: (context, msg) => logger.error(context, msg),
+                  info: (context, msg) => logger.info(context, msg),
+                  warn: (context, msg) => logger.warn(context, msg)
+                }
+              },
               5
             ),
             processBotDraftBatch(

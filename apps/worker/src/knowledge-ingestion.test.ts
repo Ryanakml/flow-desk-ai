@@ -169,4 +169,49 @@ describe("knowledge ingestion worker", () => {
     expect(state.documents).toBe(0);
     expect(state.chunks).toHaveLength(0);
   });
+
+  it("logs structured error details including stage, provider model, and HTTP error body", async () => {
+    const { db } = createMockDb();
+    const errorWithHttp = new AiProviderError("AI_PROVIDER_INVALID_RESPONSE", {
+      httpStatus: 400,
+      httpBody: JSON.stringify({ error: { message: "Invalid model resource name", code: 400 } })
+    });
+
+    const failingProvider: AiEmbeddingProvider = {
+      name: "gemini-embedding-provider",
+      dimensions: 1536,
+      checkHealth: async () => {
+        await Promise.resolve();
+        return { status: "available", checkedAt: new Date().toISOString() };
+      },
+      generateEmbeddings: async () => {
+        await Promise.resolve();
+        throw errorWithHttp;
+      }
+    };
+
+    const logged: Array<{ context: Record<string, unknown>; message: string }> = [];
+    const logger = {
+      error: (context: Record<string, unknown>, message: string) => {
+        logged.push({ context, message });
+      }
+    };
+
+    await processKnowledgeIngestionBatch(db, {
+      embeddingProvider: failingProvider,
+      logger
+    });
+
+    expect(logged).toHaveLength(1);
+    expect(logged[0]!.message).toBe("worker.knowledge_ingestion.failed");
+    expect(logged[0]!.context).toMatchObject({
+      organizationId: "org-1",
+      sourceId: "source-1",
+      jobId: "job-1",
+      stage: "embedding",
+      provider: "gemini-embedding-provider",
+      httpStatus: 400
+    });
+    expect(logged[0]!.context["httpBody"]).toContain("Invalid model resource name");
+  });
 });
