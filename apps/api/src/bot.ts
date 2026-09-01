@@ -328,7 +328,8 @@ export function createBotRouter(options: BotRouterOptions): Router {
             requestedByUserId: request.user!.id,
             model: config.model,
             configSnapshot: snapshot,
-            inputMessageCreatedAt: trigger.createdAt
+            inputMessageCreatedAt: trigger.createdAt,
+            mode: "draft"
           });
         }
         await recordAuditEvent(db, {

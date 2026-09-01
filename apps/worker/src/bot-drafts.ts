@@ -29,6 +29,7 @@ import {
   redactPiiFromPrompt
 } from "@flowdesk/security";
 import { recordAiDraftRun } from "@flowdesk/observability";
+import { processCompletedAutoRun } from "./auto-send.js";
 
 export interface BotDraftWorkerOptions {
   chatProvider: AiChatProvider;
@@ -311,6 +312,13 @@ export async function processBotDraftBatch(
               unsafeKnowledgeChunksRemoved: rawChunks.length - safeChunks.length
             }
           });
+          if (run.mode === "auto") {
+            currentStage = "auto_pre_send";
+            await processCompletedAutoRun(tenantDb, {
+              organizationId: claimed.organizationId,
+              runId: run.id
+            });
+          }
         }
       );
       const outcome = await runInTenantTransaction(

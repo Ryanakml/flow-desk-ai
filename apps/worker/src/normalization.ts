@@ -6,7 +6,10 @@ import {
   runInTenantTransaction,
   updateMessageStatus,
   listRoutingRules,
-  recordRoutingLog
+  recordRoutingLog,
+  getBotConfig,
+  getLatestKnowledgeVersion,
+  enqueueBotDraftRun
 } from "@flowdesk/db";
 import { type MessageStatus, evaluateRoutingRules } from "@flowdesk/domain";
 import { createLogger, recordWhatsAppWebhookProcessed } from "@flowdesk/observability";
@@ -298,7 +301,7 @@ export async function processWebhookPayload(
       );
 
       if (existingMessage.rows.length === 0) {
-        await createMessage(client, {
+        const inboundMessage = await createMessage(client, {
           organizationId: params.organizationId,
           conversationId: conversation.id,
           channelId,
@@ -348,6 +351,35 @@ export async function processWebhookPayload(
           }
         } catch {
           // Non-blocking routing log exception guard
+        }
+
+        // M5 #178: AUTO is an explicit persisted mode. Inbound only queues durable AI work;
+        // generation and the final safety recheck happen in the bot worker transaction.
+        const autoConfig = await getBotConfig(client, params.organizationId);
+        if (autoConfig?.mode === "auto") {
+          const knowledgeVersion = await getLatestKnowledgeVersion(client, params.organizationId);
+          await enqueueBotDraftRun(client, {
+            organizationId: params.organizationId,
+            conversationId: conversation.id,
+            triggerMessageId: inboundMessage.id,
+            botConfigId: autoConfig.id,
+            knowledgeVersionId: knowledgeVersion?.id ?? null,
+            requestedByUserId: null,
+            model: autoConfig.model,
+            mode: "auto",
+            configSnapshot: {
+              instructions: autoConfig.instructions,
+              tone: autoConfig.tone,
+              language: autoConfig.language,
+              confidenceThreshold: autoConfig.confidenceThreshold,
+              topK: autoConfig.topK,
+              mode: autoConfig.mode,
+              emergencyDisabled: autoConfig.emergencyDisabled,
+              model: autoConfig.model,
+              botConfigUpdatedAt: autoConfig.updatedAt.toISOString()
+            },
+            inputMessageCreatedAt: inboundMessage.createdAt
+          });
         }
       }
     } else if (item.type === "status_update") {

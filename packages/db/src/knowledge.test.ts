@@ -230,10 +230,24 @@ describe("M4 Knowledge Base & Vector Database Repository", () => {
 
     const upserted = await upsertBotConfig(mockDb, {
       organizationId: orgId,
-      mode: "draft",
+      mode: "auto",
       tone: "friendly"
     });
     expect(upserted.tone).toBe("friendly");
+    const upsertCall = query.mock.calls[1] as [string, unknown[]];
+    expect(upsertCall[0]).toContain("CASE WHEN $12");
+    expect(upsertCall[1].slice(11)).toEqual([
+      true,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]);
 
     const run = await recordBotRun(mockDb, {
       organizationId: orgId,

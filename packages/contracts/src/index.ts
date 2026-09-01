@@ -851,7 +851,7 @@ export const BotConfigSchema = z.object({
   model: z.string(),
   confidenceThreshold: z.number().min(0).max(1),
   topK: z.number().int().positive(),
-  mode: z.enum(["off", "draft"]),
+  mode: z.enum(["off", "draft", "auto"]),
   emergencyDisabled: z.boolean(),
   createdAt: z.string().datetime({ offset: true }),
   updatedAt: z.string().datetime({ offset: true })
@@ -864,7 +864,7 @@ export const UpdateBotConfigRequestSchema = z.object({
   language: z.enum(["id", "en", "auto"]).optional(),
   confidenceThreshold: z.number().min(0).max(1).optional(),
   topK: z.number().int().min(1).max(10).optional(),
-  mode: z.enum(["off", "draft"]).optional(),
+  mode: z.enum(["off", "draft", "auto"]).optional(),
   emergencyDisabled: z.boolean().optional()
 });
 export type UpdateBotConfigRequest = z.infer<typeof UpdateBotConfigRequestSchema>;

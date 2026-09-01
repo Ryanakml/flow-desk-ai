@@ -625,7 +625,8 @@ export interface OutboundMediaMetadata {
 export interface CreateOutboundMessageWithOutboxInput {
   organizationId: string;
   conversationId: string;
-  senderUserId: string;
+  senderUserId: string | null;
+  senderType?: "agent" | "bot" | undefined;
   content: string;
   correlationId?: string | undefined;
   metadata?: Record<string, unknown> | undefined;
@@ -655,7 +656,7 @@ export async function createOutboundMessageWithOutbox(
     conversationId: input.conversationId,
     channelId: conversation.channelId,
     direction: "outbound",
-    senderType: "agent",
+    senderType: input.senderType ?? "agent",
     senderUserId: input.senderUserId,
     content: input.content,
     status: "queued",
