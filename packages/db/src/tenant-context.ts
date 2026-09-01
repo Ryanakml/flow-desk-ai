@@ -18,6 +18,7 @@ export async function withTenantTransaction<T>(
     // local development commonly connect through a role that can SET ROLE; the
     // transaction must still execute as the NOBYPASSRLS runtime principal.
     await client.query("SET LOCAL ROLE flowdesk_runtime");
+    await client.query("SET LOCAL search_path = flowdesk, public");
     await client.query("SELECT set_config('app.organization_id', $1, true)", [
       context.organizationId
     ]);
