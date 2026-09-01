@@ -203,26 +203,33 @@ export class GeminiEmbeddingProvider implements AiEmbeddingProvider {
       throw new AiProviderError("AI_PROVIDER_CONFIGURATION");
     }
 
+    const isSingle = texts.length === 1;
     const modelResource = `models/${this.modelId}`;
+    const endpoint = isSingle
+      ? `${this.baseUrl}/models/${encodeURIComponent(this.modelId)}:embedContent`
+      : `${this.baseUrl}/models/${encodeURIComponent(this.modelId)}:batchEmbedContents`;
+    const payload = isSingle
+      ? {
+          content: { parts: [{ text: texts[0] }] }
+        }
+      : {
+          requests: texts.map((text) => ({
+            model: modelResource,
+            content: { parts: [{ text }] }
+          }))
+        };
+
     let response: Response;
     try {
-      response = await this.fetcher(
-        `${this.baseUrl}/models/${encodeURIComponent(this.modelId)}:batchEmbedContents`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-goog-api-key": this.apiKey
-          },
-          body: JSON.stringify({
-            requests: texts.map((text) => ({
-              model: modelResource,
-              content: { parts: [{ text }] }
-            }))
-          }),
-          signal: AbortSignal.timeout(this.timeoutMs)
-        }
-      );
+      response = await this.fetcher(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": this.apiKey
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(this.timeoutMs)
+      });
     } catch (error) {
       throw normalizeAiProviderFetchError(error);
     }
@@ -238,13 +245,25 @@ export class GeminiEmbeddingProvider implements AiEmbeddingProvider {
       throw new AiProviderError("AI_PROVIDER_INVALID_RESPONSE", { cause: error });
     }
 
-    const parsed = body as { embeddings?: Array<{ values?: unknown }> };
-    if (!Array.isArray(parsed.embeddings) || parsed.embeddings.length !== texts.length) {
+    const parsed = body as {
+      embeddings?: Array<{ values?: unknown }>;
+      embedding?: { values?: unknown };
+    };
+
+    const rawEmbeddings = Array.isArray(parsed.embeddings)
+      ? parsed.embeddings
+      : parsed.embedding && typeof parsed.embedding === "object" && texts.length === 1
+        ? [parsed.embedding]
+        : null;
+
+    if (!rawEmbeddings || rawEmbeddings.length !== texts.length) {
       throw new AiProviderError("AI_PROVIDER_INVALID_RESPONSE");
     }
 
-    return parsed.embeddings.map((item, index) => {
+    return rawEmbeddings.map((item, index) => {
       if (
+        !item ||
+        typeof item !== "object" ||
         !Array.isArray(item.values) ||
         item.values.length === 0 ||
         item.values.some((value) => typeof value !== "number" || !Number.isFinite(value))

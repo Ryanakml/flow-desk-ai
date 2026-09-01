@@ -123,6 +123,45 @@ Paragraph 3: All tenant data is isolated via Row-Level Security.`;
   });
 
   describe("GeminiEmbeddingProvider", () => {
+    it("requests and validates single Gemini embedding with real response shape", async () => {
+      const mock768Embedding = new Array<number>(768).fill(0.02);
+      const customFetcher = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            embedding: { values: mock768Embedding }
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
+      );
+      const provider = new GeminiEmbeddingProvider({
+        apiKey: "test-gemini-key-not-a-secret",
+        customFetcher,
+        model: "gemini-embedding-001"
+      });
+
+      const results = await provider.generateEmbeddings(["single document"]);
+
+      expect(results).toHaveLength(1);
+      expect(results[0]?.embedding).toHaveLength(1536);
+      expect(results[0]?.embedding.slice(0, 768)).toEqual(mock768Embedding);
+      expect(results[0]?.embedding.slice(768)).toEqual(new Array<number>(768).fill(0));
+      expect(results[0]?.tokenCount).toBe(Math.ceil("single document".length / 4));
+
+      const [url, init] = customFetcher.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent"
+      );
+      expect((init.headers as Record<string, string>)["x-goog-api-key"]).toBe(
+        "test-gemini-key-not-a-secret"
+      );
+      const requestBody = JSON.parse(init.body as string) as {
+        content: { parts: Array<{ text: string }> };
+      };
+      expect(requestBody).toEqual({
+        content: { parts: [{ text: "single document" }] }
+      });
+    });
+
     it("requests and validates 1536d Gemini batch embeddings", async () => {
       const mock768Embedding = new Array<number>(768).fill(0.01);
       const customFetcher = vi.fn().mockResolvedValue(
