@@ -113,6 +113,7 @@ describe("runInTenantTransaction nested client reuse", () => {
     expect(mockPoolClient.connect).not.toHaveBeenCalled();
     expect(mockPoolClient.release).toHaveBeenCalledTimes(1);
     expect(queryLog).toContain("BEGIN");
+    expect(queryLog).toContain("SET LOCAL search_path = flowdesk, public");
     expect(queryLog).toContain("COMMIT");
   });
 });
