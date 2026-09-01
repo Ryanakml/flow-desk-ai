@@ -30,11 +30,30 @@ import {
   type MessageRecord
 } from "@flowdesk/db";
 import { calculateServiceWindow } from "@flowdesk/domain";
+import { currentRequestContext } from "@flowdesk/observability";
 import { createRequireAuthMiddleware } from "./auth.js";
 import { createRequireOrgPermissionMiddleware } from "./organizations.js";
 
 export interface BotRouterOptions {
   db: DbClient;
+  logger?: {
+    error: (context: Record<string, unknown>, message: string) => void;
+    info?: (context: Record<string, unknown>, message: string) => void;
+    warn?: (context: Record<string, unknown>, message: string) => void;
+  };
+  logError?: (event: {
+    requestId: string;
+    correlationId: string;
+    organizationId?: string;
+    conversationId?: string;
+    errorName: string;
+    errorMessage: string;
+    errorCode?: string;
+    errorConstraint?: string;
+    errorDetail?: string;
+    stack?: string;
+    [key: string]: unknown;
+  }) => void;
 }
 
 function getParam(params: Record<string, string | string[] | undefined>, key: string): string {
@@ -345,6 +364,54 @@ export function createBotRouter(options: BotRouterOptions): Router {
           "A customer message is required before generating a draft."
         );
       }
+
+      const requestId =
+        response.getHeader("x-request-id")?.toString() ??
+        request.header("x-request-id") ??
+        currentRequestContext()?.requestId ??
+        "unknown";
+      const correlationId =
+        request.header("x-correlation-id") ??
+        currentRequestContext()?.correlationId ??
+        requestId;
+      const organizationId = getParam(request.params, "orgId");
+      const conversationId = getParam(request.params, "conversationId");
+
+      const dbErr = error as Error & {
+        code?: unknown;
+        detail?: unknown;
+        constraint?: unknown;
+        schema?: unknown;
+        table?: unknown;
+      };
+
+      const errorPayload = {
+        requestId,
+        correlationId,
+        organizationId,
+        conversationId,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+        errorMessage: error instanceof Error ? error.message : String(error),
+        ...(error instanceof Error && error.stack ? { stack: error.stack } : {}),
+        ...(typeof dbErr?.code === "string" ? { errorCode: dbErr.code, pgCode: dbErr.code } : {}),
+        ...(typeof dbErr?.detail === "string"
+          ? { errorDetail: dbErr.detail, pgDetail: dbErr.detail }
+          : {}),
+        ...(typeof dbErr?.constraint === "string"
+          ? { errorConstraint: dbErr.constraint, pgConstraint: dbErr.constraint }
+          : {})
+      };
+
+      if (options.logger?.error) {
+        options.logger.error(errorPayload, "bot.draft.enqueue_failed");
+      } else if (options.logError) {
+        options.logError(errorPayload);
+      } else {
+        process.stderr.write(
+          `${JSON.stringify({ level: "error", msg: "bot.draft.enqueue_failed", ...errorPayload })}\n`
+        );
+      }
+
       return sendProblem(
         response,
         500,

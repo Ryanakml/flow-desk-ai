@@ -602,4 +602,64 @@ describe("Bot Configuration & AI Draft Generation API", () => {
     expect(body.organizationId).toBe("org1");
     expect(body.emergencyDisabled).toBe(true);
   });
+
+  it("logs structured error details when draft enqueue transaction fails", async () => {
+    const db = createMockDb();
+    const originalQuery = db.query.bind(db);
+    db.query = (async (sql: string, params?: unknown[]) => {
+      if (sql.includes("INSERT INTO flowdesk.bot_runs")) {
+        const error = new Error("Database transaction constraint violation") as Error & {
+          code: string;
+          detail: string;
+          constraint: string;
+        };
+        error.code = "23505";
+        error.detail = "Key (organization_id, conversation_id)=(org1, c1) already exists.";
+        error.constraint = "bot_runs_pkey";
+        throw error;
+      }
+      return originalQuery(sql, params);
+    }) as typeof db.query;
+
+    const loggedErrors: Array<Record<string, unknown>> = [];
+    const app = createApiApp({
+      service: "api",
+      version: "dev",
+      gitSha: "dev",
+      environment: "local",
+      auth: { db, config },
+      logError: (event) => {
+        loggedErrors.push(event);
+      }
+    });
+
+    const cookie = serializeSessionCookie("bot-test-token-12345", false);
+    const res = (await request(app)
+      .post("/api/v1/organizations/org1/bot/draft/c1")
+      .set("Cookie", cookie)
+      .set("x-request-id", "req-test-123")
+      .set("x-correlation-id", "corr-test-456")) as unknown as {
+      status: number;
+      body: { code?: string; detail?: string };
+    };
+
+    expect(res.status).toBe(500);
+    expect(res.body).toMatchObject({
+      code: "INTERNAL_ERROR",
+      detail: "Failed to queue the AI draft."
+    });
+
+    expect(loggedErrors.length).toBeGreaterThan(0);
+    const logged = loggedErrors[0]!;
+    expect(logged).toMatchObject({
+      requestId: "req-test-123",
+      correlationId: "corr-test-456",
+      organizationId: "org1",
+      conversationId: "c1",
+      errorMessage: "Database transaction constraint violation",
+      errorCode: "23505",
+      errorConstraint: "bot_runs_pkey",
+      errorDetail: "Key (organization_id, conversation_id)=(org1, c1) already exists."
+    });
+  });
 });
