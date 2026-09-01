@@ -254,7 +254,8 @@ describe("M4 Knowledge Base & Vector Database Repository", () => {
     expect(query).toHaveBeenLastCalledWith(expect.stringContaining("UPDATE flowdesk.bot_runs"), [
       "approved",
       "user-123",
-      botRunId
+      botRunId,
+      "{}"
     ]);
   });
 });

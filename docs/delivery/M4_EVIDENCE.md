@@ -51,7 +51,8 @@ No inbound event automatically creates or sends an AI response. The persisted bo
   no evidence without chat, stale knowledge versions, output instruction leakage, and retryable
   provider failure.
 - API tests cover durable enqueue without provider calls, restore after refresh, permission checks,
-  atomic approval, and approval replay returning the same outbound message.
+  closed-conversation and emergency-stop approval blocks, atomic approval, final-content hash audit
+  metadata, and approval replay returning the same outbound message.
 - Browser tests cover worker processing state, restored draft content, and explicit approval.
 - Database integration includes migration replay, forced RLS, tenant A/B negative reads, active-run
   dedupe, and the security-definer claim boundary.

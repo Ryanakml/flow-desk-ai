@@ -74,6 +74,7 @@ Run each case in a disposable local organization:
 | Worker interruption | Stop worker after claim, wait past the lease, restart                   | lease recovery; at most one active run                                       |
 | Knowledge changes   | Re-index a source after queueing but before draft completion            | old run becomes `stale`; regenerate against the new version                  |
 | Emergency stop      | Enable kill switch while a run is queued                                | worker records `off`; no provider or outbound call                           |
+| Closed conversation | Close a conversation after draft completion, then attempt approval      | approval is rejected; no message or outbound intent                          |
 | Approval replay     | Submit the same approved run twice                                      | both requests resolve to the same outbound message                           |
 
 ## 4. Staging real-provider proof

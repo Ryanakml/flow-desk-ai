@@ -712,7 +712,8 @@ export async function searchDocumentChunks(
 
 export async function getBotConfig(
   db: DbClient,
-  organizationId: string
+  organizationId: string,
+  options?: { forShare?: boolean }
 ): Promise<BotConfig | null> {
   const res = await db.query<{
     id: string;
@@ -731,7 +732,8 @@ export async function getBotConfig(
     updated_at: Date;
   }>(
     `SELECT * FROM flowdesk.bot_configs
-     WHERE organization_id = $1`,
+     WHERE organization_id = $1
+     ${options?.forShare ? "FOR SHARE" : ""}`,
     [organizationId]
   );
 
@@ -1148,15 +1150,17 @@ export async function updateBotRunAction(
     botRunId: string;
     action: OperatorAction;
     userId?: string | null;
+    metadata?: Record<string, unknown>;
   }
 ): Promise<boolean> {
   const result = await db.query(
     `UPDATE flowdesk.bot_runs
      SET operator_action = $1, operator_action_at = clock_timestamp(), operator_user_id = $2,
+         metadata = metadata || $4::jsonb,
          updated_at = clock_timestamp()
      WHERE id = $3 AND status = 'completed' AND operator_action IS NULL
      RETURNING id`,
-    [input.action, input.userId ?? null, input.botRunId]
+    [input.action, input.userId ?? null, input.botRunId, JSON.stringify(input.metadata ?? {})]
   );
   return Boolean(result.rows[0]);
 }

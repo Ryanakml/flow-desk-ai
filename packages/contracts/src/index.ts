@@ -905,7 +905,8 @@ export type GenerateBotDraftResponse = z.infer<typeof GenerateBotDraftResponseSc
 export const BotDraftActionRequestSchema = z
   .object({
     action: z.enum(["approved", "edited", "rejected"]),
-    editedContent: z.string().trim().min(1).max(4000).optional()
+    editedContent: z.string().trim().min(1).max(4000).optional(),
+    rejectionReason: z.enum(["not_helpful", "incorrect", "unsafe", "other"]).optional()
   })
   .superRefine((value, context) => {
     if (value.action === "edited" && !value.editedContent) {
@@ -920,6 +921,13 @@ export const BotDraftActionRequestSchema = z
         code: z.ZodIssueCode.custom,
         path: ["editedContent"],
         message: "editedContent is only accepted for an edited draft"
+      });
+    }
+    if (value.action !== "rejected" && value.rejectionReason !== undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["rejectionReason"],
+        message: "rejectionReason is only accepted for a rejected draft"
       });
     }
   });

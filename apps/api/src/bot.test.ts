@@ -40,6 +40,7 @@ function createMockDb(): DbClient {
   const botConfigs = new Map<string, MockBotConfigRow>();
   const botRuns = new Map<string, Record<string, unknown>>();
   const outboundMessages = new Map<string, Record<string, unknown>>();
+  let conversationStatus: "open" | "closed" = "open";
 
   users.set("u1", {
     id: "u1",
@@ -86,6 +87,10 @@ function createMockDb(): DbClient {
           }
         ];
       }
+      return { rows: [] };
+    }
+    if (sql === "TEST_CLOSE_CONVERSATION") {
+      conversationStatus = "closed";
       return { rows: [] };
     }
     if (sql.includes("INSERT INTO flowdesk.bot_configs")) {
@@ -158,7 +163,7 @@ function createMockDb(): DbClient {
             channelId: "ch1",
             customerPhone: "+628123456789",
             customerName: "Customer",
-            status: "open",
+            status: conversationStatus,
             priority: "normal",
             assignedToUserId: null,
             queueId: null,
@@ -513,6 +518,63 @@ describe("Bot Configuration & AI Draft Generation API", () => {
     expect(firstApproval.body.message.content).toContain("Garansi resmi");
     expect(replay.status).toBe(201);
     expect(replay.body.message.id).toBe(firstApproval.body.message.id);
+  });
+
+  it("blocks approval when the conversation was closed after draft generation", async () => {
+    const db = createMockDb();
+    const app = createApiApp({
+      service: "api",
+      version: "dev",
+      gitSha: "dev",
+      environment: "local",
+      auth: { db, config }
+    });
+    const cookie = serializeSessionCookie("bot-test-token-12345", false);
+    const queued = (await request(app)
+      .post("/api/v1/organizations/org1/bot/draft/c1")
+      .set("Cookie", cookie)) as unknown as { body: { runId: string } };
+    await db.query("TEST_COMPLETE_BOT_RUN", [queued.body.runId]);
+    await db.query("TEST_CLOSE_CONVERSATION");
+
+    const approval = (await request(app)
+      .post(`/api/v1/organizations/org1/bot/draft-runs/${queued.body.runId}/action`)
+      .set("Cookie", cookie)
+      .send({ action: "approved" })) as unknown as {
+      status: number;
+      body: { code: string };
+    };
+    expect(approval.status).toBe(409);
+    expect(approval.body.code).toBe("CONVERSATION_CLOSED");
+  });
+
+  it("blocks approval when emergency stop activates after draft generation", async () => {
+    const db = createMockDb();
+    const app = createApiApp({
+      service: "api",
+      version: "dev",
+      gitSha: "dev",
+      environment: "local",
+      auth: { db, config }
+    });
+    const cookie = serializeSessionCookie("bot-test-token-12345", false);
+    const queued = (await request(app)
+      .post("/api/v1/organizations/org1/bot/draft/c1")
+      .set("Cookie", cookie)) as unknown as { body: { runId: string } };
+    await db.query("TEST_COMPLETE_BOT_RUN", [queued.body.runId]);
+    await request(app)
+      .post("/api/v1/organizations/org1/bot/emergency-stop")
+      .set("Cookie", cookie)
+      .send({ enabled: true });
+
+    const approval = (await request(app)
+      .post(`/api/v1/organizations/org1/bot/draft-runs/${queued.body.runId}/action`)
+      .set("Cookie", cookie)
+      .send({ action: "approved" })) as unknown as {
+      status: number;
+      body: { code: string };
+    };
+    expect(approval.status).toBe(409);
+    expect(approval.body.code).toBe("BOT_DISABLED");
   });
 
   it("triggers emergency stop for organization bot", async () => {

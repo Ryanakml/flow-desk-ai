@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Router, type Response } from "express";
 import {
   BotDraftActionRequestSchema,
@@ -382,7 +383,8 @@ export function createBotRouter(options: BotRouterOptions): Router {
           await updateBotRunAction(db, {
             botRunId: run.id,
             action: "rejected",
-            userId: request.user!.id
+            userId: request.user!.id,
+            metadata: { rejectionReason: parsed.data.rejectionReason ?? "unspecified" }
           });
           await recordAuditEvent(db, {
             organizationId,
@@ -394,14 +396,23 @@ export function createBotRouter(options: BotRouterOptions): Router {
           });
           return { kind: "rejected" as const, run: (await getBotRunById(db, run.id))! };
         }
+        if (conversation.conversation.status === "closed") {
+          return { kind: "conversation_closed" as const };
+        }
+        const currentConfig = await getBotConfig(db, organizationId, { forShare: true });
+        if (currentConfig?.emergencyDisabled) return { kind: "bot_disabled" as const };
         if (!calculateServiceWindow(conversation.conversation.lastInboundAt).isOpen) {
           return { kind: "window_closed" as const };
         }
         const action = parsed.data.action === "edited" ? "edited" : "approved";
+        const finalContent = parsed.data.editedContent ?? run.suggestedContent;
         const claimed = await updateBotRunAction(db, {
           botRunId: run.id,
           action,
-          userId: request.user!.id
+          userId: request.user!.id,
+          metadata: {
+            finalContentHash: createHash("sha256").update(finalContent, "utf8").digest("hex")
+          }
         });
         if (!claimed) {
           const concurrent = await getOutboundMessageByBotRun(db, organizationId, run.id);
@@ -413,7 +424,7 @@ export function createBotRouter(options: BotRouterOptions): Router {
           organizationId,
           conversationId: run.conversationId,
           senderUserId: request.user!.id,
-          content: parsed.data.editedContent ?? run.suggestedContent,
+          content: finalContent,
           correlationId: response.getHeader("x-request-id")?.toString(),
           metadata: { aiBotRunId: run.id, aiDraftAction: action }
         });
@@ -445,6 +456,24 @@ export function createBotRouter(options: BotRouterOptions): Router {
           "DRAFT_STALE",
           "Draft is stale",
           "A newer customer message makes this draft unsafe to send."
+        );
+      }
+      if (result.kind === "conversation_closed") {
+        return sendProblem(
+          response,
+          409,
+          "CONVERSATION_CLOSED",
+          "Conversation closed",
+          "A closed conversation cannot receive an approved AI draft."
+        );
+      }
+      if (result.kind === "bot_disabled") {
+        return sendProblem(
+          response,
+          409,
+          "BOT_DISABLED",
+          "AI assistant disabled",
+          "Emergency stop is active, so this draft cannot be sent."
         );
       }
       if (result.kind === "not_sendable") {
