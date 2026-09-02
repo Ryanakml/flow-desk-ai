@@ -1,6 +1,6 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "globalDependencies": ["infra/deploy/digitalocean/compose.yaml"],
+  "globalDependencies": ["infra/deploy/single-host/compose.yaml"],
   "tasks": {
     "build": { "dependsOn": ["^build"], "outputs": ["dist/**"] },
     "dev": { "dependsOn": ["^build"], "cache": false, "persistent": true },

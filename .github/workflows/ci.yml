@@ -48,13 +48,11 @@ jobs:
       - run: node scripts/scan-secrets.mjs
       - name: Validate staging deployment health configuration
         run: |
-          bash -n infra/deploy/digitalocean/deploy.sh
-          bash -n infra/deploy/digitalocean/health-check.sh
-          bash -n infra/deploy/digitalocean/test-health-check.sh
-          ./infra/deploy/digitalocean/test-health-check.sh
+          bash -n infra/deploy/single-host/*.sh
+          ./infra/deploy/single-host/test-health-check.sh
           IMAGE_TAG=0000000000000000000000000000000000000000 \
-            docker compose --env-file infra/deploy/digitalocean/environment.example \
-            -f infra/deploy/digitalocean/compose.yaml config -q
+            docker compose --env-file infra/deploy/single-host/environment.example \
+            -f infra/deploy/single-host/compose.yaml config -q
       - name: Deliberate failure probe
         if: ${{ inputs.run_failure_probe == true }}
         run: exit 42
@@ -208,35 +206,38 @@ jobs:
         env:
           DEPLOY_HOST: ${{ vars.STAGING_HOST }}
           DEPLOY_USER: ${{ vars.STAGING_USER }}
+          DEPLOY_PORT: ${{ vars.STAGING_SSH_PORT || '22' }}
         run: |
           release_dir=/opt/flowdesk/releases/${GITHUB_SHA}
-          ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "mkdir -p '${release_dir}'"
-          scp \
-            infra/deploy/digitalocean/compose.yaml \
-            infra/deploy/digitalocean/Caddyfile \
-            infra/deploy/digitalocean/provision-runtime.sql \
-            infra/deploy/digitalocean/deploy.sh \
-            infra/deploy/digitalocean/health-check.sh \
-            infra/deploy/digitalocean/diagnose.sh \
+          ssh -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" "mkdir -p '${release_dir}'"
+          scp -P "${DEPLOY_PORT}" \
+            infra/deploy/single-host/compose.yaml \
+            infra/deploy/single-host/Caddyfile \
+            infra/deploy/single-host/provision-runtime.sql \
+            infra/deploy/single-host/deploy.sh \
+            infra/deploy/single-host/health-check.sh \
+            infra/deploy/single-host/diagnose.sh \
             "${DEPLOY_USER}@${DEPLOY_HOST}:${release_dir}/"
       - name: Deploy with migration, health gate, and rollback
         env:
           DEPLOY_HOST: ${{ vars.STAGING_HOST }}
           DEPLOY_USER: ${{ vars.STAGING_USER }}
+          DEPLOY_PORT: ${{ vars.STAGING_SSH_PORT || '22' }}
           GHCR_TOKEN: ${{ github.token }}
         run: |
           cleanup_registry_login() {
-            ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "docker logout ghcr.io >/dev/null 2>&1 || true"
+            ssh -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" "docker logout ghcr.io >/dev/null 2>&1 || true"
           }
           trap cleanup_registry_login EXIT
-          printf '%s' "$GHCR_TOKEN" | ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "docker login ghcr.io --username '${GITHUB_ACTOR}' --password-stdin"
-          ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "cd '/opt/flowdesk/releases/${GITHUB_SHA}' && chmod 0750 deploy.sh && ./deploy.sh '${GITHUB_SHA}'"
+          printf '%s' "$GHCR_TOKEN" | ssh -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" "docker login ghcr.io --username '${GITHUB_ACTOR}' --password-stdin"
+          ssh -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" "cd '/opt/flowdesk/releases/${GITHUB_SHA}' && chmod 0750 deploy.sh && ./deploy.sh '${GITHUB_SHA}'"
       - name: Public smoke test
         env:
           DEPLOY_HOST: ${{ vars.STAGING_HOST }}
           DEPLOY_USER: ${{ vars.STAGING_USER }}
+          DEPLOY_PORT: ${{ vars.STAGING_SSH_PORT || '22' }}
         run: |
-          public_base_url=$(ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "sed -n 's/^PUBLIC_BASE_URL=//p' /opt/flowdesk/shared/staging.env | head -n 1")
+          public_base_url=$(ssh -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" "sed -n 's/^PUBLIC_BASE_URL=//p' /opt/flowdesk/shared/staging.env | head -n 1")
           if [[ ! ${public_base_url} =~ ^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?$ ]]; then
             echo "staging PUBLIC_BASE_URL must be a valid HTTPS origin" >&2
             exit 1

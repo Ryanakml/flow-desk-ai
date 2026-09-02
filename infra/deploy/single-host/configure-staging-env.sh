@@ -30,7 +30,13 @@ if [[ ${#webhook_app_secret} -lt 16 || ${webhook_app_secret} == replace-with-* ]
 fi
 
 temporary_file=$(mktemp /opt/flowdesk/shared/staging.env.XXXXXX)
+cleanup_temporary_file() {
+  rm -f "${temporary_file}"
+}
+trap cleanup_temporary_file EXIT
 chmod 0600 "${temporary_file}"
+environment_owner=$(stat -c '%U' /opt/flowdesk/shared)
+environment_group=$(stat -c '%G' /opt/flowdesk/shared)
 encryption_key=$(openssl rand -hex 24)
 postgres_password=$(openssl rand -hex 24)
 runtime_password=$(openssl rand -hex 24)
@@ -77,6 +83,7 @@ printf '%s\n' \
   "AUTH_COOKIE_SECURE=false" \
   "LOG_LEVEL=info" > "${temporary_file}"
 
-chown flowdesk:flowdesk "${temporary_file}"
+chown "${environment_owner}:${environment_group}" "${temporary_file}"
 mv "${temporary_file}" "${environment_file}"
+trap - EXIT
 echo "created ${environment_file} with mode 0600"

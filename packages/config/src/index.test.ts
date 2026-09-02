@@ -243,7 +243,7 @@ describe("loadWhatsAppGraphApiConfig", () => {
 
 describe("docker compose deployment contract", () => {
   it("includes ENCRYPTION_KEY under x-app-environment in staging compose file", () => {
-    const composePath = path.resolve(__dirname, "../../../infra/deploy/digitalocean/compose.yaml");
+    const composePath = path.resolve(__dirname, "../../../infra/deploy/single-host/compose.yaml");
     const composeContent = fs.readFileSync(composePath, "utf-8");
     expect(composeContent).toMatch(
       /x-app-environment:[\s\S]*?ENCRYPTION_KEY:\s*\$\{ENCRYPTION_KEY/
@@ -251,7 +251,7 @@ describe("docker compose deployment contract", () => {
   });
 
   it("passes the same Graph API URL to API and worker through shared environment", () => {
-    const composePath = path.resolve(__dirname, "../../../infra/deploy/digitalocean/compose.yaml");
+    const composePath = path.resolve(__dirname, "../../../infra/deploy/single-host/compose.yaml");
     const composeContent = fs.readFileSync(composePath, "utf-8");
     const sharedEnvironment = composeContent.match(
       /x-app-environment:[\s\S]*?x-api-meta-environment:/
@@ -260,7 +260,7 @@ describe("docker compose deployment contract", () => {
   });
 
   it("passes AI configuration only to the worker and defaults staging AI to disabled", () => {
-    const composePath = path.resolve(__dirname, "../../../infra/deploy/digitalocean/compose.yaml");
+    const composePath = path.resolve(__dirname, "../../../infra/deploy/single-host/compose.yaml");
     const composeContent = fs.readFileSync(composePath, "utf-8");
     const sharedEnvironment = composeContent.match(
       /x-app-environment:[\s\S]*?x-api-meta-environment:/
