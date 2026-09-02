@@ -2,6 +2,8 @@ name: Audit staging hosts
 
 on:
   workflow_dispatch:
+  push:
+    branches: [chore/aws-ec2-single-host]
 
 permissions:
   contents: read
