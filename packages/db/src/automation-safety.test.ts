@@ -82,6 +82,7 @@ describe("automation safety controls", () => {
 
   it("cancels active AUTO runs and queued bot outbound work", async () => {
     const sql: string[] = [];
+    const now = new Date();
     const db = {
       async query(statement: string) {
         await Promise.resolve();
@@ -89,6 +90,14 @@ describe("automation safety controls", () => {
         if (statement.includes("UPDATE flowdesk.bot_runs")) return result([], 2);
         if (statement.includes("UPDATE flowdesk.messages AS message")) return result([], 1);
         if (statement.includes("UPDATE flowdesk.outbound_intents")) return result([], 1);
+        if (statement.includes("INSERT INTO flowdesk.audit_logs")) {
+          return result([
+            {
+              id: "50000000-0000-4000-8000-000000000001",
+              occurred_at: now
+            }
+          ]);
+        }
         return result([], 1);
       }
     } as unknown as DbClient;
@@ -103,5 +112,6 @@ describe("automation safety controls", () => {
     expect(cancelled).toEqual({ runsCancelled: 2, messagesCancelled: 1 });
     expect(sql.some((statement) => statement.includes("status = 'cancelled'"))).toBe(true);
     expect(sql.some((statement) => statement.includes("intent.state = 'queued'"))).toBe(true);
+    expect(sql.some((statement) => statement.includes("INSERT INTO flowdesk.audit_logs"))).toBe(true);
   });
 });
