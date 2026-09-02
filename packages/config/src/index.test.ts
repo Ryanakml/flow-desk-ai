@@ -187,9 +187,24 @@ describe("loadWebhookConfig", () => {
 });
 
 describe("loadMetaEmbeddedSignupConfig", () => {
-  it("is disabled until every server-side platform credential is configured", () => {
+  it("allows complete platform Meta credentials while Embedded Signup remains disabled", () => {
     expect(loadMetaEmbeddedSignupConfig({})).toBeUndefined();
+    expect(
+      loadMetaEmbeddedSignupConfig({
+        META_APP_ID: "app-id",
+        META_APP_SECRET: "app-secret",
+        META_SYSTEM_USER_ACCESS_TOKEN: "system-user-token",
+        META_SYSTEM_USER_ID: "system-user-id",
+        META_ADMIN_SYSTEM_USER_ACCESS_TOKEN: "admin-system-user-token"
+      })
+    ).toBeUndefined();
     expect(() => loadMetaEmbeddedSignupConfig({ META_APP_ID: "app-id" })).toThrow();
+  });
+
+  it("rejects an Embedded Signup config ID without complete platform credentials", () => {
+    expect(() =>
+      loadMetaEmbeddedSignupConfig({ META_EMBEDDED_SIGNUP_CONFIG_ID: "config-id" })
+    ).toThrow();
   });
 
   it("treats deployment placeholders as disabled instead of usable credentials", () => {
