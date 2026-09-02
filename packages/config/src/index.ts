@@ -272,19 +272,29 @@ const metaEmbeddedSignupConfigSchema = z
     META_GRAPH_API_BASE_URL: z.string().url().default(DEFAULT_META_GRAPH_API_BASE_URL)
   })
   .superRefine((config, context) => {
-    const configured = [
+    const platformCredentials = [
       config.META_APP_ID,
       config.META_APP_SECRET,
-      config.META_EMBEDDED_SIGNUP_CONFIG_ID,
       config.META_SYSTEM_USER_ACCESS_TOKEN,
       config.META_SYSTEM_USER_ID,
       config.META_ADMIN_SYSTEM_USER_ACCESS_TOKEN
-    ].filter(Boolean).length;
-    if (configured !== 0 && configured !== 6) {
+    ];
+    const configuredPlatformCredentials = platformCredentials.filter(Boolean).length;
+
+    if (configuredPlatformCredentials !== 0 && configuredPlatformCredentials !== 5) {
       context.addIssue({
         code: "custom",
         message:
-          "META_APP_ID, META_APP_SECRET, META_EMBEDDED_SIGNUP_CONFIG_ID, META_SYSTEM_USER_ACCESS_TOKEN, META_SYSTEM_USER_ID, and META_ADMIN_SYSTEM_USER_ACCESS_TOKEN must be configured together"
+          "META_APP_ID, META_APP_SECRET, META_SYSTEM_USER_ACCESS_TOKEN, META_SYSTEM_USER_ID, and META_ADMIN_SYSTEM_USER_ACCESS_TOKEN must be configured together"
+      });
+    }
+
+    if (config.META_EMBEDDED_SIGNUP_CONFIG_ID && configuredPlatformCredentials !== 5) {
+      context.addIssue({
+        code: "custom",
+        path: ["META_EMBEDDED_SIGNUP_CONFIG_ID"],
+        message:
+          "META_EMBEDDED_SIGNUP_CONFIG_ID requires the platform Meta credentials to be configured"
       });
     }
   })
