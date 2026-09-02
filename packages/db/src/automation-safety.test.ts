@@ -10,6 +10,7 @@ function result<T>(rows: T[], rowCount = rows.length) {
   return { rows, rowCount, command: "SELECT", oid: 0, fields: [] };
 }
 
+// These tests guard the durable DB safety boundary used by both AUTO creation and dispatch.
 describe("automation safety controls", () => {
   it("resolves the active scoped safety control", async () => {
     const calls: Array<{ sql: string; params?: unknown[] }> = [];
