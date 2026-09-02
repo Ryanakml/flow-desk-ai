@@ -48,9 +48,7 @@ jobs:
       - run: node scripts/scan-secrets.mjs
       - name: Validate staging deployment health configuration
         run: |
-          bash -n infra/deploy/single-host/deploy.sh
-          bash -n infra/deploy/single-host/health-check.sh
-          bash -n infra/deploy/single-host/test-health-check.sh
+          bash -n infra/deploy/single-host/*.sh
           ./infra/deploy/single-host/test-health-check.sh
           IMAGE_TAG=0000000000000000000000000000000000000000 \
             docker compose --env-file infra/deploy/single-host/environment.example \
