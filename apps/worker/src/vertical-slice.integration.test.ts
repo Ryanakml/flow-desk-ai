@@ -1,11 +1,16 @@
 import { randomUUID } from "node:crypto";
 import {
   createChannel,
+  createMessage,
   createOutboundMessageWithOutbox,
+  enqueueBotDraftRun,
+  findOrCreateConversation,
+  finishBotDraftRun,
   getConversationById,
   listMessagesByConversation,
   recordWebhookEvent,
-  runInTenantTransaction
+  runInTenantTransaction,
+  upsertBotConfig
 } from "@flowdesk/db";
 import { FakeWhatsAppProvider } from "@flowdesk/providers";
 import { encryptWhatsAppChannelCredentials } from "@flowdesk/security";
@@ -13,6 +18,7 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { processOutboxOutboundBatch } from "./dispatch.js";
 import { processWebhookPayload } from "./normalization.js";
+import { processCompletedAutoRun } from "./auto-send.js";
 
 const connectionString = process.env["DATABASE_MIGRATOR_URL"];
 const integration = connectionString ? describe : describe.skip;
@@ -212,5 +218,179 @@ integration("M2 vertical slice against PostgreSQL RLS", () => {
       })
     );
     expect(tenantBView).toEqual({ conversation: null, messages: [] });
+  });
+});
+
+integration("M5 AUTO post-generation runtime against PostgreSQL RLS (#178)", () => {
+  it("keeps OFF/DRAFT/no-evidence fail-closed and sends one eligible AUTO result exactly once", async () => {
+    if (!pool) throw new Error("integration pool unavailable");
+
+    const provider = new FakeWhatsAppProvider();
+    const testId = randomUUID();
+    const channel = await runInTenantTransaction(pool, { organizationId: organizationA }, (db) =>
+      createChannel(db, {
+        organizationId: organizationA,
+        name: `AUTO regression ${testId}`,
+        phoneNumberId: `phone-auto-${testId}`,
+        wabaId: `waba-auto-${testId}`,
+        encryptedCredentials: encryptWhatsAppChannelCredentials(
+          {
+            accessToken: "fake-auto-access-token",
+            phoneNumberId: `phone-auto-${testId}`,
+            wabaId: `waba-auto-${testId}`
+          },
+          encryptionKey
+        ),
+        status: "active"
+      })
+    );
+
+    const setupCompletedRun = async (
+      mode: "off" | "draft" | "auto",
+      status: "completed" | "no_evidence",
+      suffix: string
+    ) =>
+      runInTenantTransaction(pool, { organizationId: organizationA }, async (db) => {
+        const config = await upsertBotConfig(db, {
+          organizationId: organizationA,
+          mode,
+          confidenceThreshold: 0.9,
+          emergencyDisabled: false
+        });
+        const conversation = await findOrCreateConversation(db, {
+          organizationId: organizationA,
+          channelId: channel.id,
+          customerPhone: `+62812${suffix}`,
+          customerName: `AUTO ${suffix}`
+        });
+        const inbound = await createMessage(db, {
+          organizationId: organizationA,
+          conversationId: conversation.id,
+          channelId: channel.id,
+          direction: "inbound",
+          senderType: "customer",
+          providerMessageId: `wamid.${suffix}.${testId}`,
+          content: "Apakah garansi berlaku satu tahun?",
+          status: "delivered",
+          sentAt: new Date()
+        });
+        const run = await enqueueBotDraftRun(db, {
+          organizationId: organizationA,
+          conversationId: conversation.id,
+          triggerMessageId: inbound.id,
+          botConfigId: config.id,
+          knowledgeVersionId: null,
+          requestedByUserId: null,
+          model: "fake-grounded-model",
+          mode,
+          configSnapshot: {
+            botConfigUpdatedAt: config.updatedAt.toISOString(),
+            confidenceThreshold: config.confidenceThreshold
+          },
+          inputMessageCreatedAt: inbound.createdAt
+        });
+        await finishBotDraftRun(db, {
+          id: run.id,
+          status,
+          ...(status === "completed"
+            ? {
+                suggestedContent: "Garansi berlaku satu tahun.",
+                citations: [
+                  {
+                    chunkId: randomUUID(),
+                    sourceTitle: "FAQ garansi",
+                    snippet: "Garansi produk berlaku selama satu tahun.",
+                    score: 0.98
+                  }
+                ],
+                confidence: 0.98
+              }
+            : { errorCode: "NO_KNOWLEDGE_EVIDENCE" })
+        });
+        return { runId: run.id, conversationId: conversation.id };
+      });
+
+    for (const scenario of [
+      { mode: "off" as const, status: "completed" as const, suffix: "1001" },
+      { mode: "draft" as const, status: "completed" as const, suffix: "1002" },
+      { mode: "auto" as const, status: "no_evidence" as const, suffix: "1003" }
+    ]) {
+      const prepared = await setupCompletedRun(scenario.mode, scenario.status, scenario.suffix);
+      const decision = await runInTenantTransaction(pool, { organizationId: organizationA }, (db) =>
+        processCompletedAutoRun(db, {
+          organizationId: organizationA,
+          runId: prepared.runId
+        })
+      );
+      expect(decision.autoSent).toBe(false);
+
+      const outboundCount = await runInTenantTransaction(
+        pool,
+        { organizationId: organizationA },
+        (db) =>
+          db.query<{ count: string }>(
+            `SELECT count(*)::text AS count FROM flowdesk.messages
+             WHERE organization_id = $1 AND conversation_id = $2 AND direction = 'outbound'`,
+            [organizationA, prepared.conversationId]
+          )
+      );
+      expect(outboundCount.rows[0]?.count).toBe("0");
+    }
+
+    const eligible = await setupCompletedRun("auto", "completed", "1004");
+    const first = await runInTenantTransaction(pool, { organizationId: organizationA }, (db) =>
+      processCompletedAutoRun(db, {
+        organizationId: organizationA,
+        runId: eligible.runId
+      })
+    );
+    const replay = await runInTenantTransaction(pool, { organizationId: organizationA }, (db) =>
+      processCompletedAutoRun(db, {
+        organizationId: organizationA,
+        runId: eligible.runId
+      })
+    );
+
+    expect(first.autoSent).toBe(true);
+    expect(replay).toMatchObject({ autoSent: true, messageId: first.messageId });
+
+    const competingWorkers = await Promise.all([
+      processOutboxOutboundBatch(pool, { provider, encryptionKey }, 10),
+      processOutboxOutboundBatch(pool, { provider, encryptionKey }, 10)
+    ]);
+    expect(competingWorkers.reduce((total, count) => total + count, 0)).toBe(1);
+    expect(provider.getSentMessages()).toHaveLength(1);
+
+    const proof = await runInTenantTransaction(pool, { organizationId: organizationA }, (db) =>
+      db.query<{
+        messages: string;
+        intents: string;
+        outbox_events: string;
+        sent_intents: string;
+      }>(
+        `SELECT
+             count(DISTINCT message.id)::text AS messages,
+             count(DISTINCT intent.id)::text AS intents,
+             count(DISTINCT event.id)::text AS outbox_events,
+             (count(DISTINCT intent.id) FILTER (WHERE intent.state = 'sent'))::text AS sent_intents
+           FROM flowdesk.messages AS message
+           LEFT JOIN flowdesk.outbound_intents AS intent
+             ON intent.organization_id = message.organization_id AND intent.message_id = message.id
+           LEFT JOIN flowdesk.outbox_events AS event
+             ON event.organization_id = message.organization_id
+            AND event.aggregate_id = message.id
+            AND event.event_type = 'message.outbound.created'
+           WHERE message.organization_id = $1
+             AND message.direction = 'outbound'
+             AND message.metadata->>'aiBotRunId' = $2`,
+        [organizationA, eligible.runId]
+      )
+    );
+    expect(proof.rows[0]).toEqual({
+      messages: "1",
+      intents: "1",
+      outbox_events: "1",
+      sent_intents: "1"
+    });
   });
 });
