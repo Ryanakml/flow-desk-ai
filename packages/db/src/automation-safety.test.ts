@@ -16,6 +16,7 @@ describe("automation safety controls", () => {
     const calls: Array<{ sql: string; params?: unknown[] }> = [];
     const db = {
       async query(sql: string, params?: unknown[]) {
+        await Promise.resolve();
         calls.push({ sql, params });
         return result([
           {
@@ -47,6 +48,7 @@ describe("automation safety controls", () => {
     const now = new Date();
     const db = {
       async query(sql: string, params?: unknown[]) {
+        await Promise.resolve();
         calls.push({ sql, params });
         return result([
           {
@@ -82,6 +84,7 @@ describe("automation safety controls", () => {
     const sql: string[] = [];
     const db = {
       async query(statement: string) {
+        await Promise.resolve();
         sql.push(statement);
         if (statement.includes("UPDATE flowdesk.bot_runs")) return result([], 2);
         if (statement.includes("UPDATE flowdesk.messages AS message")) return result([], 1);
