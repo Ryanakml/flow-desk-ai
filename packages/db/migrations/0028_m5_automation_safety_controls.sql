@@ -71,7 +71,7 @@ AS $$
   SELECT control.id, control.scope, control.reason, control.expires_at
   FROM flowdesk.automation_safety_controls AS control
   WHERE control.disabled = true
-    AND (control.expires_at IS NULL OR control.expires_at > clock_timestamp())
+    AND (control.expires_at IS NULL OR control.expires_at > now())
     AND (
       control.scope = 'global'
       OR (control.scope = 'tenant' AND control.organization_id = input_organization_id)
@@ -105,3 +105,150 @@ ALTER FUNCTION flowdesk.resolve_automation_safety(uuid, uuid, uuid, uuid) OWNER 
 REVOKE ALL ON FUNCTION flowdesk.resolve_automation_safety(uuid, uuid, uuid, uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION flowdesk.resolve_automation_safety(uuid, uuid, uuid, uuid)
   TO flowdesk_runtime, flowdesk_system, flowdesk_reporting;
+
+-- Cancel pending AUTO work inside the same transaction that records a human takeover signal.
+CREATE OR REPLACE FUNCTION flowdesk.cancel_pending_auto_for_conversation(
+  input_organization_id uuid,
+  input_conversation_id uuid,
+  input_reason text
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = flowdesk, pg_temp
+AS $$
+BEGIN
+  UPDATE flowdesk.bot_runs
+  SET status = 'cancelled',
+      error_code = 'AUTO_TAKEOVER_CANCELLED',
+      error_detail = input_reason,
+      metadata = metadata || jsonb_build_object(
+        'cancelReason', input_reason,
+        'cancelledAt', clock_timestamp()
+      ),
+      updated_at = clock_timestamp()
+  WHERE organization_id = input_organization_id
+    AND conversation_id = input_conversation_id
+    AND mode = 'auto'
+    AND status IN ('queued', 'processing', 'completed')
+    AND operator_action IS NULL;
+
+  UPDATE flowdesk.outbound_intents AS intent
+  SET state = 'failed', last_error = input_reason, updated_at = clock_timestamp()
+  FROM flowdesk.messages AS message
+  WHERE intent.organization_id = input_organization_id
+    AND message.organization_id = intent.organization_id
+    AND message.id = intent.message_id
+    AND message.conversation_id = input_conversation_id
+    AND message.sender_type = 'bot'
+    AND message.metadata ? 'aiBotRunId'
+    AND intent.state = 'queued';
+
+  UPDATE flowdesk.messages AS message
+  SET status = 'failed', error_detail = input_reason, updated_at = clock_timestamp()
+  WHERE message.organization_id = input_organization_id
+    AND message.conversation_id = input_conversation_id
+    AND message.sender_type = 'bot'
+    AND message.metadata ? 'aiBotRunId'
+    AND message.status = 'queued';
+END;
+$$;
+
+ALTER FUNCTION flowdesk.cancel_pending_auto_for_conversation(uuid, uuid, text) OWNER TO flowdesk_migrator;
+REVOKE ALL ON FUNCTION flowdesk.cancel_pending_auto_for_conversation(uuid, uuid, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION flowdesk.cancel_pending_auto_for_conversation(uuid, uuid, text)
+  TO flowdesk_runtime, flowdesk_system;
+
+CREATE OR REPLACE FUNCTION flowdesk.invalidate_auto_on_conversation_takeover()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = flowdesk, pg_temp
+AS $$
+DECLARE
+  takeover_reason text;
+BEGIN
+  IF NEW.bot_paused = true AND OLD.bot_paused IS DISTINCT FROM NEW.bot_paused THEN
+    takeover_reason := 'Conversation automation was paused by an operator.';
+  ELSIF NEW.assigned_to_user_id IS NOT NULL
+    AND OLD.assigned_to_user_id IS DISTINCT FROM NEW.assigned_to_user_id THEN
+    takeover_reason := 'Conversation was claimed or handed off to a human operator.';
+  ELSIF NEW.status IN ('resolved', 'closed') AND OLD.status IS DISTINCT FROM NEW.status THEN
+    takeover_reason := 'Conversation state no longer permits pending automation.';
+  ELSE
+    RETURN NEW;
+  END IF;
+
+  PERFORM flowdesk.cancel_pending_auto_for_conversation(
+    NEW.organization_id,
+    NEW.id,
+    takeover_reason
+  );
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS conversations_invalidate_pending_auto ON flowdesk.conversations;
+CREATE TRIGGER conversations_invalidate_pending_auto
+AFTER UPDATE OF bot_paused, assigned_to_user_id, status ON flowdesk.conversations
+FOR EACH ROW
+EXECUTE FUNCTION flowdesk.invalidate_auto_on_conversation_takeover();
+
+CREATE OR REPLACE FUNCTION flowdesk.invalidate_auto_on_manual_agent_message()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = flowdesk, pg_temp
+AS $$
+BEGIN
+  IF NEW.direction = 'outbound'
+    AND NEW.sender_type = 'agent'
+    AND NOT (NEW.metadata ? 'aiBotRunId') THEN
+    PERFORM flowdesk.cancel_pending_auto_for_conversation(
+      NEW.organization_id,
+      NEW.conversation_id,
+      'Manual agent message superseded pending automation.'
+    );
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS messages_invalidate_pending_auto ON flowdesk.messages;
+CREATE TRIGGER messages_invalidate_pending_auto
+AFTER INSERT ON flowdesk.messages
+FOR EACH ROW
+EXECUTE FUNCTION flowdesk.invalidate_auto_on_manual_agent_message();
+
+CREATE OR REPLACE FUNCTION flowdesk.invalidate_auto_on_emergency_disable()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = flowdesk, pg_temp
+AS $$
+DECLARE
+  conversation_record record;
+BEGIN
+  IF NEW.emergency_disabled = true
+    AND OLD.emergency_disabled IS DISTINCT FROM NEW.emergency_disabled THEN
+    FOR conversation_record IN
+      SELECT id
+      FROM flowdesk.conversations
+      WHERE organization_id = NEW.organization_id
+    LOOP
+      PERFORM flowdesk.cancel_pending_auto_for_conversation(
+        NEW.organization_id,
+        conversation_record.id,
+        'Tenant emergency stop disabled automation.'
+      );
+    END LOOP;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS bot_configs_invalidate_pending_auto ON flowdesk.bot_configs;
+CREATE TRIGGER bot_configs_invalidate_pending_auto
+AFTER UPDATE OF emergency_disabled ON flowdesk.bot_configs
+FOR EACH ROW
+EXECUTE FUNCTION flowdesk.invalidate_auto_on_emergency_disable();
