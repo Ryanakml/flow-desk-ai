@@ -118,7 +118,10 @@ export async function processCompletedAutoRun(
     conversationId: state.conversation_id
   });
   if (durableSafety) {
-    return deny(`Automation safety stop is active (${durableSafety.scope}): ${durableSafety.reason}`, true);
+    return deny(
+      `Automation safety stop is active (${durableSafety.scope}): ${durableSafety.reason}`,
+      true
+    );
   }
 
   if (
@@ -275,7 +278,9 @@ export async function evaluateAndProcessAutoSend(
   if (!policyResult.allowed) {
     return {
       autoSent: false,
-      reason: durableSafety ? `${policyResult.reason}: ${durableSafety.reason}` : policyResult.reason,
+      reason: durableSafety
+        ? `${policyResult.reason}: ${durableSafety.reason}`
+        : policyResult.reason,
       content: params.draftContent
     };
   }

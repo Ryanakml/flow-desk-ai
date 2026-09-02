@@ -37,15 +37,12 @@ export async function resolveAutomationSafety(
     scope: AutomationSafetyScope;
     reason: string;
     expires_at: Date | null;
-  }>(
-    `SELECT * FROM flowdesk.resolve_automation_safety($1::uuid, $2::uuid, $3::uuid, $4::uuid)`,
-    [
-      input.organizationId,
-      input.botConfigId ?? null,
-      input.channelId ?? null,
-      input.conversationId ?? null
-    ]
-  );
+  }>(`SELECT * FROM flowdesk.resolve_automation_safety($1::uuid, $2::uuid, $3::uuid, $4::uuid)`, [
+    input.organizationId,
+    input.botConfigId ?? null,
+    input.channelId ?? null,
+    input.conversationId ?? null
+  ]);
   const row = result.rows[0];
   return row
     ? { controlId: row.control_id, scope: row.scope, reason: row.reason, expiresAt: row.expires_at }
@@ -165,7 +162,11 @@ export async function cancelPendingAutomationForConversation(
     targetType: "conversation",
     targetId: input.conversationId,
     result: "allowed",
-    metadata: { reason: input.reason, runsCancelled: runs.rowCount ?? 0, messagesCancelled: messages.rowCount ?? 0 }
+    metadata: {
+      reason: input.reason,
+      runsCancelled: runs.rowCount ?? 0,
+      messagesCancelled: messages.rowCount ?? 0
+    }
   });
   return { runsCancelled: runs.rowCount ?? 0, messagesCancelled: messages.rowCount ?? 0 };
 }
