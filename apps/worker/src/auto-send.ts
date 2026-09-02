@@ -63,7 +63,8 @@ export async function processCompletedAutoRun(
             conversation.last_inbound_at,
             config.id AS config_id, config.mode AS config_mode,
             config.emergency_disabled, config.confidence_threshold,
-            config.updated_at = (run.config_snapshot->>'botConfigUpdatedAt')::timestamptz
+            date_trunc('milliseconds', config.updated_at) =
+              (run.config_snapshot->>'botConfigUpdatedAt')::timestamptz
               AS config_is_current
      FROM flowdesk.bot_runs AS run
      JOIN flowdesk.conversations AS conversation
@@ -184,8 +185,8 @@ export async function processCompletedAutoRun(
     `UPDATE flowdesk.bot_runs
      SET operator_action = 'auto_sent', operator_action_at = clock_timestamp(),
          metadata = metadata || jsonb_build_object(
-           'autoDecision', 'allowed', 'autoDecisionReason', $3,
-           'autoDecisionAt', clock_timestamp(), 'outboundMessageId', $2
+           'autoDecision', 'allowed', 'autoDecisionReason', $3::text,
+           'autoDecisionAt', clock_timestamp(), 'outboundMessageId', $2::text
          ), updated_at = clock_timestamp()
      WHERE organization_id = $1 AND id = $4 AND operator_action IS NULL`,
     [input.organizationId, message.id, policy.reason, input.runId]
