@@ -17,7 +17,7 @@ describe("automation safety controls", () => {
     const db = {
       async query(sql: string, params?: unknown[]) {
         await Promise.resolve();
-        calls.push({ sql, params });
+        calls.push(params === undefined ? { sql } : { sql, params });
         return result([
           {
             control_id: "10000000-0000-4000-8000-000000000001",
@@ -49,7 +49,7 @@ describe("automation safety controls", () => {
     const db = {
       async query(sql: string, params?: unknown[]) {
         await Promise.resolve();
-        calls.push({ sql, params });
+        calls.push(params === undefined ? { sql } : { sql, params });
         return result([
           {
             id: "10000000-0000-4000-8000-000000000002",
