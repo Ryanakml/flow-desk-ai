@@ -78,7 +78,42 @@ describe("Worker Message & Conversation Processing Pipeline (M2-06)", () => {
   const channelId = "chan-test-001";
   const phoneNumberId = "10987654321";
 
-  function createMockPipelineDb(autoMode = false) {
+  interface MockRoutingRuleInput {
+    id?: string | undefined;
+    name?: string | undefined;
+    priority?: number | undefined;
+    conditions?: Record<string, unknown> | undefined;
+    targetQueueId?: string | null | undefined;
+    targetTeamId?: string | null | undefined;
+    targetUserId?: string | null | undefined;
+    isActive?: boolean | undefined;
+  }
+
+  interface MockPipelineDbOptions {
+    autoMode?: boolean | undefined;
+    activePolicy?:
+      | {
+          id: string;
+          organization_id: string;
+          version: number;
+          status: "published" | "draft" | "archived";
+          name: string;
+          rules: Record<string, unknown>[];
+        }
+      | null
+      | undefined;
+    routingRules?: MockRoutingRuleInput[] | null | undefined;
+    failRouting?: boolean | undefined;
+  }
+
+  function createMockPipelineDb(optionsOrAutoMode: boolean | MockPipelineDbOptions = false) {
+    const opts: MockPipelineDbOptions =
+      typeof optionsOrAutoMode === "boolean" ? { autoMode: optionsOrAutoMode } : optionsOrAutoMode;
+    const autoMode = opts.autoMode ?? false;
+    const activePolicy = opts.activePolicy ?? null;
+    const routingRules = opts.routingRules ?? null;
+    const failRouting = opts.failRouting ?? false;
+
     const conversations = new Map<
       string,
       {
@@ -89,6 +124,9 @@ describe("Worker Message & Conversation Processing Pipeline (M2-06)", () => {
         customerName: string | null;
         status: string;
         version: number;
+        queue_id?: string | null;
+        team_id?: string | null;
+        assigned_to_user_id?: string | null;
       }
     >();
 
@@ -125,6 +163,21 @@ describe("Worker Message & Conversation Processing Pipeline (M2-06)", () => {
       published_at: Date | null;
     }> = [];
     const botRuns: Array<{ mode: string; triggerMessageId: string }> = [];
+    const routingLogs: Array<{
+      organizationId: string;
+      conversationId: string;
+      matchedRuleId: string | null;
+      matchedPolicyRuleId: string | null;
+      targetQueueId: string | null;
+      targetTeamId: string | null;
+      targetUserId: string | null;
+      reason: string;
+      policyId: string | null;
+      policyVersion: number | null;
+    }> = [];
+    const savepoints: string[] = [];
+    const releasedSavepoints: string[] = [];
+    const rolledBackSavepoints: string[] = [];
 
     const db = {
       async query(queryText: string, values: unknown[] = []) {
@@ -317,6 +370,130 @@ describe("Worker Message & Conversation Processing Pipeline (M2-06)", () => {
           return { rows: [], rowCount: 1, command: "UPDATE", oid: 0, fields: [] };
         }
 
+        if (sql.includes("RELEASE SAVEPOINT routing_eval")) {
+          releasedSavepoints.push("RELEASE SAVEPOINT routing_eval");
+          return { rows: [], rowCount: 0, command: "RELEASE", oid: 0, fields: [] };
+        }
+
+        if (sql.includes("ROLLBACK TO SAVEPOINT routing_eval")) {
+          rolledBackSavepoints.push("ROLLBACK TO SAVEPOINT routing_eval");
+          return { rows: [], rowCount: 0, command: "ROLLBACK", oid: 0, fields: [] };
+        }
+
+        if (sql.includes("SAVEPOINT routing_eval")) {
+          savepoints.push("SAVEPOINT routing_eval");
+          return { rows: [], rowCount: 0, command: "SAVEPOINT", oid: 0, fields: [] };
+        }
+
+        if (
+          sql.includes("FROM flowdesk.automation_policies") &&
+          sql.includes("status = 'published'")
+        ) {
+          if (failRouting) throw new Error("22P02: invalid input syntax for type uuid");
+          return activePolicy
+            ? {
+                rows: [
+                  {
+                    id: activePolicy.id,
+                    organization_id: activePolicy.organization_id,
+                    version: activePolicy.version,
+                    status: activePolicy.status,
+                    name: activePolicy.name,
+                    rules: activePolicy.rules,
+                    metadata: {},
+                    created_by_user_id: null,
+                    published_by_user_id: null,
+                    published_at: new Date(),
+                    created_at: new Date(),
+                    updated_at: new Date()
+                  }
+                ],
+                rowCount: 1,
+                command: "SELECT",
+                oid: 0,
+                fields: []
+              }
+            : { rows: [], rowCount: 0, command: "SELECT", oid: 0, fields: [] };
+        }
+
+        if (sql.includes("FROM flowdesk.routing_rules") && sql.includes("ORDER BY priority ASC")) {
+          if (failRouting) throw new Error("22P02: invalid input syntax for type uuid");
+          return routingRules
+            ? {
+                rows: routingRules.map((r, i) => ({
+                  id: r.id ?? `rule-uuid-${i}`,
+                  organization_id: orgId,
+                  name: r.name ?? `Rule ${i}`,
+                  priority: r.priority ?? 10,
+                  conditions: r.conditions ?? {},
+                  target_queue_id: r.targetQueueId ?? null,
+                  target_team_id: r.targetTeamId ?? null,
+                  target_user_id: r.targetUserId ?? null,
+                  is_active: r.isActive ?? true,
+                  created_at: new Date(),
+                  updated_at: new Date()
+                })),
+                rowCount: routingRules.length,
+                command: "SELECT",
+                oid: 0,
+                fields: []
+              }
+            : { rows: [], rowCount: 0, command: "SELECT", oid: 0, fields: [] };
+        }
+
+        if (sql.includes("INSERT INTO flowdesk.routing_logs")) {
+          if (failRouting) throw new Error("22P02: invalid input syntax for type uuid");
+          const log = {
+            organizationId: values[0] as string,
+            conversationId: values[1] as string,
+            matchedRuleId: values[2] as string | null,
+            matchedPolicyRuleId: values[3] as string | null,
+            targetQueueId: values[4] as string | null,
+            targetTeamId: values[5] as string | null,
+            targetUserId: values[6] as string | null,
+            reason: values[7] as string,
+            policyId: values[8] as string | null,
+            policyVersion: values[9] as number | null
+          };
+          routingLogs.push(log);
+          return {
+            rows: [
+              {
+                id: `log-${routingLogs.length}`,
+                organization_id: log.organizationId,
+                conversation_id: log.conversationId,
+                matched_rule_id: log.matchedRuleId,
+                matched_policy_rule_id: log.matchedPolicyRuleId,
+                target_queue_id: log.targetQueueId,
+                target_team_id: log.targetTeamId,
+                target_user_id: log.targetUserId,
+                reason: log.reason,
+                policy_id: log.policyId,
+                policy_version: log.policyVersion,
+                routed_at: new Date(),
+                decision_trace: [],
+                inputs_snapshot: {}
+              }
+            ],
+            rowCount: 1,
+            command: "INSERT",
+            oid: 0,
+            fields: []
+          };
+        }
+
+        if (sql.includes("UPDATE flowdesk.conversations SET queue_id")) {
+          const convId = values[4] as string;
+          const conv = conversations.get(convId);
+          if (conv) {
+            conv.queue_id = (values[0] as string | null) ?? conv.queue_id ?? null;
+            conv.team_id = (values[1] as string | null) ?? conv.team_id ?? null;
+            conv.assigned_to_user_id =
+              (values[2] as string | null) ?? conv.assigned_to_user_id ?? null;
+          }
+          return { rows: [], rowCount: 1, command: "UPDATE", oid: 0, fields: [] };
+        }
+
         if (sql.includes("SELECT set_config")) {
           return {
             rows: [{ set_config: values[0] }],
@@ -331,7 +508,18 @@ describe("Worker Message & Conversation Processing Pipeline (M2-06)", () => {
       }
     } as unknown as DbClient;
 
-    return { db, conversations, messages, webhookEvents, outboxEvents, botRuns };
+    return {
+      db,
+      conversations,
+      messages,
+      webhookEvents,
+      outboxEvents,
+      botRuns,
+      routingLogs,
+      savepoints,
+      releasedSavepoints,
+      rolledBackSavepoints
+    };
   }
 
   it("processes inbound message, matching conversation and creating message idempotently", async () => {
@@ -443,6 +631,155 @@ describe("Worker Message & Conversation Processing Pipeline (M2-06)", () => {
     expect(outboxEvents[0]?.published_at).not.toBeNull();
     expect(webhookEvents.get("we-batch-1")?.status).toBe("processed");
     expect(messages.size).toBe(1);
+  });
+
+  describe("M5 #180 Policy Rule ID and Routing Failure Isolation", () => {
+    it("evaluates active automation policy with string rule ID and records matched_policy_rule_id with savepoint protection", async () => {
+      const targetQueue = "00000000-0000-7000-8000-000000000099";
+      const { db, messages, conversations, botRuns, routingLogs, savepoints, releasedSavepoints } =
+        createMockPipelineDb({
+          autoMode: true,
+          activePolicy: {
+            id: "a38989b5-1007-4637-91fe-f98f4b41658f",
+            organization_id: orgId,
+            version: 1,
+            status: "published",
+            name: "WhatsApp AUTO route policy",
+            rules: [
+              {
+                id: "rule-z1wfsei",
+                name: "WhatsApp AUTO route",
+                priority: 1,
+                conditions: { botMode: "auto" },
+                targetQueueId: targetQueue,
+                targetTeamId: null,
+                targetUserId: null,
+                action: "route",
+                isActive: true
+              }
+            ]
+          }
+        });
+
+      const payload = fakeProvider.createInboundTextWebhook({
+        phoneNumberId,
+        from: "+62 812 3456 7890",
+        text: "Real WhatsApp inbound evaluation test",
+        senderName: "Budi",
+        messageId: "wamid.inbound.policy.1"
+      });
+
+      const result = await processWebhookPayload(db, {
+        organizationId: orgId,
+        rawPayload: payload
+      });
+
+      // 1. Inbound processing succeeded
+      expect(result.processedInboundCount).toBe(1);
+      expect(messages.size).toBe(1);
+      const msg = Array.from(messages.values())[0]!;
+      expect(msg.content).toBe("Real WhatsApp inbound evaluation test");
+
+      // 2. Routing log persisted correctly without UUID parsing error
+      expect(routingLogs).toHaveLength(1);
+      const log = routingLogs[0]!;
+      expect(log.matchedRuleId).toBeNull();
+      expect(log.matchedPolicyRuleId).toBe("rule-z1wfsei");
+      expect(log.policyId).toBe("a38989b5-1007-4637-91fe-f98f4b41658f");
+      expect(log.policyVersion).toBe(1);
+      expect(log.targetQueueId).toBe(targetQueue);
+
+      // 3. Conversation queue updated
+      const conv = Array.from(conversations.values())[0]!;
+      expect(conv.queue_id).toBe(targetQueue);
+
+      // 4. AUTO bot run enqueued successfully
+      expect(botRuns).toHaveLength(1);
+      expect(botRuns[0]?.mode).toBe("auto");
+
+      // 5. Savepoint lifecycle executed properly
+      expect(savepoints).toContain("SAVEPOINT routing_eval");
+      expect(releasedSavepoints).toContain("RELEASE SAVEPOINT routing_eval");
+    });
+
+    it("evaluates legacy routing rules and records matched_rule_id UUID with matched_policy_rule_id NULL", async () => {
+      const legacyRuleUuid = "00000000-0000-7000-8000-000000000088";
+      const targetQueue = "00000000-0000-7000-8000-000000000077";
+      const { db, messages, routingLogs } = createMockPipelineDb({
+        activePolicy: null,
+        routingRules: [
+          {
+            id: legacyRuleUuid,
+            name: "Legacy Support Route",
+            priority: 10,
+            conditions: {},
+            targetQueueId: targetQueue,
+            isActive: true
+          }
+        ]
+      });
+
+      const payload = fakeProvider.createInboundTextWebhook({
+        phoneNumberId,
+        from: "+62 812 3456 7890",
+        text: "Legacy rule message",
+        messageId: "wamid.inbound.legacy.1"
+      });
+
+      const result = await processWebhookPayload(db, {
+        organizationId: orgId,
+        rawPayload: payload
+      });
+
+      expect(result.processedInboundCount).toBe(1);
+      expect(messages.size).toBe(1);
+
+      expect(routingLogs).toHaveLength(1);
+      const log = routingLogs[0]!;
+      expect(log.matchedRuleId).toBe(legacyRuleUuid);
+      expect(log.matchedPolicyRuleId).toBeNull();
+      expect(log.policyId).toBeNull();
+    });
+
+    it("isolates routing persistence failure via SAVEPOINT so inbound message and bot run remain persisted (#180 defect)", async () => {
+      const { db, messages, botRuns, rolledBackSavepoints } = createMockPipelineDb({
+        autoMode: true,
+        activePolicy: {
+          id: "a38989b5-1007-4637-91fe-f98f4b41658f",
+          organization_id: orgId,
+          version: 1,
+          status: "published",
+          name: "Faulty Policy",
+          rules: [{ id: "rule-z1wfsei", name: "Faulty Rule", priority: 1, conditions: {} }]
+        },
+        failRouting: true
+      });
+
+      const payload = fakeProvider.createInboundTextWebhook({
+        phoneNumberId,
+        from: "+62 812 3456 7890",
+        text: "Message that survives routing failure",
+        messageId: "wamid.inbound.fault.1"
+      });
+
+      const result = await processWebhookPayload(db, {
+        organizationId: orgId,
+        rawPayload: payload
+      });
+
+      // Savepoint was rolled back to recover the transaction state
+      expect(rolledBackSavepoints).toContain("ROLLBACK TO SAVEPOINT routing_eval");
+
+      // Inbound message is NOT lost — persists despite routing failure!
+      expect(result.processedInboundCount).toBe(1);
+      expect(messages.size).toBe(1);
+      const msg = Array.from(messages.values())[0]!;
+      expect(msg.content).toBe("Message that survives routing failure");
+
+      // Later pipeline execution (bot draft enqueue) continues safely
+      expect(botRuns).toHaveLength(1);
+      expect(botRuns[0]?.mode).toBe("auto");
+    });
   });
 });
 

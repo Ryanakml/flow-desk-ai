@@ -35,9 +35,12 @@ import {
   rollbackPolicyVersion,
   getActivePublishedPolicy,
   getPolicyById,
-  listPolicyVersions
+  listPolicyVersions,
+  recordRoutingLogWithTrace
 } from "./automation-policy.js";
 import { createRoutingRule, listRoutingRules } from "./routing.js";
+import { findOrCreateConversation, createMessage } from "./conversations.js";
+import { createChannel } from "./channels.js";
 import type { DbClient } from "./auth.js";
 
 const executeFile = promisify(execFile);
@@ -123,7 +126,8 @@ describe("database foundation", () => {
       "0028_m5_automation_safety_controls.sql",
       "0029_m5_automation_policy_engine.sql",
       "0030_m5_auto_release_gate.sql",
-      "0031_m5_auto_release_gates_rls.sql"
+      "0031_m5_auto_release_gates_rls.sql",
+      "0032_m5_routing_logs_policy_rule_id.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -1610,6 +1614,171 @@ describe("database foundation", () => {
         listRoutingRules(client, orgA)
       );
       expect(rulesB).toHaveLength(0);
+    } finally {
+      await testPool.end();
+    }
+  });
+
+  it("records routing logs with matched_policy_rule_id for string policy rules, preserves matched_rule_id UUID FK integrity for legacy rules, and isolates failures with SAVEPOINT (#180)", async () => {
+    const orgId = "00000000-0000-7000-8000-000000000780";
+    const testPool = new Pool({ connectionString });
+
+    try {
+      await admin.query("DELETE FROM flowdesk.routing_logs WHERE organization_id = $1", [orgId]);
+      await admin.query("DELETE FROM flowdesk.messages WHERE organization_id = $1", [orgId]);
+      await admin.query("DELETE FROM flowdesk.conversations WHERE organization_id = $1", [orgId]);
+      await admin.query("DELETE FROM flowdesk.routing_rules WHERE organization_id = $1", [orgId]);
+      await admin.query("DELETE FROM flowdesk.automation_policies WHERE organization_id = $1", [
+        orgId
+      ]);
+      await admin.query("DELETE FROM flowdesk.channels WHERE organization_id = $1", [orgId]);
+      await admin.query("DELETE FROM flowdesk.organizations WHERE id = $1", [orgId]);
+
+      await admin.query(
+        "INSERT INTO flowdesk.organizations (id, slug, display_name) VALUES ($1, 'routing-test-org', 'Routing Test Org')",
+        [orgId]
+      );
+
+      const channel = await withTenantTransaction(testPool, { organizationId: orgId }, (client) =>
+        createChannel(client, {
+          organizationId: orgId,
+          type: "whatsapp",
+          name: "Test WA",
+          phoneNumberId: "phone-180-test",
+          wabaId: "waba-180-test",
+          encryptedCredentials: "enc:test",
+          status: "active"
+        })
+      );
+
+      const conv = await withTenantTransaction(testPool, { organizationId: orgId }, (client) =>
+        findOrCreateConversation(client, {
+          organizationId: orgId,
+          channelId: channel.id,
+          customerPhone: "+6281234567890"
+        })
+      );
+
+      // 1. Create and publish an automation policy with embedded string rule ID (e.g. "rule-z1wfsei")
+      const policy = await withTenantTransaction(
+        testPool,
+        { organizationId: orgId },
+        async (client) => {
+          const draft = await createPolicyDraft(client, {
+            organizationId: orgId,
+            name: "Active Policy",
+            rules: [
+              {
+                id: "rule-z1wfsei",
+                organizationId: orgId,
+                name: "Rule Z1",
+                priority: 1,
+                conditions: {},
+                targetQueueId: null,
+                targetTeamId: null,
+                targetUserId: null,
+                isActive: true
+              }
+            ]
+          });
+          return publishPolicyDraft(client, {
+            organizationId: orgId,
+            policyId: draft.id
+          });
+        }
+      );
+
+      // Record routing log referencing the policy and string rule ID cleanly
+      const policyLog = await withTenantTransaction(testPool, { organizationId: orgId }, (client) =>
+        recordRoutingLogWithTrace(client, {
+          organizationId: orgId,
+          conversationId: conv.id,
+          matchedRuleId: null,
+          matchedPolicyRuleId: "rule-z1wfsei",
+          reason: "Policy auto match",
+          policyId: policy.id,
+          policyVersion: policy.version
+        })
+      );
+      expect(policyLog.id).toBeDefined();
+      expect(policyLog.matchedRuleId).toBeNull();
+      expect(policyLog.matchedPolicyRuleId).toBe("rule-z1wfsei");
+      expect(policyLog.policyId).toBe(policy.id);
+      expect(policyLog.policyVersion).toBe(1);
+
+      // 2. Legacy routing rule with UUID records matched_rule_id with FK integrity
+      const legacyRule = await withTenantTransaction(
+        testPool,
+        { organizationId: orgId },
+        (client) =>
+          createRoutingRule(client, {
+            organizationId: orgId,
+            name: "Legacy Rule",
+            priority: 5,
+            conditions: {}
+          })
+      );
+      const legacyLog = await withTenantTransaction(testPool, { organizationId: orgId }, (client) =>
+        recordRoutingLogWithTrace(client, {
+          organizationId: orgId,
+          conversationId: conv.id,
+          matchedRuleId: legacyRule.id,
+          matchedPolicyRuleId: null,
+          reason: "Legacy rule matched"
+        })
+      );
+      expect(legacyLog.matchedRuleId).toBe(legacyRule.id);
+      expect(legacyLog.matchedPolicyRuleId).toBeNull();
+
+      // 3. Proving FK integrity: passing a non-existent UUID to matchedRuleId throws FK violation
+      await expect(
+        withTenantTransaction(testPool, { organizationId: orgId }, (client) =>
+          recordRoutingLogWithTrace(client, {
+            organizationId: orgId,
+            conversationId: conv.id,
+            matchedRuleId: "00000000-0000-7000-8000-000000000099",
+            matchedPolicyRuleId: null,
+            reason: "Non-existent legacy rule"
+          })
+        )
+      ).rejects.toThrow();
+
+      // 4. SAVEPOINT failure isolation: a routing failure inside a SAVEPOINT does NOT poison the outer transaction
+      await withTenantTransaction(testPool, { organizationId: orgId }, async (client) => {
+        // Inbound message is created
+        const inboundMsg = await createMessage(client, {
+          organizationId: orgId,
+          conversationId: conv.id,
+          channelId: channel.id,
+          direction: "inbound",
+          senderType: "customer",
+          content: "Inbound survives routing failure",
+          providerMessageId: "wamid.savepoint.test.1",
+          sentAt: new Date(),
+          status: "delivered"
+        });
+        expect(inboundMsg.id).toBeDefined();
+
+        // Subtransaction / Savepoint around routing work
+        await client.query("SAVEPOINT routing_eval");
+        try {
+          // Force 22P02 invalid uuid syntax
+          await client.query("SELECT * FROM flowdesk.routing_rules WHERE id = $1", [
+            "invalid-uuid-syntax"
+          ]);
+          await client.query("RELEASE SAVEPOINT routing_eval");
+        } catch {
+          await client.query("ROLLBACK TO SAVEPOINT routing_eval");
+        }
+
+        // Outer transaction continues successfully — subsequent statement does not fail with 25P02!
+        const verifyMsg = await client.query<{ id: string; content: string }>(
+          "SELECT id, content FROM flowdesk.messages WHERE id = $1",
+          [inboundMsg.id]
+        );
+        expect(verifyMsg.rows).toHaveLength(1);
+        expect(verifyMsg.rows[0]?.content).toBe("Inbound survives routing failure");
+      });
     } finally {
       await testPool.end();
     }

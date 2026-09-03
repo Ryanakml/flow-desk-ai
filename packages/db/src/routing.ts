@@ -41,6 +41,7 @@ export interface RoutingLogRecord {
   organizationId: string;
   conversationId: string;
   matchedRuleId: string | null;
+  matchedPolicyRuleId?: string | null | undefined;
   targetQueueId: string | null;
   targetTeamId: string | null;
   targetUserId: string | null;
@@ -52,6 +53,7 @@ export interface CreateRoutingLogParams {
   organizationId: string;
   conversationId: string;
   matchedRuleId?: string | null;
+  matchedPolicyRuleId?: string | null;
   targetQueueId?: string | null;
   targetTeamId?: string | null;
   targetUserId?: string | null;
@@ -77,6 +79,7 @@ interface RoutingLogDbRow {
   organization_id: string;
   conversation_id: string;
   matched_rule_id: string | null;
+  matched_policy_rule_id?: string | null;
   target_queue_id: string | null;
   target_team_id: string | null;
   target_user_id: string | null;
@@ -106,6 +109,7 @@ function mapRowToRoutingLog(row: RoutingLogDbRow): RoutingLogRecord {
     organizationId: row.organization_id,
     conversationId: row.conversation_id,
     matchedRuleId: row.matched_rule_id ?? null,
+    matchedPolicyRuleId: row.matched_policy_rule_id ?? null,
     targetQueueId: row.target_queue_id ?? null,
     targetTeamId: row.target_team_id ?? null,
     targetUserId: row.target_user_id ?? null,
@@ -229,13 +233,14 @@ export async function recordRoutingLog(
 ): Promise<RoutingLogRecord> {
   const result = await db.query<RoutingLogDbRow>(
     `INSERT INTO flowdesk.routing_logs (
-      organization_id, conversation_id, matched_rule_id, target_queue_id, target_team_id, target_user_id, reason
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+      organization_id, conversation_id, matched_rule_id, matched_policy_rule_id, target_queue_id, target_team_id, target_user_id, reason
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
     RETURNING *`,
     [
       params.organizationId,
       params.conversationId,
       params.matchedRuleId ?? null,
+      params.matchedPolicyRuleId ?? null,
       params.targetQueueId ?? null,
       params.targetTeamId ?? null,
       params.targetUserId ?? null,
