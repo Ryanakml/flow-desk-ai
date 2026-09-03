@@ -109,7 +109,8 @@ describe("database foundation", () => {
       "0026_m6_runtime_integrations_privileges.sql",
       "0027_m5_auto_mode.sql",
       "0028_m5_automation_safety_controls.sql",
-      "0029_m5_automation_policy_engine.sql"
+      "0029_m5_automation_policy_engine.sql",
+      "0030_m5_auto_release_gate.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -354,6 +355,7 @@ describe("database foundation", () => {
       "attachments",
       "audit_logs",
       "auth_sessions",
+      "auto_release_gates",
       "automation_policies",
       "automation_safety_controls",
       "bot_configs",
@@ -408,6 +410,7 @@ describe("database foundation", () => {
       "attachment_upload_sessions",
       "attachments",
       "audit_logs",
+      "auto_release_gates",
       "automation_policies",
       "bot_configs",
       "bot_runs",

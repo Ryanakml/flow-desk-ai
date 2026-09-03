@@ -96,3 +96,4 @@ export {
 } from "./routing.js";
 export * from "./auto-send.js";
 export * from "./production-release.js";
+export * from "./auto-release-gate.js";

@@ -791,8 +791,8 @@ export async function upsertBotConfig(
   }>(
     `INSERT INTO flowdesk.bot_configs (
       organization_id, mode, name, instructions, tone, language, model,
-      confidence_threshold, top_k, emergency_disabled, metadata
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      confidence_threshold, top_k, emergency_disabled, metadata, auto_enabled
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, ($2 = 'auto'))
     ON CONFLICT (organization_id) DO UPDATE SET
       mode = CASE WHEN $12 THEN EXCLUDED.mode ELSE flowdesk.bot_configs.mode END,
       name = CASE WHEN $13 THEN EXCLUDED.name ELSE flowdesk.bot_configs.name END,
@@ -804,6 +804,7 @@ export async function upsertBotConfig(
       top_k = CASE WHEN $19 THEN EXCLUDED.top_k ELSE flowdesk.bot_configs.top_k END,
       emergency_disabled = CASE WHEN $20 THEN EXCLUDED.emergency_disabled ELSE flowdesk.bot_configs.emergency_disabled END,
       metadata = CASE WHEN $21 THEN EXCLUDED.metadata ELSE flowdesk.bot_configs.metadata END,
+      auto_enabled = CASE WHEN EXCLUDED.mode = 'auto' THEN TRUE ELSE flowdesk.bot_configs.auto_enabled END,
       updated_at = clock_timestamp()
     RETURNING *`,
     [
