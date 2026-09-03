@@ -1659,7 +1659,32 @@ describe("database foundation", () => {
         })
       );
 
-      // 1. Automation policy with embedded string rule ID (e.g. "rule-z1wfsei") records routing log cleanly
+      // 1. Create and publish an automation policy with embedded string rule ID (e.g. "rule-z1wfsei")
+      const policy = await withTenantTransaction(
+        testPool,
+        { organizationId: orgId },
+        async (client) => {
+          const draft = await createPolicyDraft(client, {
+            organizationId: orgId,
+            name: "Active Policy",
+            rules: [
+              {
+                id: "rule-z1wfsei",
+                name: "Rule Z1",
+                priority: 1,
+                conditions: {},
+                action: "route"
+              }
+            ]
+          });
+          return publishPolicyDraft(client, {
+            organizationId: orgId,
+            policyId: draft.id
+          });
+        }
+      );
+
+      // Record routing log referencing the policy and string rule ID cleanly
       const policyLog = await withTenantTransaction(testPool, { organizationId: orgId }, (client) =>
         recordRoutingLogWithTrace(client, {
           organizationId: orgId,
@@ -1667,13 +1692,14 @@ describe("database foundation", () => {
           matchedRuleId: null,
           matchedPolicyRuleId: "rule-z1wfsei",
           reason: "Policy auto match",
-          policyId: "a38989b5-1007-4637-91fe-f98f4b41658f",
-          policyVersion: 1
+          policyId: policy.id,
+          policyVersion: policy.version
         })
       );
       expect(policyLog.id).toBeDefined();
       expect(policyLog.matchedRuleId).toBeNull();
       expect(policyLog.matchedPolicyRuleId).toBe("rule-z1wfsei");
+      expect(policyLog.policyId).toBe(policy.id);
       expect(policyLog.policyVersion).toBe(1);
 
       // 2. Legacy routing rule with UUID records matched_rule_id with FK integrity
