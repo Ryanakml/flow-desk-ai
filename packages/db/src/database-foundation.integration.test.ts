@@ -22,8 +22,10 @@ import {
   createDocumentWithChunks,
   enqueueBotDraftRun,
   finishBotDraftRun,
+  getBotConfig,
   getLatestBotRunForConversation,
-  searchDocumentChunks
+  searchDocumentChunks,
+  upsertBotConfig
 } from "./knowledge.js";
 import { getAnalyticsOverview } from "./analytics.js";
 import type { DbClient } from "./auth.js";
@@ -110,7 +112,8 @@ describe("database foundation", () => {
       "0027_m5_auto_mode.sql",
       "0028_m5_automation_safety_controls.sql",
       "0029_m5_automation_policy_engine.sql",
-      "0030_m5_auto_release_gate.sql"
+      "0030_m5_auto_release_gate.sql",
+      "0031_m5_auto_release_gates_rls.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -1340,6 +1343,94 @@ describe("database foundation", () => {
       expect(searchResults).toHaveLength(1);
       expect(searchResults[0]?.similarity).toBeGreaterThan(0.99);
       expect(searchResults[0]?.content).toContain("FlowDesk refunds");
+    } finally {
+      await testPool.end();
+    }
+  });
+
+  it("enforces tenant RLS on auto_release_gates and requires tenant context to view bot_configs (#179 defect)", async () => {
+    const orgA = "00000000-0000-7000-8000-0000000000b1";
+    const orgB = "00000000-0000-7000-8000-0000000000b2";
+    await admin.query(
+      `INSERT INTO flowdesk.organizations (id, slug, display_name)
+       VALUES ($1, 'rg-org-a', 'Release Gate Org A'),
+              ($2, 'rg-org-b', 'Release Gate Org B')
+       ON CONFLICT (id) DO NOTHING`,
+      [orgA, orgB]
+    );
+
+    const testPool = new Pool({ connectionString });
+    try {
+      // 1. Create bot config for Org A
+      const configA = await withTenantTransaction(testPool, { organizationId: orgA }, (client) =>
+        upsertBotConfig(client, {
+          organizationId: orgA,
+          mode: "auto"
+        })
+      );
+      expect(configA.id).toBeDefined();
+
+      // 2. An unscoped query under flowdesk_runtime (without setting app.organization_id)
+      // cannot view bot_configs (proving the root cause of the false 404 NOT_FOUND)
+      const unscopedClient = await testPool.connect();
+      try {
+        await unscopedClient.query("SET ROLE flowdesk_runtime");
+        const unscopedRes = await getBotConfig(unscopedClient, orgA);
+        expect(unscopedRes).toBeNull();
+      } finally {
+        await unscopedClient.query("RESET ROLE").catch(() => undefined);
+        unscopedClient.release();
+      }
+
+      // 3. Inside tenant context for Org A, bot config is visible and release gate can be created
+      const gateId = await withTenantTransaction(
+        testPool,
+        { organizationId: orgA },
+        async (client) => {
+          const visibleConfig = await getBotConfig(client, orgA);
+          expect(visibleConfig).not.toBeNull();
+          expect(visibleConfig?.id).toBe(configA.id);
+
+          const inserted = await client.query<{ id: string }>(
+            `INSERT INTO flowdesk.auto_release_gates (
+               organization_id, bot_config_id, cohort, status, eval_scores, approvals,
+               rollback_owner
+             ) VALUES ($1, $2, 'beta', 'pending', '{}'::jsonb, '[]'::jsonb, 'SRE')
+             RETURNING id`,
+            [orgA, configA.id]
+          );
+          return inserted.rows[0]?.id;
+        }
+      );
+      expect(gateId).toBeDefined();
+
+      // 4. Org A can read its release gate
+      const gatesA = await withTenantTransaction(
+        testPool,
+        { organizationId: orgA },
+        async (client) => {
+          const res = await client.query<{ id: string }>(
+            `SELECT id FROM flowdesk.auto_release_gates WHERE organization_id = $1`,
+            [orgA]
+          );
+          return res.rows;
+        }
+      );
+      expect(gatesA.some((g) => g.id === gateId)).toBe(true);
+
+      // 5. Cross-tenant isolation: Org B cannot see Org A's release gate
+      const gatesB = await withTenantTransaction(
+        testPool,
+        { organizationId: orgB },
+        async (client) => {
+          const res = await client.query<{ id: string }>(
+            `SELECT id FROM flowdesk.auto_release_gates WHERE organization_id = $1`,
+            [orgA]
+          );
+          return res.rows;
+        }
+      );
+      expect(gatesB).toHaveLength(0);
     } finally {
       await testPool.end();
     }

@@ -19,9 +19,10 @@ export async function withTenantTransaction<T>(
     // transaction must still execute as the NOBYPASSRLS runtime principal.
     await client.query("SET LOCAL ROLE flowdesk_runtime");
     await client.query("SET LOCAL search_path = flowdesk, public");
-    await client.query("SELECT set_config('app.organization_id', $1, true)", [
-      context.organizationId
-    ]);
+    await client.query(
+      "SELECT set_config('app.organization_id', $1, true), set_config('app.current_organization_id', $1, true)",
+      [context.organizationId]
+    );
     const result = await work(client);
     await client.query("COMMIT");
     return result;
