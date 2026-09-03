@@ -1670,10 +1670,14 @@ describe("database foundation", () => {
             rules: [
               {
                 id: "rule-z1wfsei",
+                organizationId: orgId,
                 name: "Rule Z1",
                 priority: 1,
                 conditions: {},
-                action: "route"
+                targetQueueId: null,
+                targetTeamId: null,
+                targetUserId: null,
+                isActive: true
               }
             ]
           });
