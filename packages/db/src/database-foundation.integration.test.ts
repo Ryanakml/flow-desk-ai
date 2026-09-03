@@ -126,7 +126,8 @@ describe("database foundation", () => {
       "0028_m5_automation_safety_controls.sql",
       "0029_m5_automation_policy_engine.sql",
       "0030_m5_auto_release_gate.sql",
-      "0031_m5_auto_release_gates_rls.sql"
+      "0031_m5_auto_release_gates_rls.sql",
+      "0032_m5_routing_logs_policy_rule_id.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -1634,7 +1635,7 @@ describe("database foundation", () => {
       await admin.query("DELETE FROM flowdesk.organizations WHERE id = $1", [orgId]);
 
       await admin.query(
-        "INSERT INTO flowdesk.organizations (id, name, slug) VALUES ($1, 'Routing Test Org', 'routing-test-org')",
+        "INSERT INTO flowdesk.organizations (id, slug, display_name) VALUES ($1, 'routing-test-org', 'Routing Test Org')",
         [orgId]
       );
 
