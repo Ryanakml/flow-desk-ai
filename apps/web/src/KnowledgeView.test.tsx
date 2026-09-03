@@ -200,4 +200,63 @@ describe("KnowledgeView", () => {
     );
     expect(showToast).toHaveBeenCalledWith(expect.stringContaining("AUTO enabled"), "success");
   });
+
+  it("renders automation policy section and displays simulator decision trace", async () => {
+    const showToast = vi.fn();
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(input);
+      if (url.includes("/routing/policies/simulate") && init?.method === "POST") {
+        return Promise.resolve(
+          json({
+            matchedRule: { id: "r1", name: "VIP Route", priority: 10 },
+            action: "route",
+            reason: "Matched VIP Route",
+            targetQueueId: "q1",
+            decisionTrace: [
+              {
+                ruleId: "r1",
+                ruleName: "VIP Route",
+                priority: 10,
+                matched: true,
+                reason: "All satisfied",
+                conditionsEvaluated: {}
+              }
+            ],
+            conflicts: []
+          })
+        );
+      }
+      if (url.includes("/routing/policies")) {
+        return Promise.resolve(
+          json([
+            {
+              id: "p1",
+              organizationId: orgId,
+              version: 1,
+              status: "published",
+              name: "Active Policy",
+              rules: [{ id: "r1", name: "VIP Route", priority: 10 }],
+              metadata: {},
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            }
+          ])
+        );
+      }
+      if (url.includes("/bot/config")) return Promise.resolve(json(botConfig("auto")));
+      return Promise.resolve(json({ sources: [] }));
+    });
+    globalThis.fetch = fetchMock;
+
+    render(<KnowledgeView orgId={orgId} canManage={true} showToast={showToast} />);
+
+    expect(await screen.findByTestId("automation-policy-section")).toBeTruthy();
+    expect(screen.getByText("Active Version:")).toBeTruthy();
+
+    const simBtn = screen.getByTestId("policy-simulator-btn");
+    fireEvent.click(simBtn);
+
+    await waitFor(() => expect(screen.getByTestId("policy-simulator-results")).toBeTruthy());
+    expect(screen.getAllByText(/VIP Route/).length).toBeGreaterThanOrEqual(1);
+  });
 });

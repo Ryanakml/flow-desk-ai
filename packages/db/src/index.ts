@@ -242,6 +242,24 @@ export {
   type ActiveAutomationSafety
 } from "./automation-safety.js";
 export {
+  createPolicyDraft,
+  updatePolicyDraft,
+  publishPolicyDraft,
+  rollbackPolicyVersion,
+  getActivePublishedPolicy,
+  getPolicyById,
+  listPolicyVersions,
+  recordRoutingLogWithTrace,
+  listDetailedRoutingLogsForConversation,
+  type DbAutomationPolicy,
+  type CreatePolicyDraftParams,
+  type UpdatePolicyDraftParams,
+  type PublishPolicyParams,
+  type RollbackPolicyParams,
+  type DetailedRoutingLogRecord,
+  type CreateRoutingLogWithTraceParams
+} from "./automation-policy.js";
+export {
   listApiKeys,
   createApiKey,
   revokeApiKey,

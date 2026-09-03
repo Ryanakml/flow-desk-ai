@@ -6,12 +6,18 @@ import {
   runInTenantTransaction,
   updateMessageStatus,
   listRoutingRules,
-  recordRoutingLog,
+  getActivePublishedPolicy,
+  recordRoutingLogWithTrace,
   getBotConfig,
   getLatestKnowledgeVersion,
   enqueueBotDraftRun
 } from "@flowdesk/db";
-import { type MessageStatus, evaluateRoutingRules } from "@flowdesk/domain";
+import {
+  type MessageStatus,
+  type RoutingRule,
+  type RoutingEvaluationContext,
+  evaluateRoutingRules
+} from "@flowdesk/domain";
 import { createLogger, recordWhatsAppWebhookProcessed } from "@flowdesk/observability";
 
 // Module-level logger used only for silent-drop diagnostics within processWebhookPayload.
@@ -314,14 +320,42 @@ export async function processWebhookPayload(
         });
         result.processedInboundCount += 1;
 
-        // M5-01: Evaluate automated routing rules for new inbound conversation
+        // M5-01 / M5 #180: Evaluate versioned policy or routing rules for incoming conversation
+        const autoConfig = await getBotConfig(client, params.organizationId);
         try {
-          const rules = await listRoutingRules(client, params.organizationId);
-          if (rules.length > 0) {
-            const routingResult = evaluateRoutingRules(rules, {
+          const activePolicy = await getActivePublishedPolicy(client, params.organizationId);
+          let rulesToEvaluate: RoutingRule[] = [];
+          let policyId: string | null = null;
+          let policyVersion: number | null = null;
+
+          if (activePolicy && activePolicy.rules.length > 0) {
+            rulesToEvaluate = activePolicy.rules;
+            policyId = activePolicy.id;
+            policyVersion = activePolicy.version;
+          } else {
+            const legacyRules = await listRoutingRules(client, params.organizationId);
+            rulesToEvaluate = legacyRules.map((r) => ({
+              id: r.id,
+              organizationId: r.organizationId,
+              name: r.name,
+              priority: r.priority,
+              conditions: r.conditions,
+              targetQueueId: r.targetQueueId,
+              targetTeamId: r.targetTeamId,
+              targetUserId: r.targetUserId,
+              isActive: r.isActive
+            }));
+          }
+
+          if (rulesToEvaluate.length > 0) {
+            const routingContext: RoutingEvaluationContext = {
               channelId,
-              customerPhone: item.customerPhone
-            });
+              customerPhone: item.customerPhone,
+              tags: [],
+              botMode: autoConfig?.mode,
+              botPaused: Boolean(conversation.botPaused)
+            };
+            const routingResult = evaluateRoutingRules(rulesToEvaluate, routingContext);
             if (routingResult.matchedRule) {
               await client.query(
                 `UPDATE flowdesk.conversations
@@ -339,23 +373,33 @@ export async function processWebhookPayload(
                 ]
               );
             }
-            await recordRoutingLog(client, {
+            await recordRoutingLogWithTrace(client, {
               organizationId: params.organizationId,
               conversationId: conversation.id,
               matchedRuleId: routingResult.matchedRule?.id ?? null,
               targetQueueId: routingResult.targetQueueId,
               targetTeamId: routingResult.targetTeamId,
               targetUserId: routingResult.targetUserId,
-              reason: routingResult.reason
+              reason: routingResult.reason,
+              policyId,
+              policyVersion,
+              decisionTrace: routingResult.decisionTrace,
+              inputsSnapshot: routingContext as Record<string, unknown>
             });
           }
-        } catch {
-          // Non-blocking routing log exception guard
+        } catch (routingErr) {
+          normalizationLogger.warn(
+            {
+              err: routingErr,
+              organizationId: params.organizationId,
+              conversationId: conversation.id
+            },
+            "Failed to evaluate conversation routing policy"
+          );
         }
 
         // M5 #178: AUTO is an explicit persisted mode. Inbound only queues durable AI work;
         // generation and the final safety recheck happen in the bot worker transaction.
-        const autoConfig = await getBotConfig(client, params.organizationId);
         if (autoConfig?.mode === "auto") {
           const knowledgeVersion = await getLatestKnowledgeVersion(client, params.organizationId);
           await enqueueBotDraftRun(client, {
