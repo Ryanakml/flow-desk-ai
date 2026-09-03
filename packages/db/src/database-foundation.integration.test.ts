@@ -108,7 +108,8 @@ describe("database foundation", () => {
       "0025_m4_grant_public_schema_usage.sql",
       "0026_m6_runtime_integrations_privileges.sql",
       "0027_m5_auto_mode.sql",
-      "0028_m5_automation_safety_controls.sql"
+      "0028_m5_automation_safety_controls.sql",
+      "0029_m5_automation_policy_engine.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -353,6 +354,7 @@ describe("database foundation", () => {
       "attachments",
       "audit_logs",
       "auth_sessions",
+      "automation_policies",
       "automation_safety_controls",
       "bot_configs",
       "bot_runs",
@@ -406,6 +408,7 @@ describe("database foundation", () => {
       "attachment_upload_sessions",
       "attachments",
       "audit_logs",
+      "automation_policies",
       "bot_configs",
       "bot_runs",
       "business_hours_policies",
