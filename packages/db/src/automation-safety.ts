@@ -44,7 +44,7 @@ export async function resolveAutomationSafety(
     input.conversationId ?? null
   ]);
   const row = result.rows[0];
-  return row
+  return row && (row.control_id || row.scope)
     ? { controlId: row.control_id, scope: row.scope, reason: row.reason, expiresAt: row.expires_at }
     : null;
 }

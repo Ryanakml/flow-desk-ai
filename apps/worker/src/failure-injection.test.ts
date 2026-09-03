@@ -29,8 +29,11 @@ describe("Failure Injection & Component Degradation Drills (M5-05)", () => {
 
   it("handles backoff gracefully on rate limit injection", async () => {
     const rateLimitedDb = {
-      async query() {
+      async query(sql: string) {
         await Promise.resolve();
+        if (typeof sql === "string" && sql.includes("resolve_automation_safety")) {
+          return { rows: [], rowCount: 0, command: "SELECT", oid: 0, fields: [] };
+        }
         return {
           rows: [{ count: "3" }], // rate limit reached
           rowCount: 1,
