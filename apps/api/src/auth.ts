@@ -17,12 +17,14 @@ import {
 } from "@flowdesk/providers";
 import {
   createOidcAuthorizationRequest,
+  createOidcLogoutUrl,
   createOpaqueToken,
   hashOidcSecret,
   hashSessionToken,
   parseSessionCookie,
   serializeExpiredSessionCookie,
-  serializeSessionCookie
+  serializeSessionCookie,
+  validateLogoutReturnUrl
 } from "@flowdesk/security";
 import { type Request, type Response, type RequestHandler, Router } from "express";
 
@@ -136,11 +138,23 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
           ? request.query["returnTo"]
           : "/";
 
+      let prompt: string | undefined;
+      const rawPrompt =
+        typeof request.query["prompt"] === "string" ? request.query["prompt"].trim() : undefined;
+      if (rawPrompt && ["login", "select_account", "consent", "none"].includes(rawPrompt)) {
+        prompt = rawPrompt;
+      } else if (request.query["reauth"] === "true") {
+        prompt = "login";
+      } else if (request.query["switch"] === "true") {
+        prompt = "select_account";
+      }
+
       const authRequest = createOidcAuthorizationRequest({
         issuer: options.config.AUTH_OIDC_ISSUER,
         clientId: options.config.AUTH_OIDC_CLIENT_ID,
         redirectUri: options.config.AUTH_OIDC_REDIRECT_URI,
-        returnTo
+        returnTo,
+        prompt
       });
 
       await createOidcTransaction(options.db, {
@@ -280,8 +294,8 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
     }
   });
 
-  // POST /api/v1/auth/logout
-  router.post("/logout", async (request: Request, response: Response, next) => {
+  // GET & POST /api/v1/auth/logout
+  const handleLogout: RequestHandler = async (request: Request, response: Response, next) => {
     try {
       const sessionToken = parseSessionCookie(request.headers.cookie);
       if (sessionToken) {
@@ -291,11 +305,55 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
 
       const secure = options.config.AUTH_COOKIE_SECURE;
       response.setHeader("Set-Cookie", serializeExpiredSessionCookie(secure));
-      return response.status(200).json({ status: "ok" });
+
+      const bodyRecord =
+        typeof request.body === "object" && request.body !== null
+          ? (request.body as Record<string, unknown>)
+          : null;
+      const candidateReturnTo =
+        typeof request.query["returnTo"] === "string"
+          ? request.query["returnTo"]
+          : typeof bodyRecord?.["returnTo"] === "string"
+            ? bodyRecord["returnTo"]
+            : undefined;
+
+      const safeReturnTo = validateLogoutReturnUrl(
+        candidateReturnTo,
+        options.config.APP_BASE_URL || "http://localhost:3000"
+      );
+
+      let logoutUrl: string;
+      if (options.config.AUTH_MOCK_ENABLED) {
+        logoutUrl = safeReturnTo;
+      } else if (options.config.AUTH_OIDC_ISSUER && options.config.AUTH_OIDC_CLIENT_ID) {
+        logoutUrl = createOidcLogoutUrl({
+          issuer: options.config.AUTH_OIDC_ISSUER,
+          clientId: options.config.AUTH_OIDC_CLIENT_ID,
+          returnTo: safeReturnTo
+        }).toString();
+      } else {
+        logoutUrl = safeReturnTo;
+      }
+
+      const wantsRedirect = Boolean(
+        request.method === "GET" ||
+        request.query["redirect"] === "true" ||
+        (request.headers["sec-fetch-mode"] === "navigate" && !request.is("json")) ||
+        (request.accepts("html") && !request.accepts("json"))
+      );
+
+      if (!wantsRedirect) {
+        return response.status(200).json({ status: "ok", logoutUrl });
+      }
+
+      return response.redirect(302, logoutUrl);
     } catch (error) {
       return next(error);
     }
-  });
+  };
+
+  router.get("/logout", handleLogout);
+  router.post("/logout", handleLogout);
 
   // GET /api/v1/auth/session
   router.get(

@@ -67,12 +67,25 @@ describe("typed API client (M1-07)", () => {
     await expect(getSession(fetcher)).rejects.toThrow(ApiError);
   });
 
-  it("calls logout endpoint", async () => {
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(new Response(JSON.stringify({ status: "ok" }), { status: 200 }));
-    await expect(logout(fetcher)).resolves.toBeUndefined();
-    expect(fetcher).toHaveBeenCalledWith("/api/v1/auth/logout", { method: "POST" });
+  it("calls logout endpoint and returns status and logoutUrl", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          status: "ok",
+          logoutUrl:
+            "https://auth.flowdesk.dev/v2/logout?client_id=123&returnTo=http://localhost:3000"
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
+    );
+    await expect(logout(fetcher)).resolves.toEqual({
+      status: "ok",
+      logoutUrl: "https://auth.flowdesk.dev/v2/logout?client_id=123&returnTo=http://localhost:3000"
+    });
+    expect(fetcher).toHaveBeenCalledWith("/api/v1/auth/logout", {
+      method: "POST",
+      headers: { Accept: "application/json" }
+    });
   });
 
   it("lists user organizations", async () => {

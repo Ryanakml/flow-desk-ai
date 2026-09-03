@@ -7,6 +7,13 @@ export interface OidcAuthorizationRequest {
   codeVerifier: string;
   expiresAt: Date;
 }
+
+export interface OidcLogoutUrlOptions {
+  issuer: string;
+  clientId: string;
+  returnTo: string;
+}
+
 const token = (bytes: number) => randomBytes(bytes).toString("base64url");
 
 export function createOidcAuthorizationRequest(input: {
@@ -14,6 +21,7 @@ export function createOidcAuthorizationRequest(input: {
   clientId: string;
   redirectUri: string;
   returnTo: string;
+  prompt?: string | undefined;
   now?: Date;
 }): OidcAuthorizationRequest {
   const state = token(32);
@@ -23,7 +31,7 @@ export function createOidcAuthorizationRequest(input: {
     "authorize",
     input.issuer.endsWith("/") ? input.issuer : `${input.issuer}/`
   );
-  authorizationUrl.search = new URLSearchParams({
+  const searchParams = new URLSearchParams({
     response_type: "code",
     client_id: input.clientId,
     redirect_uri: input.redirectUri,
@@ -33,7 +41,11 @@ export function createOidcAuthorizationRequest(input: {
     code_challenge: createHash("sha256").update(codeVerifier).digest("base64url"),
     code_challenge_method: "S256",
     returnTo: input.returnTo
-  }).toString();
+  });
+  if (input.prompt) {
+    searchParams.set("prompt", input.prompt);
+  }
+  authorizationUrl.search = searchParams.toString();
   return {
     authorizationUrl,
     state,
@@ -42,5 +54,45 @@ export function createOidcAuthorizationRequest(input: {
     expiresAt: new Date((input.now ?? new Date()).getTime() + 600_000)
   };
 }
+
+export function createOidcLogoutUrl(input: OidcLogoutUrlOptions): URL {
+  const issuerUrl = input.issuer.endsWith("/") ? input.issuer : `${input.issuer}/`;
+  const logoutUrl = new URL("v2/logout", issuerUrl);
+  logoutUrl.searchParams.set("client_id", input.clientId);
+  logoutUrl.searchParams.set("returnTo", input.returnTo);
+  return logoutUrl;
+}
+
+export function validateLogoutReturnUrl(candidate: string | undefined, appBaseUrl: string): string {
+  const fallback = appBaseUrl || "http://localhost:3000";
+  if (!candidate || typeof candidate !== "string") {
+    return fallback;
+  }
+
+  const trimmed = candidate.trim();
+  if (trimmed.startsWith("/") && !trimmed.startsWith("//")) {
+    try {
+      return new URL(trimmed, fallback).toString();
+    } catch {
+      return fallback;
+    }
+  }
+
+  try {
+    const candidateUrl = new URL(trimmed);
+    const baseUrl = new URL(fallback);
+    if (
+      (candidateUrl.protocol === "http:" || candidateUrl.protocol === "https:") &&
+      candidateUrl.origin === baseUrl.origin
+    ) {
+      return candidateUrl.toString();
+    }
+  } catch {
+    return fallback;
+  }
+
+  return fallback;
+}
+
 export const hashOidcSecret = (value: string) =>
   createHash("sha256").update(value).digest("base64url");
