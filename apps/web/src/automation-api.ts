@@ -1,3 +1,10 @@
+import type {
+  AutomationPolicyResponse,
+  SimulatePolicyResponse,
+  CreateAutomationPolicyDraft,
+  SimulatePolicyRequest
+} from "@flowdesk/contracts";
+
 interface EmergencyStopResponse {
   organizationId: string;
   emergencyDisabled: boolean;
@@ -27,4 +34,77 @@ export async function setAutomationEmergencyStop(
   });
   if (!response.ok) throw new Error(await problemDetail(response));
   return (await response.json()) as EmergencyStopResponse;
+}
+
+export async function fetchAutomationPolicies(
+  orgId: string,
+  fetcher: typeof fetch = fetch
+): Promise<AutomationPolicyResponse[]> {
+  const response = await fetcher(`/api/v1/organizations/${orgId}/routing/policies`);
+  if (!response.ok) throw new Error(await problemDetail(response));
+  return (await response.json()) as AutomationPolicyResponse[];
+}
+
+export async function createAutomationPolicyDraft(
+  orgId: string,
+  payload: CreateAutomationPolicyDraft,
+  fetcher: typeof fetch = fetch
+): Promise<AutomationPolicyResponse> {
+  const response = await fetcher(`/api/v1/organizations/${orgId}/routing/policies/draft`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) throw new Error(await problemDetail(response));
+  return (await response.json()) as AutomationPolicyResponse;
+}
+
+export async function publishAutomationPolicy(
+  orgId: string,
+  policyId: string,
+  notes = "",
+  fetcher: typeof fetch = fetch
+): Promise<AutomationPolicyResponse> {
+  const response = await fetcher(
+    `/api/v1/organizations/${orgId}/routing/policies/${policyId}/publish`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notes })
+    }
+  );
+  if (!response.ok) throw new Error(await problemDetail(response));
+  return (await response.json()) as AutomationPolicyResponse;
+}
+
+export async function rollbackAutomationPolicy(
+  orgId: string,
+  policyId: string,
+  notes = "",
+  fetcher: typeof fetch = fetch
+): Promise<AutomationPolicyResponse> {
+  const response = await fetcher(
+    `/api/v1/organizations/${orgId}/routing/policies/${policyId}/rollback`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notes })
+    }
+  );
+  if (!response.ok) throw new Error(await problemDetail(response));
+  return (await response.json()) as AutomationPolicyResponse;
+}
+
+export async function simulateAutomationPolicy(
+  orgId: string,
+  payload: SimulatePolicyRequest,
+  fetcher: typeof fetch = fetch
+): Promise<SimulatePolicyResponse> {
+  const response = await fetcher(`/api/v1/organizations/${orgId}/routing/policies/simulate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) throw new Error(await problemDetail(response));
+  return (await response.json()) as SimulatePolicyResponse;
 }

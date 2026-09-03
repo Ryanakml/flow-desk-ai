@@ -937,10 +937,18 @@ export type BotDraftActionRequest = z.infer<typeof BotDraftActionRequestSchema>;
 export const RoutingConditionSchema = z.object({
   channelId: z.string().uuid().optional(),
   tag: z.string().min(1).optional(),
+  tags: z.array(z.string().min(1)).optional(),
   language: z.string().min(1).optional(),
   intent: z.string().min(1).optional(),
   customerPhonePrefix: z.string().min(1).optional(),
-  isWithinBusinessHours: z.boolean().optional()
+  isWithinBusinessHours: z.boolean().optional(),
+  queueCapacityAvailable: z.boolean().optional(),
+  botMode: z.enum(["draft", "auto", "off"]).optional(),
+  botPaused: z.boolean().optional(),
+  customerConsentRequired: z.boolean().optional(),
+  requiredEntitlement: z.string().min(1).optional(),
+  prohibitedIntents: z.array(z.string().min(1)).optional(),
+  minConfidenceThreshold: z.number().min(0).max(1).optional()
 });
 export type RoutingCondition = z.infer<typeof RoutingConditionSchema>;
 
@@ -953,6 +961,7 @@ export const RoutingRuleSchema = z.object({
   targetQueueId: z.string().uuid().nullable(),
   targetTeamId: z.string().uuid().nullable(),
   targetUserId: z.string().uuid().nullable(),
+  action: z.enum(["route", "auto_reply", "escalate", "handoff"]).default("route").optional(),
   isActive: z.boolean(),
   createdAt: z.string().datetime({ offset: true }),
   updatedAt: z.string().datetime({ offset: true })
@@ -966,6 +975,7 @@ export const CreateRoutingRuleRequestSchema = z.object({
   targetQueueId: z.string().uuid().nullable().optional(),
   targetTeamId: z.string().uuid().nullable().optional(),
   targetUserId: z.string().uuid().nullable().optional(),
+  action: z.enum(["route", "auto_reply", "escalate", "handoff"]).optional(),
   isActive: z.boolean().optional()
 });
 export type CreateRoutingRuleRequest = z.infer<typeof CreateRoutingRuleRequestSchema>;
@@ -977,12 +987,130 @@ export const UpdateRoutingRuleRequestSchema = z.object({
   targetQueueId: z.string().uuid().nullable().optional(),
   targetTeamId: z.string().uuid().nullable().optional(),
   targetUserId: z.string().uuid().nullable().optional(),
+  action: z.enum(["route", "auto_reply", "escalate", "handoff"]).optional(),
   isActive: z.boolean().optional()
 });
 export type UpdateRoutingRuleRequest = z.infer<typeof UpdateRoutingRuleRequestSchema>;
 
 export const ListRoutingRulesResponseSchema = z.array(RoutingRuleSchema);
 export type ListRoutingRulesResponse = z.infer<typeof ListRoutingRulesResponseSchema>;
+
+// M5 #180: Versioned Automation Policy Schemas
+export const PolicyStatusSchema = z.enum(["draft", "published", "archived"]);
+export type PolicyStatus = z.infer<typeof PolicyStatusSchema>;
+
+export const AutomationPolicyRuleItemSchema = z.object({
+  id: z.string().default(() => "rule-" + Math.random().toString(36).slice(2, 9)),
+  name: z.string().min(1).max(200),
+  priority: z.number().int().min(0),
+  conditions: RoutingConditionSchema.default({}),
+  targetQueueId: z.string().uuid().nullable().optional(),
+  targetTeamId: z.string().uuid().nullable().optional(),
+  targetUserId: z.string().uuid().nullable().optional(),
+  action: z.enum(["route", "auto_reply", "escalate", "handoff"]).default("route"),
+  isActive: z.boolean().default(true)
+});
+export type AutomationPolicyRuleItem = z.infer<typeof AutomationPolicyRuleItemSchema>;
+
+export const AutomationPolicySchema = z.object({
+  id: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  version: z.number().int().min(1),
+  status: PolicyStatusSchema,
+  name: z.string().min(1).max(200),
+  rules: z.array(AutomationPolicyRuleItemSchema),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+  createdByUserId: z.string().uuid().nullable().optional(),
+  publishedByUserId: z.string().uuid().nullable().optional(),
+  publishedAt: z.string().datetime({ offset: true }).nullable().optional(),
+  createdAt: z.string().datetime({ offset: true }),
+  updatedAt: z.string().datetime({ offset: true })
+});
+export type AutomationPolicyResponse = z.infer<typeof AutomationPolicySchema>;
+
+export const CreateAutomationPolicyDraftSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  rules: z.array(AutomationPolicyRuleItemSchema).default([]),
+  metadata: z.record(z.string(), z.unknown()).optional()
+});
+export type CreateAutomationPolicyDraft = z.infer<typeof CreateAutomationPolicyDraftSchema>;
+
+export const UpdateAutomationPolicyDraftSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  rules: z.array(AutomationPolicyRuleItemSchema).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional()
+});
+export type UpdateAutomationPolicyDraft = z.infer<typeof UpdateAutomationPolicyDraftSchema>;
+
+export const PublishAutomationPolicySchema = z.object({
+  notes: z.string().max(500).optional()
+});
+export type PublishAutomationPolicy = z.infer<typeof PublishAutomationPolicySchema>;
+
+export const PolicyEvaluationContextSchema = z.object({
+  channelId: z.string().uuid().optional(),
+  tags: z.array(z.string()).optional(),
+  language: z.string().optional(),
+  intent: z.string().optional(),
+  customerPhone: z.string().optional(),
+  isWithinBusinessHours: z.boolean().optional(),
+  queueCapacityAvailable: z.boolean().optional(),
+  botMode: z.enum(["draft", "auto", "off"]).optional(),
+  botPaused: z.boolean().optional(),
+  customerConsentGiven: z.boolean().optional(),
+  planEntitlements: z.array(z.string()).optional(),
+  confidenceScore: z.number().min(0).max(1).optional(),
+  isKillswitchActive: z.boolean().optional()
+});
+export type PolicyEvaluationContext = z.infer<typeof PolicyEvaluationContextSchema>;
+
+export const PolicyConflictSchema = z.object({
+  type: z.enum(["duplicate_priority", "unreachable_rule", "shadowed_rule", "invalid_target"]),
+  severity: z.enum(["error", "warning"]),
+  ruleId: z.string(),
+  ruleName: z.string(),
+  conflictingRuleId: z.string().optional(),
+  conflictingRuleName: z.string().optional(),
+  message: z.string()
+});
+export type PolicyConflictResponse = z.infer<typeof PolicyConflictSchema>;
+
+export const ConditionEvaluationDetailSchema = z.object({
+  passed: z.boolean(),
+  expected: z.unknown(),
+  actual: z.unknown(),
+  reason: z.string().optional()
+});
+
+export const RuleEvaluationTraceSchema = z.object({
+  ruleId: z.string(),
+  ruleName: z.string(),
+  priority: z.number(),
+  matched: z.boolean(),
+  reason: z.string(),
+  conditionsEvaluated: z.record(z.string(), ConditionEvaluationDetailSchema)
+});
+export type RuleEvaluationTraceResponse = z.infer<typeof RuleEvaluationTraceSchema>;
+
+export const SimulatePolicyRequestSchema = z.object({
+  policyVersion: z.number().int().min(1).optional(),
+  rules: z.array(AutomationPolicyRuleItemSchema).optional(),
+  context: PolicyEvaluationContextSchema
+});
+export type SimulatePolicyRequest = z.infer<typeof SimulatePolicyRequestSchema>;
+
+export const SimulatePolicyResponseSchema = z.object({
+  matchedRule: AutomationPolicyRuleItemSchema.nullable(),
+  targetQueueId: z.string().uuid().nullable(),
+  targetTeamId: z.string().uuid().nullable(),
+  targetUserId: z.string().uuid().nullable(),
+  action: z.string(),
+  reason: z.string(),
+  decisionTrace: z.array(RuleEvaluationTraceSchema),
+  conflicts: z.array(PolicyConflictSchema),
+  policyVersion: z.number().int().min(1).optional()
+});
+export type SimulatePolicyResponse = z.infer<typeof SimulatePolicyResponseSchema>;
 
 export const RoutingLogSchema = z.object({
   id: z.string().uuid(),
@@ -993,7 +1121,11 @@ export const RoutingLogSchema = z.object({
   targetTeamId: z.string().uuid().nullable(),
   targetUserId: z.string().uuid().nullable(),
   reason: z.string(),
-  routedAt: z.string().datetime({ offset: true })
+  routedAt: z.string().datetime({ offset: true }),
+  policyId: z.string().uuid().nullable().optional(),
+  policyVersion: z.number().int().nullable().optional(),
+  decisionTrace: z.array(RuleEvaluationTraceSchema).optional(),
+  inputsSnapshot: z.record(z.string(), z.unknown()).optional()
 });
 export type RoutingLogResponse = z.infer<typeof RoutingLogSchema>;
 

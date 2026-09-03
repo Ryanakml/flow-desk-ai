@@ -81,10 +81,17 @@ export {
 } from "./rag.js";
 export {
   matchesRoutingCondition,
+  evaluateConditionDetailed,
   evaluateRoutingRules,
+  detectPolicyConflicts,
+  simulatePolicyEvaluation,
   type RoutingCondition,
   type RoutingRule,
   type RoutingEvaluationContext,
-  type RoutingResult
+  type RoutingResult,
+  type RuleEvaluationTrace,
+  type ConditionEvaluationDetail,
+  type PolicyConflict,
+  type ConditionMatchResult
 } from "./routing.js";
 export * from "./auto-send.js";
