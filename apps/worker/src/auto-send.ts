@@ -37,6 +37,10 @@ interface AutoRunState {
   emergency_disabled: boolean | null;
   confidence_threshold: number | null;
   config_is_current: boolean | null;
+  auto_enabled: boolean | null;
+  rate_limit_per_hour: number | null;
+  customer_consent_required: boolean | null;
+  ai_disclosure_enabled: boolean | null;
 }
 
 export interface CompletedAutoRunResult {
@@ -67,6 +71,8 @@ export async function processCompletedAutoRun(
             conversation.last_inbound_at,
             config.id AS config_id, config.mode AS config_mode,
             config.emergency_disabled, config.confidence_threshold,
+            config.auto_enabled, config.rate_limit_per_hour,
+            config.customer_consent_required, config.ai_disclosure_enabled,
             date_trunc('milliseconds', config.updated_at) =
               (run.config_snapshot->>'botConfigUpdatedAt')::timestamptz
               AS config_is_current
@@ -109,6 +115,10 @@ export async function processCompletedAutoRun(
     return { autoSent: false, reason };
   };
 
+  if (process.env["FLOWDESK_GLOBAL_KILLSWITCH"] === "true") {
+    return deny("Global emergency killswitch is active", true);
+  }
+
   if (state.run_mode !== "auto" || state.run_status !== "completed" || state.operator_action) {
     return deny("Bot run is not an actionable completed AUTO run");
   }
@@ -126,6 +136,10 @@ export async function processCompletedAutoRun(
     );
   }
 
+  if (state.auto_enabled === false) {
+    return deny("AUTO mode is not enabled for tenant/bot", true);
+  }
+
   if (
     state.config_id !== state.bot_config_id ||
     state.config_mode !== "auto" ||
@@ -133,6 +147,25 @@ export async function processCompletedAutoRun(
     state.config_is_current !== true
   ) {
     return deny("AUTO configuration is disabled or changed");
+  }
+
+  if (state.rate_limit_per_hour && state.rate_limit_per_hour > 0) {
+    const hourlySentResult = await db.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+       FROM flowdesk.messages
+       WHERE organization_id = $1
+         AND direction = 'outbound'
+         AND metadata->>'aiBotRunId' IS NOT NULL
+         AND created_at >= clock_timestamp() - INTERVAL '1 hour'`,
+      [input.organizationId]
+    );
+    const hourlySent = parseInt(hourlySentResult.rows[0]?.count ?? "0", 10);
+    if (hourlySent >= state.rate_limit_per_hour) {
+      return deny(
+        `AUTO hourly rate limit ceiling reached (${hourlySent}/${state.rate_limit_per_hour})`,
+        true
+      );
+    }
   }
   if (state.conversation_status === "closed" || state.bot_paused) {
     return deny("Conversation is closed or automation is paused", true);

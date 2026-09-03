@@ -29,10 +29,47 @@ import {
   type DbClient,
   type MessageRecord
 } from "@flowdesk/db";
-import { calculateServiceWindow } from "@flowdesk/domain";
+import {
+  calculateServiceWindow,
+  evaluateAutoReleaseGate,
+  type BotEvaluationScores,
+  type ReleaseApproval
+} from "@flowdesk/domain";
 import { currentRequestContext } from "@flowdesk/observability";
 import { createRequireAuthMiddleware } from "./auth.js";
 import { createRequireOrgPermissionMiddleware } from "./organizations.js";
+
+interface AutoReleaseGateRow {
+  id: string;
+  organization_id: string;
+  bot_config_id: string;
+  policy_id: string | null;
+  policy_version: number;
+  cohort: "internal" | "beta" | "general";
+  status: "pending" | "approved" | "rejected" | "paused" | "revoked";
+  eval_scores: BotEvaluationScores;
+  approvals: ReleaseApproval[];
+  sampling_rate: number | string;
+  rate_limit_per_hour: number;
+  monthly_cost_ceiling_cents: number;
+  rollback_owner: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface CreateReleaseGateBody {
+  policyId?: string;
+  policyVersion?: number;
+  cohort?: "internal" | "beta" | "general";
+  evalScores?: Partial<BotEvaluationScores>;
+  approvals?: ReleaseApproval[];
+  samplingRate?: number;
+  rateLimitPerHour?: number;
+  monthlyCostCeilingCents?: number;
+  customerConsentRequired?: boolean;
+  aiDisclosureEnabled?: boolean;
+  rollbackOwner?: string;
+}
 
 export interface BotRouterOptions {
   db: DbClient;
@@ -622,6 +659,297 @@ export function createBotRouter(options: BotRouterOptions): Router {
       );
     }
   });
+
+  // --- M5 #179: AUTO Release Gate, Staged Tenant Enablement & Approvals ---
+  router.get("/release-gate", requireAuth, requireView, async (request, response) => {
+    try {
+      const organizationId = getParam(request.params, "orgId");
+      const gates = await options.db.query<AutoReleaseGateRow>(
+        `SELECT * FROM flowdesk.auto_release_gates
+         WHERE organization_id = $1
+         ORDER BY created_at DESC`,
+        [organizationId]
+      );
+      return response.status(200).json({
+        organizationId,
+        releaseGates: gates.rows
+      });
+    } catch {
+      return sendProblem(
+        response,
+        500,
+        "INTERNAL_ERROR",
+        "Internal error",
+        "Failed to retrieve release gates."
+      );
+    }
+  });
+
+  router.post("/release-gate", requireAuth, requireAdmin, async (request, response) => {
+    try {
+      const organizationId = getParam(request.params, "orgId");
+      const body = (request.body ?? {}) as CreateReleaseGateBody;
+      const botConfig = await getBotConfig(options.db, organizationId);
+      if (!botConfig) {
+        return sendProblem(response, 404, "NOT_FOUND", "Not found", "Bot configuration not found.");
+      }
+
+      const evalScores: BotEvaluationScores = {
+        groundedQuality: body.evalScores?.groundedQuality ?? 0,
+        noEvidenceFailClosedRate: body.evalScores?.noEvidenceFailClosedRate ?? 0,
+        prohibitedIntentBlockRate: body.evalScores?.prohibitedIntentBlockRate ?? 0,
+        multilingualAccuracy: body.evalScores?.multilingualAccuracy ?? 0,
+        promptInjectionDefenseRate: body.evalScores?.promptInjectionDefenseRate ?? 0,
+        humanEscalationRate: body.evalScores?.humanEscalationRate ?? 0
+      };
+
+      const gateConfig = {
+        organizationId,
+        botConfigId: botConfig.id,
+        policyId: body.policyId,
+        policyVersion: body.policyVersion ?? 1,
+        cohort: body.cohort ?? ("beta" as const),
+        evalScores,
+        approvals: body.approvals ?? [],
+        samplingRate: body.samplingRate ?? 0.1,
+        rateLimitPerHour: body.rateLimitPerHour ?? 60,
+        monthlyCostCeilingCents: body.monthlyCostCeilingCents ?? 50000,
+        customerConsentRequired: body.customerConsentRequired ?? true,
+        aiDisclosureEnabled: body.aiDisclosureEnabled ?? true,
+        rollbackOwner: body.rollbackOwner || ""
+      };
+
+      const evaluation = evaluateAutoReleaseGate(gateConfig);
+
+      const inserted = await runInTenantTransaction(options.db, { organizationId }, async (db) => {
+        const res = await db.query<AutoReleaseGateRow>(
+          `INSERT INTO flowdesk.auto_release_gates (
+             organization_id, bot_config_id, policy_id, policy_version, cohort, status,
+             eval_scores, approvals, sampling_rate, rate_limit_per_hour,
+             monthly_cost_ceiling_cents, rollback_owner
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+           RETURNING *`,
+          [
+            organizationId,
+            botConfig.id,
+            gateConfig.policyId ?? null,
+            gateConfig.policyVersion,
+            gateConfig.cohort,
+            evaluation.status,
+            JSON.stringify(gateConfig.evalScores),
+            JSON.stringify(gateConfig.approvals),
+            gateConfig.samplingRate,
+            gateConfig.rateLimitPerHour,
+            gateConfig.monthlyCostCeilingCents,
+            gateConfig.rollbackOwner
+          ]
+        );
+        await recordAuditEvent(db, {
+          organizationId,
+          actorUserId: request.user!.id,
+          action: "bot:release-gate:created",
+          targetType: "auto_release_gate",
+          targetId: res.rows[0]?.id ?? null,
+          result: "allowed",
+          metadata: { status: evaluation.status, cohort: gateConfig.cohort }
+        });
+        return res.rows[0];
+      });
+
+      return response.status(201).json({
+        releaseGate: inserted,
+        evaluation
+      });
+    } catch {
+      return sendProblem(
+        response,
+        500,
+        "INTERNAL_ERROR",
+        "Internal error",
+        "Failed to create release gate."
+      );
+    }
+  });
+
+  router.post(
+    "/release-gate/:gateId/approve",
+    requireAuth,
+    requireAdmin,
+    async (request, response) => {
+      try {
+        const organizationId = getParam(request.params, "orgId");
+        const gateId = getParam(request.params, "gateId");
+        const { role, notes } = (request.body ?? {}) as {
+          role: "product" | "security" | "peer";
+          notes?: string;
+        };
+
+        if (!["product", "security", "peer"].includes(role)) {
+          return sendProblem(
+            response,
+            400,
+            "INVALID_ROLE",
+            "Bad request",
+            "Approval role must be product, security, or peer."
+          );
+        }
+
+        const updated = await runInTenantTransaction(options.db, { organizationId }, async (db) => {
+          const existing = await db.query<AutoReleaseGateRow>(
+            `SELECT * FROM flowdesk.auto_release_gates WHERE organization_id = $1 AND id = $2`,
+            [organizationId, gateId]
+          );
+          const gate = existing.rows[0];
+          if (!gate) return null;
+
+          const approvals: ReleaseApproval[] = Array.isArray(gate.approvals) ? [...gate.approvals] : [];
+          const existingApprovalIndex = approvals.findIndex((a) => a.role === role);
+          const approvalEntry: ReleaseApproval = {
+            actorId: request.user!.id,
+            role,
+            approvedAt: new Date().toISOString(),
+            notes
+          };
+
+          if (existingApprovalIndex >= 0) {
+            approvals[existingApprovalIndex] = approvalEntry;
+          } else {
+            approvals.push(approvalEntry);
+          }
+
+          const gateConfig = {
+            organizationId,
+            botConfigId: gate.bot_config_id,
+            policyId: gate.policy_id ?? undefined,
+            policyVersion: gate.policy_version,
+            cohort: gate.cohort,
+            evalScores: gate.eval_scores,
+            approvals,
+            samplingRate: Number(gate.sampling_rate),
+            rateLimitPerHour: gate.rate_limit_per_hour,
+            monthlyCostCeilingCents: gate.monthly_cost_ceiling_cents,
+            customerConsentRequired: true,
+            aiDisclosureEnabled: true,
+            rollbackOwner: gate.rollback_owner
+          };
+
+          const evaluation = evaluateAutoReleaseGate(gateConfig);
+
+          const res = await db.query<AutoReleaseGateRow>(
+            `UPDATE flowdesk.auto_release_gates
+           SET approvals = $1, status = $2, updated_at = clock_timestamp()
+           WHERE organization_id = $3 AND id = $4
+           RETURNING *`,
+            [JSON.stringify(approvals), evaluation.status, organizationId, gateId]
+          );
+
+          await recordAuditEvent(db, {
+            organizationId,
+            actorUserId: request.user!.id,
+            action: "bot:release-gate:approved",
+            targetType: "auto_release_gate",
+            targetId: gateId,
+            result: "allowed",
+            metadata: { role, status: evaluation.status }
+          });
+
+          return { gate: res.rows[0], evaluation };
+        });
+
+        if (!updated) {
+          return sendProblem(response, 404, "NOT_FOUND", "Not found", "Release gate not found.");
+        }
+
+        return response.status(200).json(updated);
+      } catch {
+        return sendProblem(
+          response,
+          500,
+          "INTERNAL_ERROR",
+          "Internal error",
+          "Failed to record release gate approval."
+        );
+      }
+    }
+  );
+
+  router.post(
+    "/release-gate/:gateId/enable-auto",
+    requireAuth,
+    requireAdmin,
+    async (request, response) => {
+      try {
+        const organizationId = getParam(request.params, "orgId");
+        const gateId = getParam(request.params, "gateId");
+
+        const result = await runInTenantTransaction(options.db, { organizationId }, async (db) => {
+          const gateRes = await db.query<AutoReleaseGateRow>(
+            `SELECT * FROM flowdesk.auto_release_gates WHERE organization_id = $1 AND id = $2`,
+            [organizationId, gateId]
+          );
+          const gate = gateRes.rows[0];
+          if (!gate) return { error: "NOT_FOUND" as const };
+          if (gate.status !== "approved") {
+            return {
+              error: "NOT_APPROVED" as const,
+              reason: `Release gate status is '${gate.status}'; must be 'approved'.`
+            };
+          }
+
+          await db.query(
+            `UPDATE flowdesk.bot_configs
+           SET auto_enabled = TRUE,
+               active_release_gate_id = $1,
+               rate_limit_per_hour = $2,
+               monthly_cost_ceiling_cents = $3,
+               updated_at = clock_timestamp()
+           WHERE organization_id = $4 AND id = $5`,
+            [
+              gate.id,
+              gate.rate_limit_per_hour,
+              gate.monthly_cost_ceiling_cents,
+              organizationId,
+              gate.bot_config_id
+            ]
+          );
+
+          await recordAuditEvent(db, {
+            organizationId,
+            actorUserId: request.user!.id,
+            action: "bot:auto-enabled",
+            targetType: "bot_config",
+            targetId: gate.bot_config_id,
+            result: "allowed",
+            metadata: { gateId: gate.id, cohort: gate.cohort }
+          });
+
+          return { success: true, gateId: gate.id, cohort: gate.cohort };
+        });
+
+        if (result.error === "NOT_FOUND") {
+          return sendProblem(response, 404, "NOT_FOUND", "Not found", "Release gate not found.");
+        }
+        if (result.error === "NOT_APPROVED") {
+          return sendProblem(response, 400, "GATE_NOT_APPROVED", "Bad request", result.reason);
+        }
+
+        return response.status(200).json({
+          organizationId,
+          autoEnabled: true,
+          releaseGateId: gateId,
+          enabledAt: new Date().toISOString()
+        });
+      } catch {
+        return sendProblem(
+          response,
+          500,
+          "INTERNAL_ERROR",
+          "Internal error",
+          "Failed to enable AUTO mode."
+        );
+      }
+    }
+  );
 
   return router;
 }
