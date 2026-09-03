@@ -3,9 +3,12 @@ interface CounterMetric {
   labels: Record<string, string>;
 }
 
+const DURATION_BUCKETS = [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10];
+
 interface HistogramMetric {
   count: number;
   sum: number;
+  buckets: Map<number, number>;
   labels: Record<string, string>;
 }
 
@@ -26,6 +29,9 @@ const aiDraftDuration = new Map<string, HistogramMetric>();
 const aiDraftPromptTokensTotal = new Map<string, CounterMetric>();
 const aiDraftCompletionTokensTotal = new Map<string, CounterMetric>();
 const aiDraftCostMicrocentsTotal = new Map<string, CounterMetric>();
+const autoSendTotal = new Map<string, CounterMetric>();
+const autoSendFailuresTotal = new Map<string, CounterMetric>();
+let emergencyKillswitchActive = 0;
 let realtimeActiveConnections = 0;
 let outboxPendingEvents = 0;
 let outboxOldestEventAgeSeconds = 0;
@@ -66,10 +72,20 @@ export function recordHttpRequest(params: {
   if (existingDur) {
     existingDur.count += 1;
     existingDur.sum += params.durationSeconds;
+    for (const le of DURATION_BUCKETS) {
+      if (params.durationSeconds <= le) {
+        existingDur.buckets.set(le, (existingDur.buckets.get(le) ?? 0) + 1);
+      }
+    }
   } else {
+    const buckets = new Map<number, number>();
+    for (const le of DURATION_BUCKETS) {
+      buckets.set(le, params.durationSeconds <= le ? 1 : 0);
+    }
     httpRequestDuration.set(durKey, {
       count: 1,
       sum: params.durationSeconds,
+      buckets,
       labels: durLabels
     });
   }
@@ -108,47 +124,47 @@ export function recordRateLimitExceeded(route: string): void {
   }
 }
 
-function incrementCounter(
-  target: Map<string, CounterMetric>,
-  labels: Record<string, string>
-): void {
+export function recordWhatsAppWebhookProcessed(result: string): void {
+  const labels = { result };
   const key = serializeLabels(labels);
-  const existing = target.get(key);
-  if (existing) existing.value += 1;
-  else target.set(key, { value: 1, labels });
+  const existing = whatsappWebhookProcessedTotal.get(key);
+  if (existing) {
+    existing.value += 1;
+  } else {
+    whatsappWebhookProcessedTotal.set(key, { value: 1, labels });
+  }
 }
 
-function addCounter(
-  target: Map<string, CounterMetric>,
-  labels: Record<string, string>,
-  value: number
-): void {
+export function recordWhatsAppOutboundDispatch(result: string): void {
+  const labels = { result };
   const key = serializeLabels(labels);
-  const existing = target.get(key);
-  if (existing) existing.value += value;
-  else target.set(key, { value, labels });
+  const existing = whatsappOutboundDispatchTotal.get(key);
+  if (existing) {
+    existing.value += 1;
+  } else {
+    whatsappOutboundDispatchTotal.set(key, { value: 1, labels });
+  }
 }
 
-export function recordWhatsAppWebhookProcessed(result: "processed" | "failed"): void {
-  incrementCounter(whatsappWebhookProcessedTotal, { result });
+export function recordWorkerBatchFailure(pipeline: string): void {
+  const labels = { pipeline };
+  const key = serializeLabels(labels);
+  const existing = workerBatchFailuresTotal.get(key);
+  if (existing) {
+    existing.value += 1;
+  } else {
+    workerBatchFailuresTotal.set(key, { value: 1, labels });
+  }
 }
 
-export function recordWhatsAppOutboundDispatch(result: "sent" | "failed" | "skipped"): void {
-  incrementCounter(whatsappOutboundDispatchTotal, { result });
-}
-
-export function recordWorkerBatchFailure(pipeline: "webhook" | "outbound"): void {
-  incrementCounter(workerBatchFailuresTotal, { pipeline });
-}
-
-export function recordOutboxSnapshot(input: {
+export function recordOutboxSnapshot(snapshot: {
   pendingEvents: number;
   oldestEventAgeSeconds: number;
   deadLetterEvents: number;
 }): void {
-  outboxPendingEvents = Math.max(0, input.pendingEvents);
-  outboxOldestEventAgeSeconds = Math.max(0, input.oldestEventAgeSeconds);
-  outboxDeadLetterEvents = Math.max(0, input.deadLetterEvents);
+  outboxPendingEvents = Math.max(0, snapshot.pendingEvents);
+  outboxOldestEventAgeSeconds = Math.max(0, snapshot.oldestEventAgeSeconds);
+  outboxDeadLetterEvents = Math.max(0, snapshot.deadLetterEvents);
 }
 
 export function recordRealtimeConnection(delta: 1 | -1): void {
@@ -156,22 +172,50 @@ export function recordRealtimeConnection(delta: 1 | -1): void {
 }
 
 export function recordRealtimeAuthorizationDenial(roomType: string): void {
-  incrementCounter(realtimeAuthorizationDenialsTotal, { room_type: roomType });
+  const labels = { room_type: roomType };
+  const key = serializeLabels(labels);
+  const existing = realtimeAuthorizationDenialsTotal.get(key);
+  if (existing) {
+    existing.value += 1;
+  } else {
+    realtimeAuthorizationDenialsTotal.set(key, { value: 1, labels });
+  }
 }
 
 export function recordRealtimeReconnectGap(): void {
-  incrementCounter(realtimeReconnectGapsTotal, { result: "reconcile_required" });
+  const labels = { result: "reconcile_required" };
+  const key = serializeLabels(labels);
+  const existing = realtimeReconnectGapsTotal.get(key);
+  if (existing) {
+    existing.value += 1;
+  } else {
+    realtimeReconnectGapsTotal.set(key, { value: 1, labels });
+  }
 }
 
 export function recordRealtimeDroppedHint(reason: string): void {
-  incrementCounter(realtimeDroppedHintsTotal, { reason });
+  const labels = { reason };
+  const key = serializeLabels(labels);
+  const existing = realtimeDroppedHintsTotal.get(key);
+  if (existing) {
+    existing.value += 1;
+  } else {
+    realtimeDroppedHintsTotal.set(key, { value: 1, labels });
+  }
 }
 
-export function recordMediaLifecycle(operation: "scan" | "retention", outcome: string): void {
-  incrementCounter(mediaLifecycleTotal, { operation, outcome });
+export function recordMediaLifecycle(operation: string, outcome: string): void {
+  const labels = { operation, outcome };
+  const key = serializeLabels(labels);
+  const existing = mediaLifecycleTotal.get(key);
+  if (existing) {
+    existing.value += 1;
+  } else {
+    mediaLifecycleTotal.set(key, { value: 1, labels });
+  }
 }
 
-export function recordAiDraftRun(input: {
+export function recordAiDraftRun(params: {
   provider: string;
   status: string;
   durationSeconds: number;
@@ -179,27 +223,103 @@ export function recordAiDraftRun(input: {
   completionTokens?: number;
   costMicrocents?: number;
 }): void {
-  const labels = { provider: input.provider, status: input.status };
-  incrementCounter(aiDraftRunsTotal, labels);
-  const key = serializeLabels(labels);
-  const duration = aiDraftDuration.get(key);
-  if (duration) {
-    duration.count += 1;
-    duration.sum += Math.max(0, input.durationSeconds);
+  const runLabels = {
+    provider: params.provider,
+    status: params.status
+  };
+  const runKey = serializeLabels(runLabels);
+  const existingRun = aiDraftRunsTotal.get(runKey);
+  if (existingRun) {
+    existingRun.value += 1;
   } else {
-    aiDraftDuration.set(key, {
+    aiDraftRunsTotal.set(runKey, { value: 1, labels: runLabels });
+  }
+
+  const durLabels = {
+    provider: params.provider,
+    status: params.status
+  };
+  const durKey = serializeLabels(durLabels);
+  const existingDur = aiDraftDuration.get(durKey);
+  if (existingDur) {
+    existingDur.count += 1;
+    existingDur.sum += params.durationSeconds;
+  } else {
+    aiDraftDuration.set(durKey, {
       count: 1,
-      sum: Math.max(0, input.durationSeconds),
-      labels
+      sum: params.durationSeconds,
+      buckets: new Map(),
+      labels: durLabels
     });
   }
-  addCounter(aiDraftPromptTokensTotal, { provider: input.provider }, input.promptTokens ?? 0);
-  addCounter(
-    aiDraftCompletionTokensTotal,
-    { provider: input.provider },
-    input.completionTokens ?? 0
-  );
-  addCounter(aiDraftCostMicrocentsTotal, { provider: input.provider }, input.costMicrocents ?? 0);
+
+  const tokenLabels = { provider: params.provider };
+  const tokenKey = serializeLabels(tokenLabels);
+
+  if (params.promptTokens != null) {
+    const existingPrompt = aiDraftPromptTokensTotal.get(tokenKey);
+    if (existingPrompt) {
+      existingPrompt.value += params.promptTokens;
+    } else {
+      aiDraftPromptTokensTotal.set(tokenKey, { value: params.promptTokens, labels: tokenLabels });
+    }
+  }
+
+  if (params.completionTokens != null) {
+    const existingCompletion = aiDraftCompletionTokensTotal.get(tokenKey);
+    if (existingCompletion) {
+      existingCompletion.value += params.completionTokens;
+    } else {
+      aiDraftCompletionTokensTotal.set(tokenKey, {
+        value: params.completionTokens,
+        labels: tokenLabels
+      });
+    }
+  }
+
+  if (params.costMicrocents != null) {
+    const existingCost = aiDraftCostMicrocentsTotal.get(tokenKey);
+    if (existingCost) {
+      existingCost.value += params.costMicrocents;
+    } else {
+      aiDraftCostMicrocentsTotal.set(tokenKey, {
+        value: params.costMicrocents,
+        labels: tokenLabels
+      });
+    }
+  }
+}
+
+export function recordAutoSendOutcome(params: {
+  status: "sent" | "denied" | "failed";
+  reason?: string;
+}): void {
+  const labels = {
+    status: params.status,
+    reason: params.reason ?? "none"
+  };
+  const key = serializeLabels(labels);
+  const existing = autoSendTotal.get(key);
+  if (existing) {
+    existing.value += 1;
+  } else {
+    autoSendTotal.set(key, { value: 1, labels });
+  }
+
+  if (params.status === "failed") {
+    const failLabels = { reason: params.reason ?? "unknown" };
+    const failKey = serializeLabels(failLabels);
+    const existingFail = autoSendFailuresTotal.get(failKey);
+    if (existingFail) {
+      existingFail.value += 1;
+    } else {
+      autoSendFailuresTotal.set(failKey, { value: 1, labels: failLabels });
+    }
+  }
+}
+
+export function setEmergencyKillswitchActive(active: boolean): void {
+  emergencyKillswitchActive = active ? 1 : 0;
 }
 
 export function resetMetrics(): void {
@@ -220,6 +340,9 @@ export function resetMetrics(): void {
   aiDraftPromptTokensTotal.clear();
   aiDraftCompletionTokensTotal.clear();
   aiDraftCostMicrocentsTotal.clear();
+  autoSendTotal.clear();
+  autoSendFailuresTotal.clear();
+  emergencyKillswitchActive = 0;
   realtimeActiveConnections = 0;
   outboxPendingEvents = 0;
   outboxOldestEventAgeSeconds = 0;
@@ -237,14 +360,25 @@ export function getPrometheusMetrics(): string {
   }
 
   // http_request_duration_seconds
-  lines.push("# HELP http_request_duration_seconds HTTP request latency summary in seconds.");
-  lines.push("# TYPE http_request_duration_seconds summary");
+  lines.push(
+    "# HELP http_request_duration_seconds HTTP request latency summary and histogram in seconds."
+  );
+  lines.push("# TYPE http_request_duration_seconds histogram");
   for (const item of httpRequestDuration.values()) {
+    for (const le of DURATION_BUCKETS) {
+      const count = item.buckets?.get(le) ?? 0;
+      lines.push(
+        `http_request_duration_seconds_bucket{${serializeLabels({ ...item.labels, le: String(le) })}} ${count}`
+      );
+    }
     lines.push(
-      `http_request_duration_seconds_count{${serializeLabels(item.labels)}} ${item.count}`
+      `http_request_duration_seconds_bucket{${serializeLabels({ ...item.labels, le: "+Inf" })}} ${item.count}`
     );
     lines.push(
       `http_request_duration_seconds_sum{${serializeLabels(item.labels)}} ${item.sum.toFixed(6)}`
+    );
+    lines.push(
+      `http_request_duration_seconds_count{${serializeLabels(item.labels)}} ${item.count}`
     );
   }
 
@@ -347,6 +481,25 @@ export function getPrometheusMetrics(): string {
       lines.push(`${name}{${serializeLabels(item.labels)}} ${item.value}`);
     }
   }
+
+  // M5 #176: Auto-send and Killswitch metrics
+  lines.push("# HELP auto_send_total Total number of auto-send evaluations by status and reason.");
+  lines.push("# TYPE auto_send_total counter");
+  for (const item of autoSendTotal.values()) {
+    lines.push(`auto_send_total{${serializeLabels(item.labels)}} ${item.value}`);
+  }
+
+  lines.push("# HELP auto_send_failures_total Total number of auto-send execution failures.");
+  lines.push("# TYPE auto_send_failures_total counter");
+  for (const item of autoSendFailuresTotal.values()) {
+    lines.push(`auto_send_failures_total{${serializeLabels(item.labels)}} ${item.value}`);
+  }
+
+  lines.push(
+    "# HELP emergency_killswitch_active Whether emergency killswitch is currently active (1) or inactive (0)."
+  );
+  lines.push("# TYPE emergency_killswitch_active gauge");
+  lines.push(`emergency_killswitch_active ${emergencyKillswitchActive}`);
 
   return lines.join("\n") + "\n";
 }

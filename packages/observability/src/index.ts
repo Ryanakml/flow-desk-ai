@@ -121,6 +121,8 @@ export {
   recordRealtimeDroppedHint,
   recordMediaLifecycle,
   recordAiDraftRun,
+  recordAutoSendOutcome,
+  setEmergencyKillswitchActive,
   getPrometheusMetrics,
   resetMetrics
 } from "./metrics.js";

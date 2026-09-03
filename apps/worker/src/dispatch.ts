@@ -386,7 +386,7 @@ function isPoolClient(client: DbClient): boolean {
   return typeof client.connect === "function";
 }
 
-async function dispatchOutboundMessageCrashSafe(
+export async function dispatchOutboundMessageCrashSafe(
   client: DbClient,
   event: ClaimedOutboxEvent<OutboundMessagePayload>,
   options: DispatchWorkerOptions
