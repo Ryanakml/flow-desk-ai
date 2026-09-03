@@ -3,67 +3,164 @@ name: Production Release & Canary Promotion
 on:
   workflow_dispatch:
     inputs:
-      image_tag:
-        description: "Immutable Docker image tag/SHA to deploy"
+      source_sha:
+        description: "Immutable 40-character Git commit SHA verified in staging"
         required: true
         type: string
-      canary_weight:
-        description: "Initial Canary traffic percentage (5, 25, 100)"
+      canary_initial_weight:
+        description: "Initial Canary traffic percentage (5 or 25)"
         required: true
         default: "5"
         type: choice
         options:
           - "5"
           - "25"
-          - "100"
+
+permissions:
+  contents: read
+  id-token: write
+  packages: read
+
+concurrency:
+  group: production-release
+  cancel-in-progress: false
 
 jobs:
   validate-provenance:
-    name: Validate Image Provenance & SBOM
-    runs-on: ubuntu-latest
+    name: Validate Provenance, SBOM & Migrations
+    runs-on: ubuntu-24.04
+    environment: production
+    timeout-minutes: 15
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - name: Checkout Source at Verified SHA
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          ref: ${{ github.event.inputs.source_sha }}
 
-      - name: Verify Release Tag
+      - name: Validate Immutable SHA (Reject Mutable Tags)
         run: |
-          echo "Validating release tag: ${{ github.event.inputs.image_tag }}"
-          if [ -z "${{ github.event.inputs.image_tag }}" ]; then
-            echo "::error::Image tag is required"
+          SHA="${{ github.event.inputs.source_sha }}"
+          echo "Validating release tag / commit SHA: ${SHA}"
+          if [[ ! "${SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Release SHA '${SHA}' is invalid. Production releases strictly require an immutable 40-character commit SHA."
+            exit 1
+          fi
+          if [[ "${SHA}" =~ ^(latest|staging|production|main|master)$ ]]; then
+            echo "::error::Mutable tag '${SHA}' rejected."
             exit 1
           fi
 
-      - name: Generate SBOM Manifest
+      - name: Verify Immutable Image Manifests in GHCR
+        env:
+          GHCR_TOKEN: ${{ github.token }}
         run: |
-          echo "Simulating SBOM generation for FlowDesk production release..."
-          mkdir -p artifacts/sbom
-          echo '{"spdxVersion": "SPDX-2.3", "name": "flowdesk-production", "packages": []}' > artifacts/sbom/flowdesk-sbom.spdx.json
+          SHA="${{ github.event.inputs.source_sha }}"
+          echo "Verifying published image manifests for SHA: ${SHA}..."
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+          for app in web api ingress worker scheduler migrator; do
+            image="ghcr.io/ryanakml/flowdesk-${app}:${SHA}"
+            echo "Checking ${image}..."
+            docker manifest inspect "${image}" >/dev/null 2>&1 || {
+              echo "::error::Image ${image} not found in container registry or was not proven in staging."
+              exit 1
+            }
+          done
+          echo "All 6 immutable release images verified in registry."
 
-  canary-deployment:
-    name: Canary Promotion Gate
+      - name: Validate Database Expand Compatibility
+        run: |
+          chmod +x infra/deploy/production/validate-migrations.sh
+          ./infra/deploy/production/validate-migrations.sh
+
+      - name: Generate Real SPDX-2.3 SBOM
+        run: |
+          chmod +x infra/deploy/production/generate-sbom.sh
+          ./infra/deploy/production/generate-sbom.sh "${{ github.event.inputs.source_sha }}"
+
+      - name: Upload SBOM Artifact
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: flowdesk-sbom-${{ github.event.inputs.source_sha }}
+          path: artifacts/sbom/
+          retention-days: 90
+
+  canary-deployment-5pct:
+    name: Canary Slice (5% Traffic)
     needs: validate-provenance
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    environment: production
+    timeout-minutes: 15
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - name: Checkout Source
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          ref: ${{ github.event.inputs.source_sha }}
 
-      - name: Deploy Canary Slice
+      - name: Deploy Canary Slice (5% Weight)
         run: |
-          WEIGHT="${{ github.event.inputs.canary_weight }}"
-          echo "Deploying production canary slice with traffic weight ${WEIGHT}%..."
-          echo "Canary deployment initialized successfully."
+          chmod +x infra/deploy/production/canary-traffic.sh
+          ./infra/deploy/production/canary-traffic.sh 5 "http://127.0.0.1:4000"
 
-      - name: Canary Health Probe
+      - name: Automated Rollback on Canary Failure
+        if: failure()
         run: |
-          echo "Executing automated canary health probe..."
-          echo "Canary health status: 100% OK, error rate: 0.00%, latency p99: 42ms"
+          echo "Canary 5% health probe or deployment failed. Executing immediate rollback..."
+          chmod +x infra/deploy/production/canary-traffic.sh
+          ./infra/deploy/production/canary-traffic.sh 0 "http://127.0.0.1:4000"
+          chmod +x infra/deploy/production/record-deployment.sh
+          ./infra/deploy/production/record-deployment.sh "${{ github.event.inputs.source_sha }}" "rolled_back" "${{ github.actor }}"
 
-  production-promote:
-    name: Full Production Promotion
-    needs: canary-deployment
-    runs-on: ubuntu-latest
+  canary-deployment-25pct:
+    name: Canary Slice (25% Traffic & SLO Gate)
+    needs: canary-deployment-5pct
+    runs-on: ubuntu-24.04
+    environment: production
+    timeout-minutes: 20
     steps:
-      - name: Promote Traffic 100%
+      - name: Checkout Source
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          ref: ${{ github.event.inputs.source_sha }}
+
+      - name: Advance Canary Slice (25% Weight)
         run: |
-          echo "Promoting traffic weight to 100%..."
-          echo "Production deployment complete and healthy."
+          chmod +x infra/deploy/production/canary-traffic.sh
+          ./infra/deploy/production/canary-traffic.sh 25 "http://127.0.0.1:4000"
+
+      - name: Automated Rollback on Canary 25% Failure
+        if: failure()
+        run: |
+          echo "Canary 25% SLO or health probe failed. Executing immediate rollback..."
+          chmod +x infra/deploy/production/canary-traffic.sh
+          ./infra/deploy/production/canary-traffic.sh 0 "http://127.0.0.1:4000"
+          chmod +x infra/deploy/production/record-deployment.sh
+          ./infra/deploy/production/record-deployment.sh "${{ github.event.inputs.source_sha }}" "rolled_back" "${{ github.actor }}"
+
+  full-production-promote:
+    name: Full Production Promotion (100% Traffic)
+    needs: canary-deployment-25pct
+    runs-on: ubuntu-24.04
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          ref: ${{ github.event.inputs.source_sha }}
+
+      - name: Promote Traffic to 100%
+        run: |
+          chmod +x infra/deploy/production/canary-traffic.sh
+          ./infra/deploy/production/canary-traffic.sh 100 "http://127.0.0.1:4000"
+
+      - name: Generate Production Deployment Record
+        run: |
+          chmod +x infra/deploy/production/record-deployment.sh
+          ./infra/deploy/production/record-deployment.sh "${{ github.event.inputs.source_sha }}" "promoted" "${{ github.actor }}" "production-deployment-record.json"
+
+      - name: Upload Production Deployment Record
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: production-deployment-${{ github.event.inputs.source_sha }}
+          path: production-deployment-record.json
+          retention-days: 90
