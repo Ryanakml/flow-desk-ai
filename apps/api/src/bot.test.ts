@@ -40,6 +40,8 @@ function createMockDb(): DbClient {
   const botConfigs = new Map<string, MockBotConfigRow>();
   const botRuns = new Map<string, Record<string, unknown>>();
   const outboundMessages = new Map<string, Record<string, unknown>>();
+  const releaseGates = new Map<string, Record<string, unknown>>();
+  let noBotConfig = false;
   let conversationStatus: "open" | "closed" = "open";
 
   users.set("u1", {
@@ -128,11 +130,83 @@ function createMockDb(): DbClient {
       return { rows: [updated] };
     }
 
+    if (sql === "TEST_CLEAR_BOT_CONFIGS") {
+      botConfigs.clear();
+      noBotConfig = true;
+      return { rows: [] };
+    }
+
+    if (sql.includes("INSERT INTO flowdesk.auto_release_gates")) {
+      const gateId = randomUUID();
+      const evalRaw = params?.[6];
+      const approvalsRaw = params?.[7];
+      const row: Record<string, unknown> = {
+        id: gateId,
+        organization_id: params?.[0],
+        bot_config_id: params?.[1],
+        policy_id: params?.[2],
+        policy_version: params?.[3],
+        cohort: params?.[4],
+        status: params?.[5],
+        eval_scores: typeof evalRaw === "string" ? JSON.parse(evalRaw) : (evalRaw ?? {}),
+        approvals:
+          typeof approvalsRaw === "string" ? JSON.parse(approvalsRaw) : (approvalsRaw ?? []),
+        sampling_rate: params?.[8],
+        rate_limit_per_hour: params?.[9],
+        monthly_cost_ceiling_cents: params?.[10],
+        rollback_owner: params?.[11],
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      releaseGates.set(gateId, row);
+      return { rows: [row] };
+    }
+
+    if (sql.includes("UPDATE flowdesk.auto_release_gates")) {
+      const approvalsRaw = params?.[0];
+      const approvals: unknown =
+        typeof approvalsRaw === "string" ? JSON.parse(approvalsRaw) : (approvalsRaw ?? []);
+      const status = params?.[1] as string;
+      const orgId = params?.[2] as string;
+      const gateId = params?.[3] as string;
+      const existing = releaseGates.get(gateId);
+      if (existing && existing["organization_id"] === orgId) {
+        existing["approvals"] = approvals;
+        existing["status"] = status;
+        existing["updated_at"] = new Date().toISOString();
+        return { rows: [existing] };
+      }
+      return { rows: [] };
+    }
+
+    if (sql.includes("FROM flowdesk.auto_release_gates") && sql.includes("id = $2")) {
+      const orgId = params?.[0] as string;
+      const gateId = params?.[1] as string;
+      const gate = releaseGates.get(gateId);
+      if (gate && gate["organization_id"] === orgId) {
+        return { rows: [gate] };
+      }
+      return { rows: [] };
+    }
+
+    if (sql.includes("FROM flowdesk.auto_release_gates")) {
+      const orgId = params?.[0] as string;
+      const gates = Array.from(releaseGates.values()).filter((g) => g["organization_id"] === orgId);
+      return { rows: gates };
+    }
+
+    if (sql.includes("UPDATE flowdesk.bot_configs")) {
+      return { rows: [] };
+    }
+
     if (sql.includes("FROM flowdesk.bot_configs")) {
       const orgId = params?.[0] as string;
       const found = botConfigs.get(orgId);
       if (found) {
         return { rows: [found] };
+      }
+      if (noBotConfig) {
+        return { rows: [] };
       }
       const defaultConfig: MockBotConfigRow = {
         id: randomUUID(),
@@ -342,18 +416,23 @@ function createMockDb(): DbClient {
     }
 
     if (sql.toLowerCase().includes("memberships")) {
-      return {
-        rows: [
-          {
-            id: "m1",
-            organization_id: "org1",
-            user_id: "u1",
-            role_key: "owner",
-            role_label: "Owner",
-            status: "active"
-          }
-        ]
-      };
+      const orgId = params?.[0] as string;
+      const userId = params?.[1] as string;
+      if (orgId === "org1" && userId === "u1") {
+        return {
+          rows: [
+            {
+              id: "m1",
+              organization_id: "org1",
+              user_id: "u1",
+              role_key: "owner",
+              role_label: "Owner",
+              status: "active"
+            }
+          ]
+        };
+      }
+      return { rows: [] };
     }
 
     return { rows: [] };
@@ -702,5 +781,178 @@ describe("Bot Configuration & AI Draft Generation API", () => {
       sendable: false
     });
     expect(res.body.runId).toBeDefined();
+  });
+
+  describe("AUTO release gate endpoints (#179 defect regression)", () => {
+    interface ReleaseGateBody {
+      releaseGate?: { id: string; cohort: string };
+      evaluation?: unknown;
+      code?: string;
+      detail?: string;
+      organizationId?: string;
+      releaseGates?: Array<{ id: string }>;
+      gate?: unknown;
+    }
+
+    it("creates a release gate with 201 when bot config exists in tenant transaction", async () => {
+      const mockDb = createMockDb();
+      const app = createApiApp({
+        service: "api",
+        version: "dev",
+        gitSha: "dev",
+        environment: "local",
+        auth: { db: mockDb, config }
+      });
+
+      const cookie = serializeSessionCookie("bot-test-token-12345", false);
+      const res = (await request(app)
+        .post("/api/v1/organizations/org1/bot/release-gate")
+        .set("Cookie", cookie)
+        .send({
+          cohort: "beta",
+          evalScores: {
+            groundedQuality: 0.95,
+            noEvidenceFailClosedRate: 1.0,
+            prohibitedIntentBlockRate: 1.0,
+            multilingualAccuracy: 0.95,
+            promptInjectionDefenseRate: 1.0,
+            humanEscalationRate: 0.95
+          },
+          rollbackOwner: "SRE Team"
+        })) as unknown as { status: number; body: ReleaseGateBody };
+
+      expect(res.status).toBe(201);
+      expect(res.body.releaseGate).toBeDefined();
+      expect(res.body.releaseGate?.cohort).toBe("beta");
+      expect(res.body.evaluation).toBeDefined();
+    });
+
+    it("returns 404 NOT_FOUND when bot config does not exist in tenant transaction", async () => {
+      const mockDb = createMockDb();
+      // Signal to mock DB that no bot config exists
+      await mockDb.query("TEST_CLEAR_BOT_CONFIGS");
+
+      const app = createApiApp({
+        service: "api",
+        version: "dev",
+        gitSha: "dev",
+        environment: "local",
+        auth: { db: mockDb, config }
+      });
+
+      const cookie = serializeSessionCookie("bot-test-token-12345", false);
+      const res = (await request(app)
+        .post("/api/v1/organizations/org1/bot/release-gate")
+        .set("Cookie", cookie)
+        .send({
+          cohort: "beta",
+          rollbackOwner: "SRE Team"
+        })) as unknown as { status: number; body: ReleaseGateBody };
+
+      expect(res.status).toBe(404);
+      expect(res.body.code).toBe("NOT_FOUND");
+      expect(res.body.detail).toBe("Bot configuration not found.");
+    });
+
+    it("lists release gates via GET /release-gate under tenant context", async () => {
+      const mockDb = createMockDb();
+      const app = createApiApp({
+        service: "api",
+        version: "dev",
+        gitSha: "dev",
+        environment: "local",
+        auth: { db: mockDb, config }
+      });
+
+      const cookie = serializeSessionCookie("bot-test-token-12345", false);
+
+      // Create a gate first
+      const createRes = (await request(app)
+        .post("/api/v1/organizations/org1/bot/release-gate")
+        .set("Cookie", cookie)
+        .send({
+          cohort: "beta",
+          evalScores: {
+            groundedQuality: 0.95,
+            noEvidenceFailClosedRate: 1.0,
+            prohibitedIntentBlockRate: 1.0,
+            multilingualAccuracy: 0.95,
+            promptInjectionDefenseRate: 1.0,
+            humanEscalationRate: 0.95
+          },
+          rollbackOwner: "SRE Team"
+        })) as unknown as { status: number; body: ReleaseGateBody };
+      expect(createRes.status).toBe(201);
+
+      // Now list gates
+      const listRes = (await request(app)
+        .get("/api/v1/organizations/org1/bot/release-gate")
+        .set("Cookie", cookie)) as unknown as { status: number; body: ReleaseGateBody };
+
+      expect(listRes.status).toBe(200);
+      expect(listRes.body.organizationId).toBe("org1");
+      expect(listRes.body.releaseGates).toHaveLength(1);
+      expect(listRes.body.releaseGates?.[0]?.id).toBe(createRes.body.releaseGate?.id);
+    });
+
+    it("approves release gate via POST /release-gate/:gateId/approve", async () => {
+      const mockDb = createMockDb();
+      const app = createApiApp({
+        service: "api",
+        version: "dev",
+        gitSha: "dev",
+        environment: "local",
+        auth: { db: mockDb, config }
+      });
+
+      const cookie = serializeSessionCookie("bot-test-token-12345", false);
+
+      const createRes = (await request(app)
+        .post("/api/v1/organizations/org1/bot/release-gate")
+        .set("Cookie", cookie)
+        .send({
+          cohort: "beta",
+          evalScores: {
+            groundedQuality: 0.95,
+            noEvidenceFailClosedRate: 1.0,
+            prohibitedIntentBlockRate: 1.0,
+            multilingualAccuracy: 0.95,
+            promptInjectionDefenseRate: 1.0,
+            humanEscalationRate: 0.95
+          },
+          rollbackOwner: "SRE Team"
+        })) as unknown as { status: number; body: ReleaseGateBody };
+      const gateId = createRes.body.releaseGate?.id;
+      expect(gateId).toBeDefined();
+
+      const approveRes = (await request(app)
+        .post(`/api/v1/organizations/org1/bot/release-gate/${gateId}/approve`)
+        .set("Cookie", cookie)
+        .send({
+          role: "security",
+          notes: "Security review completed and approved."
+        })) as unknown as { status: number; body: ReleaseGateBody };
+
+      expect(approveRes.status).toBe(200);
+      expect(approveRes.body.gate).toBeDefined();
+    });
+
+    it("denies access to release gates for non-member", async () => {
+      const mockDb = createMockDb();
+      const app = createApiApp({
+        service: "api",
+        version: "dev",
+        gitSha: "dev",
+        environment: "local",
+        auth: { db: mockDb, config }
+      });
+
+      const cookie = serializeSessionCookie("bot-test-token-12345", false);
+      const res = (await request(app)
+        .get("/api/v1/organizations/other-org/bot/release-gate")
+        .set("Cookie", cookie)) as unknown as { status: number };
+
+      expect(res.status).toBe(403);
+    });
   });
 });

@@ -17,7 +17,7 @@ Before commencing the staging test suite, ensure the staging environment matches
 | Component                 | Staging Specification                    | Verification Method                                        |
 | :------------------------ | :--------------------------------------- | :--------------------------------------------------------- |
 | **Database**              | PostgreSQL 16 + pgvector, RLS enabled    | `pnpm --filter @flowdesk/db test:integration`              |
-| **Schema Migrations**     | Migrations 0001 through 0030 applied     | Query `flowdesk_meta.schema_migrations` count = 30         |
+| **Schema Migrations**     | Migrations 0001 through 0031 applied     | Query `flowdesk_meta.schema_migrations` count = 31         |
 | **API Cluster**           | 2x Node.js instances behind ALB          | `curl -f https://api.staging.flowdesk.internal/healthz`    |
 | **Worker Cluster**        | 2x Node.js workers processing outbox     | `curl -f https://worker.staging.flowdesk.internal/healthz` |
 | **Observability**         | Prometheus + Alertmanager + Grafana      | Dashboard `flowdesk-m5-slo-dashboard` loaded               |

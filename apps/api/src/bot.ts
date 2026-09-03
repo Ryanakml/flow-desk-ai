@@ -664,12 +664,14 @@ export function createBotRouter(options: BotRouterOptions): Router {
   router.get("/release-gate", requireAuth, requireView, async (request, response) => {
     try {
       const organizationId = getParam(request.params, "orgId");
-      const gates = await options.db.query<AutoReleaseGateRow>(
-        `SELECT * FROM flowdesk.auto_release_gates
-         WHERE organization_id = $1
-         ORDER BY created_at DESC`,
-        [organizationId]
-      );
+      const gates = await runInTenantTransaction(options.db, { organizationId }, async (db) => {
+        return db.query<AutoReleaseGateRow>(
+          `SELECT * FROM flowdesk.auto_release_gates
+           WHERE organization_id = $1
+           ORDER BY created_at DESC`,
+          [organizationId]
+        );
+      });
       return response.status(200).json({
         organizationId,
         releaseGates: gates.rows
@@ -689,39 +691,40 @@ export function createBotRouter(options: BotRouterOptions): Router {
     try {
       const organizationId = getParam(request.params, "orgId");
       const body = (request.body ?? {}) as CreateReleaseGateBody;
-      const botConfig = await getBotConfig(options.db, organizationId);
-      if (!botConfig) {
-        return sendProblem(response, 404, "NOT_FOUND", "Not found", "Bot configuration not found.");
-      }
 
-      const evalScores: BotEvaluationScores = {
-        groundedQuality: body.evalScores?.groundedQuality ?? 0,
-        noEvidenceFailClosedRate: body.evalScores?.noEvidenceFailClosedRate ?? 0,
-        prohibitedIntentBlockRate: body.evalScores?.prohibitedIntentBlockRate ?? 0,
-        multilingualAccuracy: body.evalScores?.multilingualAccuracy ?? 0,
-        promptInjectionDefenseRate: body.evalScores?.promptInjectionDefenseRate ?? 0,
-        humanEscalationRate: body.evalScores?.humanEscalationRate ?? 0
-      };
+      const result = await runInTenantTransaction(options.db, { organizationId }, async (db) => {
+        const botConfig = await getBotConfig(db, organizationId);
+        if (!botConfig) {
+          return { error: "NOT_FOUND" as const };
+        }
 
-      const gateConfig = {
-        organizationId,
-        botConfigId: botConfig.id,
-        policyId: body.policyId,
-        policyVersion: body.policyVersion ?? 1,
-        cohort: body.cohort ?? ("beta" as const),
-        evalScores,
-        approvals: body.approvals ?? [],
-        samplingRate: body.samplingRate ?? 0.1,
-        rateLimitPerHour: body.rateLimitPerHour ?? 60,
-        monthlyCostCeilingCents: body.monthlyCostCeilingCents ?? 50000,
-        customerConsentRequired: body.customerConsentRequired ?? true,
-        aiDisclosureEnabled: body.aiDisclosureEnabled ?? true,
-        rollbackOwner: body.rollbackOwner || ""
-      };
+        const evalScores: BotEvaluationScores = {
+          groundedQuality: body.evalScores?.groundedQuality ?? 0,
+          noEvidenceFailClosedRate: body.evalScores?.noEvidenceFailClosedRate ?? 0,
+          prohibitedIntentBlockRate: body.evalScores?.prohibitedIntentBlockRate ?? 0,
+          multilingualAccuracy: body.evalScores?.multilingualAccuracy ?? 0,
+          promptInjectionDefenseRate: body.evalScores?.promptInjectionDefenseRate ?? 0,
+          humanEscalationRate: body.evalScores?.humanEscalationRate ?? 0
+        };
 
-      const evaluation = evaluateAutoReleaseGate(gateConfig);
+        const gateConfig = {
+          organizationId,
+          botConfigId: botConfig.id,
+          policyId: body.policyId,
+          policyVersion: body.policyVersion ?? 1,
+          cohort: body.cohort ?? ("beta" as const),
+          evalScores,
+          approvals: body.approvals ?? [],
+          samplingRate: body.samplingRate ?? 0.1,
+          rateLimitPerHour: body.rateLimitPerHour ?? 60,
+          monthlyCostCeilingCents: body.monthlyCostCeilingCents ?? 50000,
+          customerConsentRequired: body.customerConsentRequired ?? true,
+          aiDisclosureEnabled: body.aiDisclosureEnabled ?? true,
+          rollbackOwner: body.rollbackOwner || ""
+        };
 
-      const inserted = await runInTenantTransaction(options.db, { organizationId }, async (db) => {
+        const evaluation = evaluateAutoReleaseGate(gateConfig);
+
         const res = await db.query<AutoReleaseGateRow>(
           `INSERT INTO flowdesk.auto_release_gates (
              organization_id, bot_config_id, policy_id, policy_version, cohort, status,
@@ -744,6 +747,7 @@ export function createBotRouter(options: BotRouterOptions): Router {
             gateConfig.rollbackOwner
           ]
         );
+
         await recordAuditEvent(db, {
           organizationId,
           actorUserId: request.user!.id,
@@ -753,13 +757,15 @@ export function createBotRouter(options: BotRouterOptions): Router {
           result: "allowed",
           metadata: { status: evaluation.status, cohort: gateConfig.cohort }
         });
-        return res.rows[0];
+
+        return { releaseGate: res.rows[0], evaluation };
       });
 
-      return response.status(201).json({
-        releaseGate: inserted,
-        evaluation
-      });
+      if ("error" in result && result.error === "NOT_FOUND") {
+        return sendProblem(response, 404, "NOT_FOUND", "Not found", "Bot configuration not found.");
+      }
+
+      return response.status(201).json(result);
     } catch {
       return sendProblem(
         response,
