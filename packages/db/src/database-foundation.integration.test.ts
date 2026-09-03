@@ -28,6 +28,16 @@ import {
   upsertBotConfig
 } from "./knowledge.js";
 import { getAnalyticsOverview } from "./analytics.js";
+import {
+  createPolicyDraft,
+  updatePolicyDraft,
+  publishPolicyDraft,
+  rollbackPolicyVersion,
+  getActivePublishedPolicy,
+  getPolicyById,
+  listPolicyVersions
+} from "./automation-policy.js";
+import { createRoutingRule, listRoutingRules } from "./routing.js";
 import type { DbClient } from "./auth.js";
 
 const executeFile = promisify(execFile);
@@ -1431,6 +1441,175 @@ describe("database foundation", () => {
         }
       );
       expect(gatesB).toHaveLength(0);
+    } finally {
+      await testPool.end();
+    }
+  });
+
+  it("enforces tenant RLS on automation_policies and routing_rules (#180 defect)", async () => {
+    const orgA = "00000000-0000-7000-8000-0000000000c1";
+    const orgB = "00000000-0000-7000-8000-0000000000c2";
+    await admin.query(
+      `INSERT INTO flowdesk.organizations (id, slug, display_name)
+       VALUES ($1, 'policy-org-a', 'Policy Org A'),
+              ($2, 'policy-org-b', 'Policy Org B')
+       ON CONFLICT (id) DO NOTHING`,
+      [orgA, orgB]
+    );
+
+    const testPool = new Pool({ connectionString });
+    try {
+      // 1. Unscoped runtime connection cannot insert into automation_policies (replicates defect)
+      const unscopedClient = await testPool.connect();
+      try {
+        await unscopedClient.query("SET ROLE flowdesk_runtime");
+        await expect(
+          unscopedClient.query(
+            `INSERT INTO flowdesk.automation_policies (
+               organization_id, version, status, name, rules, metadata
+             ) VALUES ($1, 1, 'draft', 'Defect Test', '[]'::jsonb, '{}'::jsonb)`,
+            [orgA]
+          )
+        ).rejects.toThrow(/violates row-level security policy for table "automation_policies"/);
+
+        // Unscoped select returns 0 rows
+        const unscopedSelect = await unscopedClient.query(
+          `SELECT * FROM flowdesk.automation_policies WHERE organization_id = $1`,
+          [orgA]
+        );
+        expect(unscopedSelect.rows).toHaveLength(0);
+      } finally {
+        await unscopedClient.query("RESET ROLE").catch(() => undefined);
+        unscopedClient.release();
+      }
+
+      // 2. Tenant-scoped transaction for Org A successfully creates draft v1
+      const draftV1 = await withTenantTransaction(testPool, { organizationId: orgA }, (client) =>
+        createPolicyDraft(client, {
+          organizationId: orgA,
+          name: "Org A Core Policy",
+          rules: [
+            {
+              id: "r1",
+              organizationId: orgA,
+              name: "Urgent Queue",
+              priority: 1,
+              conditions: { tag: "urgent" },
+              targetQueueId: "00000000-0000-7000-8000-000000000099",
+              targetTeamId: null,
+              targetUserId: null,
+              isActive: true
+            }
+          ]
+        })
+      );
+      expect(draftV1.id).toBeDefined();
+      expect(draftV1.version).toBe(1);
+      expect(draftV1.status).toBe("draft");
+
+      // 3. Tenant-scoped update draft v1
+      const updatedDraft = await withTenantTransaction(
+        testPool,
+        { organizationId: orgA },
+        (client) =>
+          updatePolicyDraft(client, {
+            organizationId: orgA,
+            policyId: draftV1.id,
+            name: "Org A Core Policy Renamed"
+          })
+      );
+      expect(updatedDraft?.name).toBe("Org A Core Policy Renamed");
+
+      // 4. Publish draft v1
+      const publishedV1 = await withTenantTransaction(
+        testPool,
+        { organizationId: orgA },
+        (client) =>
+          publishPolicyDraft(client, {
+            organizationId: orgA,
+            policyId: draftV1.id,
+            notes: "Initial launch"
+          })
+      );
+      expect(publishedV1.status).toBe("published");
+
+      // 5. Active published policy is visible for Org A
+      const activePolicy = await withTenantTransaction(
+        testPool,
+        { organizationId: orgA },
+        (client) => getActivePublishedPolicy(client, orgA)
+      );
+      expect(activePolicy?.id).toBe(draftV1.id);
+      expect(activePolicy?.status).toBe("published");
+
+      // 6. Create draft v2 and publish it, archiving v1
+      const draftV2 = await withTenantTransaction(testPool, { organizationId: orgA }, (client) =>
+        createPolicyDraft(client, {
+          organizationId: orgA,
+          name: "Org A Policy v2",
+          rules: []
+        })
+      );
+      expect(draftV2.version).toBe(2);
+
+      await withTenantTransaction(testPool, { organizationId: orgA }, (client) =>
+        publishPolicyDraft(client, {
+          organizationId: orgA,
+          policyId: draftV2.id,
+          notes: "Second launch"
+        })
+      );
+
+      // 7. Rollback to v1 (creates v3 with v1 content)
+      const rolledBack = await withTenantTransaction(testPool, { organizationId: orgA }, (client) =>
+        rollbackPolicyVersion(client, {
+          organizationId: orgA,
+          targetPolicyId: draftV1.id,
+          notes: "Emergency rollback to v1"
+        })
+      );
+      expect(rolledBack.version).toBe(3);
+      expect(rolledBack.status).toBe("published");
+
+      // 8. List policy versions for Org A
+      const versionsA = await withTenantTransaction(testPool, { organizationId: orgA }, (client) =>
+        listPolicyVersions(client, orgA)
+      );
+      expect(versionsA).toHaveLength(3);
+
+      // 9. Cross-tenant isolation: Org B sees zero policies and cannot access Org A's policies
+      const policiesForB = await withTenantTransaction(
+        testPool,
+        { organizationId: orgB },
+        (client) => listPolicyVersions(client, orgA)
+      );
+      expect(policiesForB).toHaveLength(0);
+
+      const activeForB = await withTenantTransaction(testPool, { organizationId: orgB }, (client) =>
+        getActivePublishedPolicy(client, orgA)
+      );
+      expect(activeForB).toBeNull();
+
+      const singleForB = await withTenantTransaction(testPool, { organizationId: orgB }, (client) =>
+        getPolicyById(client, orgA, draftV1.id)
+      );
+      expect(singleForB).toBeNull();
+
+      // 10. Legacy routing rules also respect tenant RLS
+      const ruleA = await withTenantTransaction(testPool, { organizationId: orgA }, (client) =>
+        createRoutingRule(client, {
+          organizationId: orgA,
+          name: "Rule A",
+          priority: 10,
+          conditions: { tag: "support" }
+        })
+      );
+      expect(ruleA.id).toBeDefined();
+
+      const rulesB = await withTenantTransaction(testPool, { organizationId: orgB }, (client) =>
+        listRoutingRules(client, orgA)
+      );
+      expect(rulesB).toHaveLength(0);
     } finally {
       await testPool.end();
     }

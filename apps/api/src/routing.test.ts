@@ -172,17 +172,18 @@ function createMockDb(): DbClient {
 
       if (sql.includes("INSERT INTO flowdesk.automation_policies")) {
         const id = `00000000-0000-5000-8000-00000000000${policyCounter++}`;
+        const isPublished = sql.includes("'published'");
         const row: MockPolicyRow = {
           id,
           organization_id: values[0] as string,
           version: values[1] as number,
-          status: "draft",
+          status: isPublished ? "published" : "draft",
           name: values[2] as string,
           rules: JSON.parse(values[3] as string) as Record<string, unknown>[],
           metadata: JSON.parse(values[4] as string) as Record<string, unknown>,
           created_by_user_id: values[5] as string | null,
-          published_by_user_id: null,
-          published_at: null,
+          published_by_user_id: isPublished ? (values[5] as string | null) : null,
+          published_at: isPublished ? new Date() : null,
           created_at: new Date(),
           updated_at: new Date()
         };
@@ -664,6 +665,137 @@ describe("Routing Rules & Automation Policy API (M5-01 / #180)", () => {
 
       expect(logsRes.status).toBe(200);
       expect(logsRes.body).toBeInstanceOf(Array);
+    });
+  });
+
+  describe("Tenant context and RLS regression tests (#180)", () => {
+    it("creates draft, lists policies, publishes, and simulates under tenant context", async () => {
+      const db = createMockDb();
+      const app = makeApp(db);
+
+      // 1. POST /policies/draft returns 201
+      const draftRes = await request(app)
+        .post(`/api/v1/organizations/${orgId}/routing/policies/draft`)
+        .set("Cookie", [adminCookie])
+        .send({
+          name: "Tenant Scoped Policy",
+          rules: [
+            {
+              id: "r-tenant",
+              name: "Tenant VIP",
+              priority: 1,
+              conditions: { plan: "enterprise" },
+              targetQueueId: "00000000-0000-7000-8000-000000000099",
+              action: "route",
+              isActive: true
+            }
+          ]
+        });
+
+      expect(draftRes.status).toBe(201);
+      const draft = draftRes.body as AutomationPolicyResponse;
+      expect(draft.organizationId).toBe(orgId);
+      expect(draft.version).toBe(1);
+      expect(draft.status).toBe("draft");
+
+      // 2. GET /policies reads only tenant rows
+      const listRes = await request(app)
+        .get(`/api/v1/organizations/${orgId}/routing/policies`)
+        .set("Cookie", [adminCookie]);
+      expect(listRes.status).toBe(200);
+      const list = listRes.body as AutomationPolicyResponse[];
+      expect(list).toHaveLength(1);
+      expect(list[0]?.id).toBe(draft.id);
+
+      // 3. PUT /policies/draft/:id updates draft
+      const updateRes = await request(app)
+        .put(`/api/v1/organizations/${orgId}/routing/policies/draft/${draft.id}`)
+        .set("Cookie", [adminCookie])
+        .send({ name: "Tenant Scoped Policy Renamed" });
+      expect(updateRes.status).toBe(200);
+      expect((updateRes.body as AutomationPolicyResponse).name).toBe(
+        "Tenant Scoped Policy Renamed"
+      );
+
+      // 4. POST /policies/:id/publish publishes draft atomically
+      const publishRes = await request(app)
+        .post(`/api/v1/organizations/${orgId}/routing/policies/${draft.id}/publish`)
+        .set("Cookie", [adminCookie])
+        .send({ notes: "Publishing under tenant context" });
+      expect(publishRes.status).toBe(200);
+      expect((publishRes.body as AutomationPolicyResponse).status).toBe("published");
+
+      // 5. GET /policies/active returns the published policy
+      const activeRes = await request(app)
+        .get(`/api/v1/organizations/${orgId}/routing/policies/active`)
+        .set("Cookie", [adminCookie]);
+      expect(activeRes.status).toBe(200);
+      expect((activeRes.body as AutomationPolicyResponse).id).toBe(draft.id);
+
+      // 6. POST /policies/:id/rollback restores version
+      const rollbackRes = await request(app)
+        .post(`/api/v1/organizations/${orgId}/routing/policies/${draft.id}/rollback`)
+        .set("Cookie", [adminCookie])
+        .send({ notes: "Rollback test" });
+      expect(rollbackRes.status).toBe(200);
+
+      // 7. POST /policies/simulate loads tenant policy
+      const simRes = await request(app)
+        .post(`/api/v1/organizations/${orgId}/routing/policies/simulate`)
+        .set("Cookie", [adminCookie])
+        .send({
+          context: {
+            customerPhone: "+6281234567890",
+            messageBody: "Urgent enterprise issue",
+            tags: [],
+            extractedEntities: { plan: "enterprise" }
+          }
+        });
+      expect(simRes.status).toBe(200);
+      const sim = simRes.body as SimulatePolicyResponse;
+      expect(sim.matchedRule?.name).toBe("Tenant VIP");
+    });
+
+    it("denies cross-tenant policy access", async () => {
+      const db = createMockDb();
+      const app = makeApp(db);
+
+      // admin is member of orgId, but NOT otherOrgId
+      const res = await request(app)
+        .get(`/api/v1/organizations/${otherOrgId}/routing/policies`)
+        .set("Cookie", [adminCookie]);
+
+      expect(res.status).toBe(403);
+    });
+
+    it("successfully creates policy draft when db is a pg.Pool using runInTenantTransaction", async () => {
+      const mockDb = createMockDb();
+      const poolClient = {
+        query: mockDb.query.bind(mockDb),
+        release: () => {},
+        connect: () =>
+          Promise.reject(new Error("Client has already been connected. You cannot reuse a client."))
+      };
+      const pool = {
+        query: mockDb.query.bind(mockDb),
+        connect: () => Promise.resolve(poolClient),
+        totalCount: 5,
+        idleCount: 3,
+        waitingCount: 0
+      };
+
+      const app = makeApp(pool as unknown as DbClient);
+
+      const res = await request(app)
+        .post(`/api/v1/organizations/${orgId}/routing/policies/draft`)
+        .set("Cookie", [adminCookie])
+        .send({
+          name: "Pool Tenant Policy",
+          rules: []
+        });
+
+      expect(res.status).toBe(201);
+      expect((res.body as AutomationPolicyResponse).name).toBe("Pool Tenant Policy");
     });
   });
 });

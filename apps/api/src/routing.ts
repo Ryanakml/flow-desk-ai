@@ -26,6 +26,7 @@ import {
   getPolicyById,
   listPolicyVersions,
   listDetailedRoutingLogsForConversation,
+  runInTenantTransaction,
   type DbClient,
   type DbRoutingRule,
   type RoutingLogRecord,
@@ -160,7 +161,9 @@ export function createRoutingRouter(options: RoutingRouterOptions): Router {
     async (request: Request, response: Response) => {
       try {
         const orgId = getParam(request.params, "orgId");
-        const policies = await listPolicyVersions(options.db, orgId);
+        const policies = await runInTenantTransaction(options.db, { organizationId: orgId }, (db) =>
+          listPolicyVersions(db, orgId)
+        );
         return response.status(200).json(policies.map(formatPolicyResponse));
       } catch (err) {
         return sendProblem(
@@ -182,7 +185,9 @@ export function createRoutingRouter(options: RoutingRouterOptions): Router {
     async (request: Request, response: Response) => {
       try {
         const orgId = getParam(request.params, "orgId");
-        const policy = await getActivePublishedPolicy(options.db, orgId);
+        const policy = await runInTenantTransaction(options.db, { organizationId: orgId }, (db) =>
+          getActivePublishedPolicy(db, orgId)
+        );
         if (!policy) {
           return sendProblem(
             response,
@@ -214,7 +219,9 @@ export function createRoutingRouter(options: RoutingRouterOptions): Router {
       try {
         const orgId = getParam(request.params, "orgId");
         const policyId = getParam(request.params, "policyId");
-        const policy = await getPolicyById(options.db, orgId, policyId);
+        const policy = await runInTenantTransaction(options.db, { organizationId: orgId }, (db) =>
+          getPolicyById(db, orgId, policyId)
+        );
         if (!policy) {
           return sendProblem(
             response,
@@ -257,13 +264,15 @@ export function createRoutingRouter(options: RoutingRouterOptions): Router {
         }
 
         const actorUserId = request.user?.id ?? null;
-        const draft = await createPolicyDraft(options.db, {
-          organizationId: orgId,
-          name: parseResult.data.name,
-          rules: parseResult.data.rules as RoutingRule[],
-          metadata: parseResult.data.metadata,
-          userId: actorUserId
-        });
+        const draft = await runInTenantTransaction(options.db, { organizationId: orgId }, (db) =>
+          createPolicyDraft(db, {
+            organizationId: orgId,
+            name: parseResult.data.name,
+            rules: parseResult.data.rules as RoutingRule[],
+            metadata: parseResult.data.metadata,
+            userId: actorUserId
+          })
+        );
 
         return response.status(201).json(formatPolicyResponse(draft));
       } catch (err) {
@@ -298,13 +307,15 @@ export function createRoutingRouter(options: RoutingRouterOptions): Router {
           );
         }
 
-        const updated = await updatePolicyDraft(options.db, {
-          organizationId: orgId,
-          policyId,
-          name: parseResult.data.name,
-          rules: parseResult.data.rules as RoutingRule[] | undefined,
-          metadata: parseResult.data.metadata
-        });
+        const updated = await runInTenantTransaction(options.db, { organizationId: orgId }, (db) =>
+          updatePolicyDraft(db, {
+            organizationId: orgId,
+            policyId,
+            name: parseResult.data.name,
+            rules: parseResult.data.rules as RoutingRule[] | undefined,
+            metadata: parseResult.data.metadata
+          })
+        );
 
         if (!updated) {
           return sendProblem(
@@ -349,38 +360,55 @@ export function createRoutingRouter(options: RoutingRouterOptions): Router {
           );
         }
 
-        const draft = await getPolicyById(options.db, orgId, policyId);
-        if (!draft) {
-          return sendProblem(
-            response,
-            404,
-            "RESOURCE_NOT_FOUND",
-            "Resource not found",
-            `Policy draft ${policyId} not found`
-          );
-        }
-
-        const conflicts = detectPolicyConflicts(draft.rules);
-        const fatalConflicts = conflicts.filter((c) => c.severity === "error");
-        if (fatalConflicts.length > 0) {
-          return sendProblem(
-            response,
-            409,
-            "POLICY_CONFLICT",
-            "Policy Conflict",
-            `Cannot publish policy with fatal conflicts: ${fatalConflicts.map((c) => c.message).join("; ")}`
-          );
-        }
+        type PublishDraftResult =
+          | { error: "NOT_FOUND" }
+          | { error: "CONFLICT"; message: string }
+          | { published: DbAutomationPolicy };
 
         const actorUserId = request.user?.id ?? null;
-        const published = await publishPolicyDraft(options.db, {
-          organizationId: orgId,
-          policyId,
-          userId: actorUserId,
-          notes: parseResult.data.notes
-        });
+        const result = await runInTenantTransaction(
+          options.db,
+          { organizationId: orgId },
+          async (db): Promise<PublishDraftResult> => {
+            const draft = await getPolicyById(db, orgId, policyId);
+            if (!draft) {
+              return { error: "NOT_FOUND" };
+            }
 
-        return response.status(200).json(formatPolicyResponse(published));
+            const conflicts = detectPolicyConflicts(draft.rules);
+            const fatalConflicts = conflicts.filter((c) => c.severity === "error");
+            if (fatalConflicts.length > 0) {
+              return {
+                error: "CONFLICT" as const,
+                message: `Cannot publish policy with fatal conflicts: ${fatalConflicts.map((c) => c.message).join("; ")}`
+              };
+            }
+
+            const published = await publishPolicyDraft(db, {
+              organizationId: orgId,
+              policyId,
+              userId: actorUserId,
+              notes: parseResult.data.notes
+            });
+
+            return { published };
+          }
+        );
+
+        if ("error" in result) {
+          if (result.error === "NOT_FOUND") {
+            return sendProblem(
+              response,
+              404,
+              "RESOURCE_NOT_FOUND",
+              "Resource not found",
+              `Policy draft ${policyId} not found`
+            );
+          }
+          return sendProblem(response, 409, "POLICY_CONFLICT", "Policy Conflict", result.message);
+        }
+
+        return response.status(200).json(formatPolicyResponse(result.published));
       } catch (err) {
         return sendProblem(
           response,
@@ -409,12 +437,14 @@ export function createRoutingRouter(options: RoutingRouterOptions): Router {
         };
         const notes = typeof reqBody.notes === "string" ? reqBody.notes : undefined;
 
-        const restored = await rollbackPolicyVersion(options.db, {
-          organizationId: orgId,
-          targetPolicyId: policyId,
-          userId: actorUserId,
-          notes
-        });
+        const restored = await runInTenantTransaction(options.db, { organizationId: orgId }, (db) =>
+          rollbackPolicyVersion(db, {
+            organizationId: orgId,
+            targetPolicyId: policyId,
+            userId: actorUserId,
+            notes
+          })
+        );
 
         return response.status(200).json(formatPolicyResponse(restored));
       } catch (err) {
@@ -448,42 +478,50 @@ export function createRoutingRouter(options: RoutingRouterOptions): Router {
           );
         }
 
-        let rulesToEvaluate: RoutingRule[] = [];
-        let policyVersion: number | undefined = parseResult.data.policyVersion;
+        const { rulesToEvaluate, effectivePolicyVersion } = await runInTenantTransaction(
+          options.db,
+          { organizationId: orgId },
+          async (db) => {
+            let evaluatedRules: RoutingRule[] = [];
+            let version: number | undefined = parseResult.data.policyVersion;
 
-        if (parseResult.data.rules && parseResult.data.rules.length > 0) {
-          rulesToEvaluate = parseResult.data.rules as RoutingRule[];
-        } else if (policyVersion !== undefined) {
-          const versions = await listPolicyVersions(options.db, orgId);
-          const matched = versions.find((v) => v.version === policyVersion);
-          if (matched) {
-            rulesToEvaluate = matched.rules;
+            if (parseResult.data.rules && parseResult.data.rules.length > 0) {
+              evaluatedRules = parseResult.data.rules as RoutingRule[];
+            } else if (version !== undefined) {
+              const versions = await listPolicyVersions(db, orgId);
+              const matched = versions.find((v) => v.version === version);
+              if (matched) {
+                evaluatedRules = matched.rules;
+              }
+            } else {
+              const activePolicy = await getActivePublishedPolicy(db, orgId);
+              if (activePolicy) {
+                evaluatedRules = activePolicy.rules;
+                version = activePolicy.version;
+              } else {
+                const legacyRules = await listRoutingRules(db, orgId);
+                evaluatedRules = legacyRules.map((r) => ({
+                  id: r.id,
+                  organizationId: r.organizationId,
+                  name: r.name,
+                  priority: r.priority,
+                  conditions: r.conditions,
+                  targetQueueId: r.targetQueueId,
+                  targetTeamId: r.targetTeamId,
+                  targetUserId: r.targetUserId,
+                  isActive: r.isActive
+                }));
+              }
+            }
+
+            return { rulesToEvaluate: evaluatedRules, effectivePolicyVersion: version };
           }
-        } else {
-          const activePolicy = await getActivePublishedPolicy(options.db, orgId);
-          if (activePolicy) {
-            rulesToEvaluate = activePolicy.rules;
-            policyVersion = activePolicy.version;
-          } else {
-            const legacyRules = await listRoutingRules(options.db, orgId);
-            rulesToEvaluate = legacyRules.map((r) => ({
-              id: r.id,
-              organizationId: r.organizationId,
-              name: r.name,
-              priority: r.priority,
-              conditions: r.conditions,
-              targetQueueId: r.targetQueueId,
-              targetTeamId: r.targetTeamId,
-              targetUserId: r.targetUserId,
-              isActive: r.isActive
-            }));
-          }
-        }
+        );
 
         const simulation = simulatePolicyEvaluation({
           rules: rulesToEvaluate,
           context: parseResult.data.context,
-          policyVersion
+          policyVersion: effectivePolicyVersion
         });
 
         const simulationResult: SimulatePolicyResponse = {
@@ -541,7 +579,9 @@ export function createRoutingRouter(options: RoutingRouterOptions): Router {
     async (request: Request, response: Response) => {
       try {
         const orgId = getParam(request.params, "orgId");
-        const rules = await listRoutingRules(options.db, orgId);
+        const rules = await runInTenantTransaction(options.db, { organizationId: orgId }, (db) =>
+          listRoutingRules(db, orgId)
+        );
         return response.status(200).json(rules.map(formatRuleResponse));
       } catch (err) {
         return sendProblem(
@@ -574,10 +614,12 @@ export function createRoutingRouter(options: RoutingRouterOptions): Router {
           );
         }
 
-        const created = await createRoutingRule(options.db, {
-          organizationId: orgId,
-          ...parseResult.data
-        });
+        const created = await runInTenantTransaction(options.db, { organizationId: orgId }, (db) =>
+          createRoutingRule(db, {
+            organizationId: orgId,
+            ...parseResult.data
+          })
+        );
 
         return response.status(201).json(formatRuleResponse(created));
       } catch (err) {
@@ -601,7 +643,9 @@ export function createRoutingRouter(options: RoutingRouterOptions): Router {
       try {
         const orgId = getParam(request.params, "orgId");
         const ruleId = getParam(request.params, "ruleId");
-        const rule = await getRoutingRuleById(options.db, orgId, ruleId);
+        const rule = await runInTenantTransaction(options.db, { organizationId: orgId }, (db) =>
+          getRoutingRuleById(db, orgId, ruleId)
+        );
         if (!rule) {
           return sendProblem(
             response,
@@ -645,7 +689,9 @@ export function createRoutingRouter(options: RoutingRouterOptions): Router {
           );
         }
 
-        const updated = await updateRoutingRule(options.db, orgId, ruleId, parseResult.data);
+        const updated = await runInTenantTransaction(options.db, { organizationId: orgId }, (db) =>
+          updateRoutingRule(db, orgId, ruleId, parseResult.data)
+        );
         if (!updated) {
           return sendProblem(
             response,
@@ -679,7 +725,9 @@ export function createRoutingRouter(options: RoutingRouterOptions): Router {
         const orgId = getParam(request.params, "orgId");
         const ruleId = getParam(request.params, "ruleId");
 
-        const deleted = await deleteRoutingRule(options.db, orgId, ruleId);
+        const deleted = await runInTenantTransaction(options.db, { organizationId: orgId }, (db) =>
+          deleteRoutingRule(db, orgId, ruleId)
+        );
         if (!deleted) {
           return sendProblem(
             response,
@@ -713,10 +761,8 @@ export function createRoutingRouter(options: RoutingRouterOptions): Router {
         const orgId = getParam(request.params, "orgId");
         const conversationId = getParam(request.params, "conversationId");
 
-        const logs = await listDetailedRoutingLogsForConversation(
-          options.db,
-          orgId,
-          conversationId
+        const logs = await runInTenantTransaction(options.db, { organizationId: orgId }, (db) =>
+          listDetailedRoutingLogsForConversation(db, orgId, conversationId)
         );
         return response.status(200).json(logs.map(formatLogResponse));
       } catch (err) {
