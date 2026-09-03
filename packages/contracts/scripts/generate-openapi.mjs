@@ -156,9 +156,36 @@ export function buildOpenApiSpec() {
         }
       },
       "/api/v1/auth/logout": {
+        get: {
+          summary: "Revoke session, clear cookies, and redirect to upstream OIDC logout endpoint",
+          operationId: "authLogoutGet",
+          parameters: [
+            {
+              name: "returnTo",
+              in: "query",
+              required: false,
+              description: "Optional safe post-logout return path or URL",
+              schema: { type: "string", example: "/" }
+            }
+          ],
+          responses: {
+            302: {
+              description: "Redirect to provider logout URL"
+            }
+          }
+        },
         post: {
-          summary: "Revoke session and clear cookies",
+          summary: "Revoke session and clear cookies, returning upstream logoutUrl",
           operationId: "authLogout",
+          parameters: [
+            {
+              name: "returnTo",
+              in: "query",
+              required: false,
+              description: "Optional safe post-logout return path or URL",
+              schema: { type: "string", example: "/" }
+            }
+          ],
           responses: {
             200: {
               description: "Successfully logged out",
@@ -166,7 +193,10 @@ export function buildOpenApiSpec() {
                 "application/json": {
                   schema: {
                     type: "object",
-                    properties: { status: { type: "string", example: "ok" } },
+                    properties: {
+                      status: { type: "string", example: "ok" },
+                      logoutUrl: { type: "string", format: "uri" }
+                    },
                     required: ["status"]
                   }
                 }

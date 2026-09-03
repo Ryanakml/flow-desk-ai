@@ -10,8 +10,11 @@ export {
 } from "./session.js";
 export {
   createOidcAuthorizationRequest,
+  createOidcLogoutUrl,
+  validateLogoutReturnUrl,
   hashOidcSecret,
-  type OidcAuthorizationRequest
+  type OidcAuthorizationRequest,
+  type OidcLogoutUrlOptions
 } from "./oidc.js";
 export { getSecurityHeaders, type SecurityHeadersOptions } from "./headers.js";
 export {

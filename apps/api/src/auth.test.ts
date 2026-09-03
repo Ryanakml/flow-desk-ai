@@ -365,3 +365,206 @@ describe("API Auth and Session lifecycle (M1-04)", () => {
     expect(revokedBody.code).toBe("SESSION_EXPIRED");
   });
 });
+
+describe("M1-10 Upstream Auth0/OIDC SSO termination on logout and prompt control", () => {
+  it("POST /api/v1/auth/logout revokes session, clears cookie, and returns safe logoutUrl", async () => {
+    const db = createMockDb();
+    const config = loadAuthConfig({
+      AUTH_COOKIE_SECURE: "false",
+      AUTH_MOCK_ENABLED: "true",
+      APP_BASE_URL: "https://app.flowdesk.dev",
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/flowdesk"
+    });
+    const app = createApiApp({
+      service: "api",
+      version: "test",
+      gitSha: "test-sha",
+      environment: "local",
+      auth: {
+        db,
+        config,
+        identityProvider: new MockIdentityProvider()
+      }
+    });
+
+    // Login first to obtain session
+    const loginRes = await request(app)
+      .get("/api/v1/auth/login")
+      .set("Accept", "application/json")
+      .expect(200);
+    const callbackUrl = new URL((loginRes.body as { authorizationUrl: string }).authorizationUrl);
+    const code = callbackUrl.searchParams.get("code")!;
+    const state = callbackUrl.searchParams.get("state")!;
+    const callbackRes = await request(app)
+      .get(`/api/v1/auth/callback?code=${code}&state=${state}`)
+      .set("Accept", "application/json")
+      .expect(200);
+    const sessionCookie = getCookies(callbackRes.headers["set-cookie"])[0]!;
+
+    // POST logout
+    const logoutRes = await request(app)
+      .post("/api/v1/auth/logout")
+      .set("Cookie", sessionCookie)
+      .set("Accept", "application/json")
+      .expect(200);
+
+    expect(logoutRes.body).toEqual({
+      status: "ok",
+      logoutUrl: "https://app.flowdesk.dev"
+    });
+    expect(getCookies(logoutRes.headers["set-cookie"])[0]).toContain("Max-Age=0");
+
+    // Session is now revoked
+    await request(app).get("/api/v1/auth/session").set("Cookie", sessionCookie).expect(401);
+  });
+
+  it("GET /api/v1/auth/logout revokes session, clears cookie, and redirects with 302 to logoutUrl", async () => {
+    const db = createMockDb();
+    const config = loadAuthConfig({
+      AUTH_COOKIE_SECURE: "false",
+      AUTH_MOCK_ENABLED: "true",
+      APP_BASE_URL: "https://app.flowdesk.dev",
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/flowdesk"
+    });
+    const app = createApiApp({
+      service: "api",
+      version: "test",
+      gitSha: "test-sha",
+      environment: "local",
+      auth: {
+        db,
+        config,
+        identityProvider: new MockIdentityProvider()
+      }
+    });
+
+    // Perform GET logout
+    const logoutRes = await request(app).get("/api/v1/auth/logout?returnTo=/login").expect(302);
+
+    expect(logoutRes.headers["location"]).toBe("https://app.flowdesk.dev/login");
+    expect(getCookies(logoutRes.headers["set-cookie"])[0]).toContain("Max-Age=0");
+  });
+
+  it("POST /api/v1/auth/logout validates returnTo and prevents open redirects", async () => {
+    const db = createMockDb();
+    const config = loadAuthConfig({
+      AUTH_COOKIE_SECURE: "false",
+      AUTH_MOCK_ENABLED: "true",
+      APP_BASE_URL: "https://app.flowdesk.dev",
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/flowdesk"
+    });
+    const app = createApiApp({
+      service: "api",
+      version: "test",
+      gitSha: "test-sha",
+      environment: "local",
+      auth: {
+        db,
+        config,
+        identityProvider: new MockIdentityProvider()
+      }
+    });
+
+    // Malicious returnTo attempt
+    const maliciousRes = await request(app)
+      .post("/api/v1/auth/logout?returnTo=https://evil.com/phish")
+      .set("Accept", "application/json")
+      .expect(200);
+
+    // Falls back to safe APP_BASE_URL
+    expect((maliciousRes.body as { logoutUrl: string }).logoutUrl).toBe("https://app.flowdesk.dev");
+
+    // Valid relative path returnTo
+    const safeRes = await request(app)
+      .post("/api/v1/auth/logout?returnTo=/logged-out")
+      .set("Accept", "application/json")
+      .expect(200);
+
+    expect((safeRes.body as { logoutUrl: string }).logoutUrl).toBe(
+      "https://app.flowdesk.dev/logged-out"
+    );
+  });
+
+  it("constructs upstream Auth0 v2 logout URL when configured in OIDC mode without exposing secrets", async () => {
+    const db = createMockDb();
+    const config = loadAuthConfig({
+      AUTH_COOKIE_SECURE: "false",
+      AUTH_MOCK_ENABLED: "false",
+      AUTH_OIDC_ISSUER: "https://flowdesk-dev.us.auth0.com",
+      AUTH_OIDC_CLIENT_ID: "auth0-client-id-abc",
+      AUTH_OIDC_CLIENT_SECRET: "super-secret-key-12345",
+      APP_BASE_URL: "https://app.flowdesk.dev",
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/flowdesk"
+    });
+    const app = createApiApp({
+      service: "api",
+      version: "test",
+      gitSha: "test-sha",
+      environment: "local",
+      auth: {
+        db,
+        config,
+        identityProvider: new MockIdentityProvider()
+      }
+    });
+
+    const logoutRes = await request(app)
+      .post("/api/v1/auth/logout?returnTo=/goodbye")
+      .set("Accept", "application/json")
+      .expect(200);
+
+    const logoutUrl = (logoutRes.body as { logoutUrl: string }).logoutUrl;
+    expect(logoutUrl).toBe(
+      "https://flowdesk-dev.us.auth0.com/v2/logout?client_id=auth0-client-id-abc&returnTo=https%3A%2F%2Fapp.flowdesk.dev%2Fgoodbye"
+    );
+    expect(logoutUrl).not.toContain("super-secret-key");
+    expect(logoutUrl).not.toContain("client_secret");
+  });
+
+  it("handles prompt parameter on login/authorize: normal SSO preserved vs forced reauth and switch account", async () => {
+    const db = createMockDb();
+    const config = loadAuthConfig({
+      AUTH_COOKIE_SECURE: "false",
+      AUTH_MOCK_ENABLED: "false",
+      AUTH_OIDC_ISSUER: "https://flowdesk-dev.us.auth0.com",
+      AUTH_OIDC_CLIENT_ID: "auth0-client-id-abc",
+      APP_BASE_URL: "https://app.flowdesk.dev",
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/flowdesk"
+    });
+    const app = createApiApp({
+      service: "api",
+      version: "test",
+      gitSha: "test-sha",
+      environment: "local",
+      auth: {
+        db,
+        config,
+        identityProvider: new MockIdentityProvider()
+      }
+    });
+
+    // 1. Normal login: prompt omitted to preserve standard SSO session
+    const normalRes = await request(app)
+      .get("/api/v1/auth/login")
+      .set("Accept", "application/json")
+      .expect(200);
+    const normalUrl = new URL((normalRes.body as { authorizationUrl: string }).authorizationUrl);
+    expect(normalUrl.searchParams.has("prompt")).toBe(false);
+
+    // 2. Forced reauthentication: prompt=login
+    const reauthRes = await request(app)
+      .get("/api/v1/auth/login?prompt=login")
+      .set("Accept", "application/json")
+      .expect(200);
+    const reauthUrl = new URL((reauthRes.body as { authorizationUrl: string }).authorizationUrl);
+    expect(reauthUrl.searchParams.get("prompt")).toBe("login");
+
+    // 3. Switch account: prompt=select_account (or ?switch=true)
+    const switchRes = await request(app)
+      .get("/api/v1/auth/login?switch=true")
+      .set("Accept", "application/json")
+      .expect(200);
+    const switchUrl = new URL((switchRes.body as { authorizationUrl: string }).authorizationUrl);
+    expect(switchUrl.searchParams.get("prompt")).toBe("select_account");
+  });
+});

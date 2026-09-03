@@ -94,11 +94,20 @@ export async function getSession(fetcher: typeof fetch = fetch): Promise<Session
   return SessionStateSchema.parse(data);
 }
 
-export async function logout(fetcher: typeof fetch = fetch): Promise<void> {
+export interface LogoutResult {
+  status: string;
+  logoutUrl?: string;
+}
+
+export async function logout(fetcher: typeof fetch = fetch): Promise<LogoutResult> {
   const res = await fetcher("/api/v1/auth/logout", {
-    method: "POST"
+    method: "POST",
+    headers: {
+      Accept: "application/json"
+    }
   });
-  await handleResponse(res);
+  const data = await handleResponse<LogoutResult>(res);
+  return data;
 }
 
 export async function listUserOrganizations(

@@ -211,14 +211,19 @@ export function App() {
 
   // Sign out
   const handleLogout = async () => {
+    let logoutUrl: string | undefined;
     try {
-      await logout();
+      const res = await logout();
+      logoutUrl = res.logoutUrl;
     } catch {
       // Proceed even if network fails
     }
     setSessionUser(null);
     setOrganizations([]);
     setSelectedOrgId(null);
+    if (typeof window !== "undefined") {
+      window.location.href = logoutUrl || "/";
+    }
   };
 
   // Bootstrap organization
