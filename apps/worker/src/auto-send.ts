@@ -4,7 +4,8 @@ import {
   createMessage,
   createOutboundMessageWithOutbox,
   getOutboundMessageByBotRun,
-  recordAuditEvent
+  recordAuditEvent,
+  resolveAutomationSafety
 } from "@flowdesk/db";
 import {
   validateAutoSendPolicy,
@@ -25,6 +26,7 @@ interface AutoRunState {
   operator_action: string | null;
   run_created_at: Date;
   conversation_id: string;
+  channel_id: string;
   conversation_status: string;
   bot_paused: boolean;
   assigned_to_user_id: string | null;
@@ -58,7 +60,8 @@ export async function processCompletedAutoRun(
     `SELECT run.id AS run_id, run.trigger_message_id, run.bot_config_id,
             run.status AS run_status, run.mode AS run_mode, run.confidence,
             run.suggested_content, run.operator_action, run.created_at AS run_created_at,
-            conversation.id AS conversation_id, conversation.status AS conversation_status,
+            conversation.id AS conversation_id, conversation.channel_id,
+            conversation.status AS conversation_status,
             conversation.bot_paused, conversation.assigned_to_user_id,
             conversation.last_inbound_at,
             config.id AS config_id, config.mode AS config_mode,
@@ -107,6 +110,20 @@ export async function processCompletedAutoRun(
   if (state.run_mode !== "auto" || state.run_status !== "completed" || state.operator_action) {
     return deny("Bot run is not an actionable completed AUTO run");
   }
+
+  const durableSafety = await resolveAutomationSafety(db, {
+    organizationId: input.organizationId,
+    botConfigId: state.bot_config_id,
+    channelId: state.channel_id,
+    conversationId: state.conversation_id
+  });
+  if (durableSafety) {
+    return deny(
+      `Automation safety stop is active (${durableSafety.scope}): ${durableSafety.reason}`,
+      true
+    );
+  }
+
   if (
     state.config_id !== state.bot_config_id ||
     state.config_mode !== "auto" ||
@@ -239,6 +256,12 @@ export async function evaluateAndProcessAutoSend(
     60
   );
 
+  const durableSafety = await resolveAutomationSafety(db, {
+    organizationId: params.organizationId,
+    channelId: params.channelId,
+    conversationId: params.conversationId
+  });
+
   const context: PreSendValidationContext = {
     botMode: params.botMode ?? "auto",
     confidenceScore: params.confidenceScore,
@@ -247,7 +270,7 @@ export async function evaluateAndProcessAutoSend(
     isWithinServiceWindow: params.isWithinServiceWindow,
     customerIntent: params.customerIntent,
     autoReplyCountLastHour: recentCount,
-    isKillswitchActive: params.isKillswitchActive ?? false
+    isKillswitchActive: params.isKillswitchActive ?? Boolean(durableSafety)
   };
 
   const policyResult = validateAutoSendPolicy(context);
@@ -255,7 +278,9 @@ export async function evaluateAndProcessAutoSend(
   if (!policyResult.allowed) {
     return {
       autoSent: false,
-      reason: policyResult.reason,
+      reason: durableSafety
+        ? `${policyResult.reason}: ${durableSafety.reason}`
+        : policyResult.reason,
       content: params.draftContent
     };
   }

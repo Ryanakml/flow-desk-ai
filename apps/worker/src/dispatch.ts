@@ -6,6 +6,7 @@ import {
   getTemplateByNameAndLanguage,
   markOutboxEventPublished,
   recordOutboxEventFailure,
+  resolveAutomationSafety,
   runInTenantTransaction,
   updateMessageStatus
 } from "@flowdesk/db";
@@ -79,6 +80,13 @@ interface PreparedDispatch {
     | undefined;
 }
 
+interface BotDispatchSafetyState {
+  bot_config_id: string | null;
+  bot_paused: boolean;
+  assigned_to_user_id: string | null;
+  emergency_disabled: boolean | null;
+}
+
 function mediaTypeFor(contentType: string): "image" | "video" | "document" | "audio" {
   if (contentType.startsWith("image/")) return "image";
   if (contentType.startsWith("video/")) return "video";
@@ -100,6 +108,56 @@ export function resolveAccessToken(
   return decryptWhatsAppChannelCredentials(rawCredentials, encryptionKey, channel).accessToken;
 }
 
+async function getBotDispatchSafetyState(
+  db: DbClient,
+  organizationId: string,
+  conversationId: string,
+  botRunId: string
+): Promise<BotDispatchSafetyState | null> {
+  const result = await db.query<BotDispatchSafetyState>(
+    `SELECT run.bot_config_id, conversation.bot_paused, conversation.assigned_to_user_id,
+            config.emergency_disabled
+     FROM flowdesk.bot_runs AS run
+     JOIN flowdesk.conversations AS conversation
+       ON conversation.organization_id = run.organization_id
+      AND conversation.id = run.conversation_id
+     LEFT JOIN flowdesk.bot_configs AS config
+       ON config.organization_id = run.organization_id AND config.id = run.bot_config_id
+     WHERE run.organization_id = $1 AND run.id = $2 AND conversation.id = $3
+     FOR SHARE OF run, conversation`,
+    [organizationId, botRunId, conversationId]
+  );
+  return result.rows[0] ?? null;
+}
+
+async function automationDispatchBlockReason(
+  db: DbClient,
+  input: {
+    organizationId: string;
+    conversationId: string;
+    channelId: string;
+    botRunId: string;
+  }
+): Promise<string | null> {
+  const state = await getBotDispatchSafetyState(
+    db,
+    input.organizationId,
+    input.conversationId,
+    input.botRunId
+  );
+  if (!state) return "AUTO dispatch context no longer exists.";
+  if (state.bot_paused) return "Conversation automation is paused.";
+  if (state.assigned_to_user_id) return "Human takeover is active.";
+  if (state.emergency_disabled) return "Tenant emergency stop is active.";
+  const safety = await resolveAutomationSafety(db, {
+    organizationId: input.organizationId,
+    botConfigId: state.bot_config_id,
+    channelId: input.channelId,
+    conversationId: input.conversationId
+  });
+  return safety ? `Automation safety stop is active (${safety.scope}): ${safety.reason}` : null;
+}
+
 /**
  * Dispatches a single outbound message claimed from outbox.
  */
@@ -115,12 +173,10 @@ export async function dispatchOutboundMessage(
 
   const message = await getMessageById(client, orgId, messageId);
   if (!message) {
-    // Terminal failure: message record missing
     await recordOutboxEventFailure(client, event.id, `Message '${messageId}' not found.`, true);
     return { messageId, status: "failed", error: `Message '${messageId}' not found.` };
   }
 
-  // Idempotency check: if message is already sent, delivered, or read, skip dispatch
   if (message.status === "sent" || message.status === "delivered" || message.status === "read") {
     await markOutboxEventPublished(client, event.id);
     return {
@@ -130,7 +186,6 @@ export async function dispatchOutboundMessage(
     };
   }
 
-  // If already marked as failed, complete the outbox event
   if (message.status === "failed") {
     await markOutboxEventPublished(client, event.id);
     return {
@@ -140,7 +195,6 @@ export async function dispatchOutboundMessage(
     };
   }
 
-  // Load channel record
   const channel = await getChannelById(client, message.channelId, orgId);
   if (!channel || channel.status === "disconnected" || channel.status === "degraded") {
     const errorMsg = !channel
@@ -151,6 +205,30 @@ export async function dispatchOutboundMessage(
     });
     await recordOutboxEventFailure(client, event.id, errorMsg, true);
     return { messageId, status: "failed", error: errorMsg };
+  }
+
+  const botRunId =
+    message.senderType === "bot" && typeof message.metadata["aiBotRunId"] === "string"
+      ? message.metadata["aiBotRunId"]
+      : null;
+  if (botRunId) {
+    const blocked = await automationDispatchBlockReason(client, {
+      organizationId: orgId,
+      conversationId: message.conversationId,
+      channelId: message.channelId,
+      botRunId
+    });
+    if (blocked) {
+      await updateMessageStatus(client, orgId, message.id, "failed", { errorDetail: blocked });
+      await client.query(
+        `UPDATE flowdesk.outbound_intents
+         SET state = 'failed', last_error = $2, updated_at = clock_timestamp()
+         WHERE organization_id = $1 AND message_id = $3 AND state = 'queued'`,
+        [orgId, blocked, message.id]
+      );
+      await recordOutboxEventFailure(client, event.id, blocked, true);
+      return { messageId, status: "failed", error: blocked };
+    }
   }
 
   let accessToken: string;
@@ -202,7 +280,6 @@ export async function dispatchOutboundMessage(
         accessToken
       });
     } else if (templatePayload) {
-      // Re-verify provider status before dispatching template
       const templateRecord = await getTemplateByNameAndLanguage(client, {
         channelId: channel.id,
         name: templatePayload.name,
@@ -254,13 +331,10 @@ export async function dispatchOutboundMessage(
       });
     }
 
-    // Successfully sent: update message to 'sent' and record providerMessageId
     await updateMessageStatus(client, orgId, message.id, "sent", {
       providerMessageId: sendResult.messageId,
       sentAt: new Date()
     });
-
-    // Mark outbox event published
     await markOutboxEventPublished(client, event.id);
 
     return {
@@ -274,12 +348,10 @@ export async function dispatchOutboundMessage(
     if (error instanceof WhatsAppProviderError) {
       if (error.isTransient) {
         if (currentAttempt < maxRetries) {
-          // Retryable transient failure: record attempt, keep published_at NULL for next retry
           await recordOutboxEventFailure(client, event.id, error.message, false);
           return { messageId, status: "failed", error: error.message };
         }
 
-        // Exceeded retries: Dead-letter queue
         const dlqError = `Max retries exceeded (${maxRetries}): ${error.message}`;
         await updateMessageStatus(client, orgId, message.id, "failed", {
           errorDetail: dlqError
@@ -288,7 +360,6 @@ export async function dispatchOutboundMessage(
         return { messageId, status: "failed", error: dlqError };
       }
 
-      // Non-transient failure: fail immediately
       await updateMessageStatus(client, orgId, message.id, "failed", {
         errorDetail: error.message
       });
@@ -328,6 +399,9 @@ async function dispatchOutboundMessageCrashSafe(
         message_id: string;
         message_status: string;
         provider_message_id: string | null;
+        sender_type: string;
+        message_metadata: Record<string, unknown>;
+        conversation_id: string;
         content: string;
         channel_id: string;
         phone_number_id: string;
@@ -337,7 +411,9 @@ async function dispatchOutboundMessageCrashSafe(
         intent_state: string;
       }>(
         `SELECT message.id AS message_id, message.status AS message_status,
-                message.provider_message_id, message.content,
+                message.provider_message_id, message.sender_type,
+                message.metadata AS message_metadata, message.conversation_id,
+                message.content,
                 channel.id AS channel_id, channel.phone_number_id, channel.waba_id,
                 channel.encrypted_credentials, channel.status AS channel_status,
                 intent.state AS intent_state
@@ -394,6 +470,32 @@ async function dispatchOutboundMessageCrashSafe(
         });
         await recordOutboxEventFailure(tenantDb, event.id, error, true);
         return { messageId: row.message_id, status: "failed", error };
+      }
+
+      const botRunId =
+        row.sender_type === "bot" && typeof row.message_metadata["aiBotRunId"] === "string"
+          ? row.message_metadata["aiBotRunId"]
+          : null;
+      if (botRunId) {
+        const blocked = await automationDispatchBlockReason(tenantDb, {
+          organizationId: event.organizationId,
+          conversationId: row.conversation_id,
+          channelId: row.channel_id,
+          botRunId
+        });
+        if (blocked) {
+          await updateMessageStatus(tenantDb, event.organizationId, row.message_id, "failed", {
+            errorDetail: blocked
+          });
+          await tenantDb.query(
+            `UPDATE flowdesk.outbound_intents
+             SET state = 'failed', last_error = $2, updated_at = clock_timestamp()
+             WHERE organization_id = $1 AND message_id = $3`,
+            [event.organizationId, blocked, row.message_id]
+          );
+          await recordOutboxEventFailure(tenantDb, event.id, blocked, true);
+          return { messageId: row.message_id, status: "failed", error: blocked };
+        }
       }
 
       let preparedMedia: PreparedDispatch["media"];

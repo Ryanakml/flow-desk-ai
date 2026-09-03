@@ -107,7 +107,8 @@ describe("database foundation", () => {
       "0024_m4_gemini_default_model.sql",
       "0025_m4_grant_public_schema_usage.sql",
       "0026_m6_runtime_integrations_privileges.sql",
-      "0027_m5_auto_mode.sql"
+      "0027_m5_auto_mode.sql",
+      "0028_m5_automation_safety_controls.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -352,6 +353,7 @@ describe("database foundation", () => {
       "attachments",
       "audit_logs",
       "auth_sessions",
+      "automation_safety_controls",
       "bot_configs",
       "bot_runs",
       "business_hours_policies",

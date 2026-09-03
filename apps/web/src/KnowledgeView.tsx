@@ -6,6 +6,7 @@ import {
   listKnowledgeSourcesApi,
   updateBotConfig
 } from "./api.js";
+import { setAutomationEmergencyStop } from "./automation-api.js";
 
 export interface KnowledgeViewProps {
   orgId: string;
@@ -23,6 +24,7 @@ export function KnowledgeView({ orgId, canManage, showToast }: KnowledgeViewProp
   const [botConfig, setBotConfig] = useState<BotConfigResponse | null>(null);
   const [selectedMode, setSelectedMode] = useState<"off" | "draft" | "auto">("draft");
   const [savingMode, setSavingMode] = useState(false);
+  const [savingEmergencyStop, setSavingEmergencyStop] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -72,6 +74,31 @@ export function KnowledgeView({ orgId, canManage, showToast }: KnowledgeViewProp
       showToast(error instanceof Error ? error.message : "Failed to update bot mode", "error");
     } finally {
       setSavingMode(false);
+    }
+  };
+
+  const toggleEmergencyStop = async () => {
+    if (!botConfig) return;
+    const nextDisabled = !botConfig.emergencyDisabled;
+    try {
+      setSavingEmergencyStop(true);
+      await setAutomationEmergencyStop(orgId, nextDisabled);
+      const updated = await getBotConfig(orgId);
+      setBotConfig(updated);
+      setSelectedMode(updated.mode);
+      showToast(
+        nextDisabled
+          ? "Emergency stop enabled. Pending and new AUTO replies are blocked; manual agent sends remain available."
+          : "Emergency stop disabled. Automation eligibility will be evaluated normally again.",
+        "success"
+      );
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : "Failed to update emergency stop",
+        "error"
+      );
+    } finally {
+      setSavingEmergencyStop(false);
     }
   };
 
@@ -126,28 +153,51 @@ export function KnowledgeView({ orgId, canManage, showToast }: KnowledgeViewProp
               id="bot-mode"
               className="form-select"
               value={selectedMode}
-              disabled={!canManage || savingMode}
+              disabled={!canManage || savingMode || botConfig.emergencyDisabled}
               onChange={(event) => setSelectedMode(event.target.value as "off" | "draft" | "auto")}
             >
               <option value="off">OFF — no AI generation</option>
               <option value="draft">DRAFT — human review required</option>
               <option value="auto">AUTO — eligible replies send automatically</option>
             </select>
-            {selectedMode === "auto" && (
+            {selectedMode === "auto" && !botConfig.emergencyDisabled && (
               <p role="alert" style={{ marginTop: "0.5rem", color: "var(--color-warning)" }}>
                 AUTO is opt-in. Low-confidence, stale, paused, assigned, disabled, or out-of-window
                 conversations remain blocked.
               </p>
             )}
+            {botConfig.emergencyDisabled && (
+              <p role="alert" style={{ marginTop: "0.5rem", color: "var(--color-warning)" }}>
+                Emergency stop is active. Pending and new automated sends are blocked while manual
+                agent replies remain available.
+              </p>
+            )}
             {canManage && (
-              <button
-                type="button"
-                className="btn btn-primary"
-                disabled={savingMode || selectedMode === botConfig.mode}
-                onClick={() => void saveMode()}
-              >
-                {savingMode ? "Saving…" : `Save ${selectedMode.toUpperCase()} mode`}
-              </button>
+              <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={
+                    savingMode || botConfig.emergencyDisabled || selectedMode === botConfig.mode
+                  }
+                  onClick={() => void saveMode()}
+                >
+                  {savingMode ? "Saving…" : `Save ${selectedMode.toUpperCase()} mode`}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  data-testid="automation-emergency-stop"
+                  disabled={savingEmergencyStop}
+                  onClick={() => void toggleEmergencyStop()}
+                >
+                  {savingEmergencyStop
+                    ? "Updating…"
+                    : botConfig.emergencyDisabled
+                      ? "Resume automation"
+                      : "Emergency stop"}
+                </button>
+              </div>
             )}
           </div>
         ) : (

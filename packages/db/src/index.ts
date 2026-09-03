@@ -234,6 +234,14 @@ export {
 } from "./routing.js";
 export { countRecentAutoReplies } from "./auto-send.js";
 export {
+  resolveAutomationSafety,
+  upsertAutomationSafetyControl,
+  cancelPendingAutomationForConversation,
+  type AutomationSafetyScope,
+  type AutomationSafetyControl,
+  type ActiveAutomationSafety
+} from "./automation-safety.js";
+export {
   listApiKeys,
   createApiKey,
   revokeApiKey,
