@@ -27,18 +27,18 @@ describe("Controlled Beta FAQ: Operational Proof & Safety Matrix (M5-08 / #179)"
     }
   });
 
-interface MockInsertedMessage {
-  id: string;
-  organizationId: string;
-  conversationId: string;
-  channelId: string;
-  direction: string;
-  senderType: string;
-  content: string;
-  status: string;
-  metadata: Record<string, unknown>;
-  createdAt: Date;
-}
+  interface MockInsertedMessage {
+    id: string;
+    organizationId: string;
+    conversationId: string;
+    channelId: string;
+    direction: string;
+    senderType: string;
+    content: string;
+    status: string;
+    metadata: Record<string, unknown>;
+    createdAt: Date;
+  }
 
   function createBetaFaqDb(scenario: {
     autoEnabled?: boolean;
@@ -349,15 +349,11 @@ interface MockInsertedMessage {
       attempts: 0
     };
 
-    const dispatchResult = await dispatchOutboundMessageCrashSafe(
-      mockDispatchDb,
-      outboxEvent,
-      {
-        provider: failingProvider,
-        encryptionKey,
-        maxRetries: 3
-      }
-    );
+    const dispatchResult = await dispatchOutboundMessageCrashSafe(mockDispatchDb, outboxEvent, {
+      provider: failingProvider,
+      encryptionKey,
+      maxRetries: 3
+    });
 
     expect(dispatchResult.status).toBe("failed");
     expect(dispatchResult.error).toContain("500");

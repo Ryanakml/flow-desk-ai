@@ -802,7 +802,9 @@ export function createBotRouter(options: BotRouterOptions): Router {
           const gate = existing.rows[0];
           if (!gate) return null;
 
-          const approvals: ReleaseApproval[] = Array.isArray(gate.approvals) ? [...gate.approvals] : [];
+          const approvals: ReleaseApproval[] = Array.isArray(gate.approvals)
+            ? [...gate.approvals]
+            : [];
           const existingApprovalIndex = approvals.findIndex((a) => a.role === role);
           const approvalEntry: ReleaseApproval = {
             actorId: request.user!.id,
