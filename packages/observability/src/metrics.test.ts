@@ -14,6 +14,8 @@ import {
   recordRealtimeDroppedHint,
   recordMediaLifecycle,
   recordAiDraftRun,
+  recordAutoSendOutcome,
+  setEmergencyKillswitchActive,
   getPrometheusMetrics,
   resetMetrics
 } from "./metrics.js";
@@ -123,5 +125,43 @@ describe("Prometheus Metrics (M1-08)", () => {
     expect(output).toContain('ai_draft_completion_tokens_total{provider="openai"} 30');
     expect(output).toContain('ai_draft_cost_microcents_total{provider="openai"} 225');
     expect(output).not.toContain("organization_id");
+  });
+
+  it("exports M5 auto-send outcomes and emergency killswitch gauge", () => {
+    recordAutoSendOutcome({ status: "sent" });
+    recordAutoSendOutcome({ status: "denied", reason: "below_confidence" });
+    recordAutoSendOutcome({ status: "failed", reason: "provider_error" });
+    setEmergencyKillswitchActive(true);
+
+    const output = getPrometheusMetrics();
+    expect(output).toContain('auto_send_total{reason="none",status="sent"} 1');
+    expect(output).toContain('auto_send_total{reason="below_confidence",status="denied"} 1');
+    expect(output).toContain('auto_send_total{reason="provider_error",status="failed"} 1');
+    expect(output).toContain('auto_send_failures_total{reason="provider_error"} 1');
+    expect(output).toContain("emergency_killswitch_active 1");
+
+    setEmergencyKillswitchActive(false);
+    const outputAfterReset = getPrometheusMetrics();
+    expect(outputAfterReset).toContain("emergency_killswitch_active 0");
+  });
+
+  it("exports histogram buckets for HTTP request duration", () => {
+    recordHttpRequest({
+      method: "POST",
+      route: "/api/v1/webhooks/whatsapp",
+      statusCode: 200,
+      durationSeconds: 0.15
+    });
+
+    const output = getPrometheusMetrics();
+    expect(output).toContain(
+      'http_request_duration_seconds_bucket{le="0.1",method="POST",route="/api/v1/webhooks/whatsapp"} 0'
+    );
+    expect(output).toContain(
+      'http_request_duration_seconds_bucket{le="0.25",method="POST",route="/api/v1/webhooks/whatsapp"} 1'
+    );
+    expect(output).toContain(
+      'http_request_duration_seconds_bucket{le="+Inf",method="POST",route="/api/v1/webhooks/whatsapp"} 1'
+    );
   });
 });

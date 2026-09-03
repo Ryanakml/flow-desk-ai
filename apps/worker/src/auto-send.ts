@@ -14,6 +14,7 @@ import {
   DEFAULT_MIN_CONFIDENCE_THRESHOLD,
   type PreSendValidationContext
 } from "@flowdesk/domain";
+import { recordAutoSendOutcome, setEmergencyKillswitchActive } from "@flowdesk/observability";
 
 interface AutoRunState {
   run_id: string;
@@ -104,6 +105,7 @@ export async function processCompletedAutoRun(
       ...(input.correlationId ? { correlationId: input.correlationId } : {}),
       metadata: { reason, conversationId: state.conversation_id }
     });
+    recordAutoSendOutcome({ status: "denied", reason });
     return { autoSent: false, reason };
   };
 
@@ -198,6 +200,7 @@ export async function processCompletedAutoRun(
       aiAutoPolicyReason: policy.reason
     }
   });
+  recordAutoSendOutcome({ status: "sent", reason: policy.reason });
   await db.query(
     `UPDATE flowdesk.bot_runs
      SET operator_action = 'auto_sent', operator_action_at = clock_timestamp(),
@@ -276,11 +279,16 @@ export async function evaluateAndProcessAutoSend(
   const policyResult = validateAutoSendPolicy(context);
 
   if (!policyResult.allowed) {
+    if (durableSafety || params.isKillswitchActive) {
+      setEmergencyKillswitchActive(true);
+    }
+    const reason = durableSafety
+      ? `${policyResult.reason}: ${durableSafety.reason}`
+      : policyResult.reason;
+    recordAutoSendOutcome({ status: "denied", reason });
     return {
       autoSent: false,
-      reason: durableSafety
-        ? `${policyResult.reason}: ${durableSafety.reason}`
-        : policyResult.reason,
+      reason,
       content: params.draftContent
     };
   }
@@ -302,6 +310,7 @@ export async function evaluateAndProcessAutoSend(
     }
   });
 
+  recordAutoSendOutcome({ status: "sent", reason: policyResult.reason });
   return {
     autoSent: true,
     reason: policyResult.reason,
