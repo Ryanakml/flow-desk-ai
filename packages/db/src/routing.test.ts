@@ -32,6 +32,7 @@ interface MockLogRow {
   organization_id: string;
   conversation_id: string;
   matched_rule_id: string | null;
+  matched_policy_rule_id?: string | null;
   target_queue_id: string | null;
   target_team_id: string | null;
   target_user_id: string | null;
@@ -130,10 +131,11 @@ function createMockDb(): DbClient {
           organization_id: values[0] as string,
           conversation_id: values[1] as string,
           matched_rule_id: values[2] as string | null,
-          target_queue_id: values[3] as string | null,
-          target_team_id: values[4] as string | null,
-          target_user_id: values[5] as string | null,
-          reason: values[6] as string,
+          matched_policy_rule_id: values[3] as string | null,
+          target_queue_id: values[4] as string | null,
+          target_team_id: values[5] as string | null,
+          target_user_id: values[6] as string | null,
+          reason: values[7] as string,
           routed_at: new Date()
         };
         logs.push(row);

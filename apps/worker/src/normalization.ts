@@ -323,69 +323,79 @@ export async function processWebhookPayload(
         // M5-01 / M5 #180: Evaluate versioned policy or routing rules for incoming conversation
         const autoConfig = await getBotConfig(client, params.organizationId);
         try {
-          const activePolicy = await getActivePublishedPolicy(client, params.organizationId);
-          let rulesToEvaluate: RoutingRule[] = [];
-          let policyId: string | null = null;
-          let policyVersion: number | null = null;
+          await client.query("SAVEPOINT routing_eval");
+          try {
+            const activePolicy = await getActivePublishedPolicy(client, params.organizationId);
+            let rulesToEvaluate: RoutingRule[] = [];
+            let policyId: string | null = null;
+            let policyVersion: number | null = null;
+            let isUsingPolicy = false;
 
-          if (activePolicy && activePolicy.rules.length > 0) {
-            rulesToEvaluate = activePolicy.rules;
-            policyId = activePolicy.id;
-            policyVersion = activePolicy.version;
-          } else {
-            const legacyRules = await listRoutingRules(client, params.organizationId);
-            rulesToEvaluate = legacyRules.map((r) => ({
-              id: r.id,
-              organizationId: r.organizationId,
-              name: r.name,
-              priority: r.priority,
-              conditions: r.conditions,
-              targetQueueId: r.targetQueueId,
-              targetTeamId: r.targetTeamId,
-              targetUserId: r.targetUserId,
-              isActive: r.isActive
-            }));
-          }
-
-          if (rulesToEvaluate.length > 0) {
-            const routingContext: RoutingEvaluationContext = {
-              channelId,
-              customerPhone: item.customerPhone,
-              tags: [],
-              botMode: autoConfig?.mode,
-              botPaused: Boolean(conversation.botPaused)
-            };
-            const routingResult = evaluateRoutingRules(rulesToEvaluate, routingContext);
-            if (routingResult.matchedRule) {
-              await client.query(
-                `UPDATE flowdesk.conversations
-                 SET queue_id = COALESCE($1, queue_id),
-                     team_id = COALESCE($2, team_id),
-                     assigned_to_user_id = COALESCE($3, assigned_to_user_id),
-                     updated_at = clock_timestamp()
-                 WHERE organization_id = $4 AND id = $5`,
-                [
-                  routingResult.targetQueueId,
-                  routingResult.targetTeamId,
-                  routingResult.targetUserId,
-                  params.organizationId,
-                  conversation.id
-                ]
-              );
+            if (activePolicy && activePolicy.rules.length > 0) {
+              rulesToEvaluate = activePolicy.rules;
+              policyId = activePolicy.id;
+              policyVersion = activePolicy.version;
+              isUsingPolicy = true;
+            } else {
+              const legacyRules = await listRoutingRules(client, params.organizationId);
+              rulesToEvaluate = legacyRules.map((r) => ({
+                id: r.id,
+                organizationId: r.organizationId,
+                name: r.name,
+                priority: r.priority,
+                conditions: r.conditions,
+                targetQueueId: r.targetQueueId,
+                targetTeamId: r.targetTeamId,
+                targetUserId: r.targetUserId,
+                isActive: r.isActive
+              }));
             }
-            await recordRoutingLogWithTrace(client, {
-              organizationId: params.organizationId,
-              conversationId: conversation.id,
-              matchedRuleId: routingResult.matchedRule?.id ?? null,
-              targetQueueId: routingResult.targetQueueId,
-              targetTeamId: routingResult.targetTeamId,
-              targetUserId: routingResult.targetUserId,
-              reason: routingResult.reason,
-              policyId,
-              policyVersion,
-              decisionTrace: routingResult.decisionTrace,
-              inputsSnapshot: routingContext as Record<string, unknown>
-            });
+
+            if (rulesToEvaluate.length > 0) {
+              const routingContext: RoutingEvaluationContext = {
+                channelId,
+                customerPhone: item.customerPhone,
+                tags: [],
+                botMode: autoConfig?.mode,
+                botPaused: Boolean(conversation.botPaused)
+              };
+              const routingResult = evaluateRoutingRules(rulesToEvaluate, routingContext);
+              if (routingResult.matchedRule) {
+                await client.query(
+                  `UPDATE flowdesk.conversations
+                   SET queue_id = COALESCE($1, queue_id),
+                       team_id = COALESCE($2, team_id),
+                       assigned_to_user_id = COALESCE($3, assigned_to_user_id),
+                       updated_at = clock_timestamp()
+                   WHERE organization_id = $4 AND id = $5`,
+                  [
+                    routingResult.targetQueueId,
+                    routingResult.targetTeamId,
+                    routingResult.targetUserId,
+                    params.organizationId,
+                    conversation.id
+                  ]
+                );
+              }
+              await recordRoutingLogWithTrace(client, {
+                organizationId: params.organizationId,
+                conversationId: conversation.id,
+                matchedRuleId: isUsingPolicy ? null : (routingResult.matchedRule?.id ?? null),
+                matchedPolicyRuleId: isUsingPolicy ? (routingResult.matchedRule?.id ?? null) : null,
+                targetQueueId: routingResult.targetQueueId,
+                targetTeamId: routingResult.targetTeamId,
+                targetUserId: routingResult.targetUserId,
+                reason: routingResult.reason,
+                policyId,
+                policyVersion,
+                decisionTrace: routingResult.decisionTrace,
+                inputsSnapshot: routingContext as Record<string, unknown>
+              });
+            }
+            await client.query("RELEASE SAVEPOINT routing_eval");
+          } catch (innerRoutingErr) {
+            await client.query("ROLLBACK TO SAVEPOINT routing_eval");
+            throw innerRoutingErr;
           }
         } catch (routingErr) {
           normalizationLogger.warn(
@@ -394,7 +404,7 @@ export async function processWebhookPayload(
               organizationId: params.organizationId,
               conversationId: conversation.id
             },
-            "Failed to evaluate conversation routing policy"
+            "Failed to evaluate conversation routing policy (rolled back to savepoint)"
           );
         }
 

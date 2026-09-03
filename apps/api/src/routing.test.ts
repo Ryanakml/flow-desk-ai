@@ -8,7 +8,8 @@ import { createApiApp } from "./app.js";
 import type {
   AutomationPolicyResponse,
   SimulatePolicyResponse,
-  RoutingRuleResponse
+  RoutingRuleResponse,
+  RoutingLogResponse
 } from "@flowdesk/contracts";
 
 const orgId = "a0000000-0000-4000-8000-000000000001";
@@ -50,6 +51,7 @@ interface MockLogRow {
   organization_id: string;
   conversation_id: string;
   matched_rule_id: string | null;
+  matched_policy_rule_id?: string | null;
   target_queue_id: string | null;
   target_team_id: string | null;
   target_user_id: string | null;
@@ -61,10 +63,10 @@ interface MockLogRow {
   inputs_snapshot?: Record<string, unknown>;
 }
 
-function createMockDb(): DbClient {
+function createMockDb(initialLogs: MockLogRow[] = []): DbClient {
   const rules = new Map<string, MockRuleRow>();
   const policies = new Map<string, MockPolicyRow>();
-  const logs: MockLogRow[] = [];
+  const logs: MockLogRow[] = [...initialLogs];
   let ruleCounter = 1;
   let policyCounter = 1;
 
@@ -665,6 +667,60 @@ describe("Routing Rules & Automation Policy API (M5-01 / #180)", () => {
 
       expect(logsRes.status).toBe(200);
       expect(logsRes.body).toBeInstanceOf(Array);
+    });
+
+    it("returns policy rule IDs and legacy rule IDs in routing log responses (#180)", async () => {
+      const convId = "b0000000-0000-7000-8000-000000000001";
+      const legacyRuleUuid = "00000000-0000-7000-8000-000000000088";
+      const db = createMockDb([
+        {
+          id: "log-policy-1",
+          organization_id: orgId,
+          conversation_id: convId,
+          matched_rule_id: null,
+          matched_policy_rule_id: "rule-z1wfsei",
+          target_queue_id: "00000000-0000-7000-8000-000000000099",
+          target_team_id: null,
+          target_user_id: null,
+          reason: "Policy rule matched",
+          routed_at: new Date(),
+          policy_id: "a38989b5-1007-4637-91fe-f98f4b41658f",
+          policy_version: 1
+        },
+        {
+          id: "log-legacy-1",
+          organization_id: orgId,
+          conversation_id: convId,
+          matched_rule_id: legacyRuleUuid,
+          matched_policy_rule_id: null,
+          target_queue_id: null,
+          target_team_id: null,
+          target_user_id: null,
+          reason: "Legacy rule matched",
+          routed_at: new Date()
+        }
+      ]);
+      const app = makeApp(db);
+
+      const logsRes = await request(app)
+        .get(`/api/v1/organizations/${orgId}/routing/logs/${convId}`)
+        .set("Cookie", [agentCookie]);
+
+      expect(logsRes.status).toBe(200);
+      const returnedLogs = logsRes.body as RoutingLogResponse[];
+      expect(returnedLogs).toHaveLength(2);
+
+      // Policy rule log: effective matchedRuleId is string ID, matchedPolicyRuleId is string ID
+      const policyLog = returnedLogs.find((l) => l.id === "log-policy-1")!;
+      expect(policyLog.matchedRuleId).toBe("rule-z1wfsei");
+      expect(policyLog.matchedPolicyRuleId).toBe("rule-z1wfsei");
+      expect(policyLog.policyId).toBe("a38989b5-1007-4637-91fe-f98f4b41658f");
+      expect(policyLog.policyVersion).toBe(1);
+
+      // Legacy rule log: effective matchedRuleId is UUID, matchedPolicyRuleId is null
+      const legacyLog = returnedLogs.find((l) => l.id === "log-legacy-1")!;
+      expect(legacyLog.matchedRuleId).toBe(legacyRuleUuid);
+      expect(legacyLog.matchedPolicyRuleId).toBeNull();
     });
   });
 

@@ -162,12 +162,12 @@ describe("automation policy database layer", () => {
         await Promise.resolve();
         sql.push(text);
         const parsedTrace =
-          typeof params?.[9] === "string"
-            ? (JSON.parse(params[9]) as Record<string, unknown>[])
+          typeof params?.[10] === "string"
+            ? (JSON.parse(params[10]) as Record<string, unknown>[])
             : [];
         const parsedInputs =
-          typeof params?.[10] === "string"
-            ? (JSON.parse(params[10]) as Record<string, unknown>)
+          typeof params?.[11] === "string"
+            ? (JSON.parse(params[11]) as Record<string, unknown>)
             : {};
         return {
           rows: [
@@ -176,13 +176,14 @@ describe("automation policy database layer", () => {
               organization_id: params?.[0],
               conversation_id: params?.[1],
               matched_rule_id: params?.[2],
-              target_queue_id: params?.[3],
-              target_team_id: params?.[4],
-              target_user_id: params?.[5],
-              reason: params?.[6],
+              matched_policy_rule_id: params?.[3],
+              target_queue_id: params?.[4],
+              target_team_id: params?.[5],
+              target_user_id: params?.[6],
+              reason: params?.[7],
               routed_at: new Date(),
-              policy_id: params?.[7],
-              policy_version: params?.[8],
+              policy_id: params?.[8],
+              policy_version: params?.[9],
               decision_trace: parsedTrace,
               inputs_snapshot: parsedInputs
             }
@@ -198,14 +199,15 @@ describe("automation policy database layer", () => {
     const log = await recordRoutingLogWithTrace(db, {
       organizationId: "org-1",
       conversationId: "conv-1",
-      matchedRuleId: "rule-1",
+      matchedRuleId: null,
+      matchedPolicyRuleId: "rule-z1wfsei",
       targetQueueId: "q-1",
       reason: "Matched VIP",
       policyId: "pol-1",
       policyVersion: 2,
       decisionTrace: [
         {
-          ruleId: "rule-1",
+          ruleId: "rule-z1wfsei",
           ruleName: "VIP Rule",
           priority: 10,
           matched: true,
@@ -217,6 +219,8 @@ describe("automation policy database layer", () => {
     });
 
     expect(log.id).toBe("log-1");
+    expect(log.matchedRuleId).toBeNull();
+    expect(log.matchedPolicyRuleId).toBe("rule-z1wfsei");
     expect(log.policyId).toBe("pol-1");
     expect(log.policyVersion).toBe(2);
     expect(log.decisionTrace).toHaveLength(1);
