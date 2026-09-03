@@ -31,6 +31,8 @@ ALTER TABLE flowdesk.bot_configs
     ADD COLUMN IF NOT EXISTS monthly_cost_ceiling_cents INTEGER NOT NULL DEFAULT 50000,
     ADD COLUMN IF NOT EXISTS active_release_gate_id UUID REFERENCES flowdesk.auto_release_gates(id) ON DELETE SET NULL;
 
+UPDATE flowdesk.bot_configs SET auto_enabled = TRUE WHERE mode = 'auto';
+
 -- 3. Row-Level Security
 ALTER TABLE flowdesk.auto_release_gates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE flowdesk.auto_release_gates FORCE ROW LEVEL SECURITY;
