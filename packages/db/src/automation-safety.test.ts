@@ -112,6 +112,8 @@ describe("automation safety controls", () => {
     expect(cancelled).toEqual({ runsCancelled: 2, messagesCancelled: 1 });
     expect(sql.some((statement) => statement.includes("status = 'cancelled'"))).toBe(true);
     expect(sql.some((statement) => statement.includes("intent.state = 'queued'"))).toBe(true);
-    expect(sql.some((statement) => statement.includes("INSERT INTO flowdesk.audit_logs"))).toBe(true);
+    expect(sql.some((statement) => statement.includes("INSERT INTO flowdesk.audit_logs"))).toBe(
+      true
+    );
   });
 });
