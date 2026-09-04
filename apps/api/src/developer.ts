@@ -380,8 +380,8 @@ export function createDeveloperRouter(options: DeveloperRouterOptions): Router {
 
             await db.query(
               `INSERT INTO flowdesk.outbox_events
-               (organization_id, aggregate_type, aggregate_id, event_type, schema_version, payload, correlation_id)
-               VALUES ($1, 'webhook_subscription', $2, 'developer.webhook.dispatch', 1, $3::jsonb, $4)`,
+               (organization_id, aggregate_type, aggregate_id, event_type, schema_version, payload)
+               VALUES ($1, 'webhook_subscription', $2, 'developer.webhook.dispatch', 1, $3::jsonb)`,
               [
                 orgId,
                 webhookId,
@@ -390,8 +390,7 @@ export function createDeveloperRouter(options: DeveloperRouterOptions): Router {
                   eventId: testEventId,
                   eventType: "endpoint.test",
                   payload: testPayload
-                }),
-                testEventId
+                })
               ]
             );
 

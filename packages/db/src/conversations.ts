@@ -173,8 +173,10 @@ export async function findOrCreateConversation(
         }
       }
     });
-  } catch {
-    // Fail-safe: do not block conversation creation if webhook fanout encounters error
+  } catch (fanoutErr) {
+    if (process.env["NODE_ENV"] === "test" || process.env["NODE_ENV"] === "development") {
+      console.warn("[WebhookFanout] Failed to fanout conversation.created:", fanoutErr);
+    }
   }
 
   return createdConv;
@@ -732,8 +734,10 @@ export async function createOutboundMessageWithOutbox(
         }
       }
     });
-  } catch {
-    // Fail-safe: do not block message outbox creation if webhook fanout encounters error
+  } catch (fanoutErr) {
+    if (process.env["NODE_ENV"] === "test" || process.env["NODE_ENV"] === "development") {
+      console.warn("[WebhookFanout] Failed to fanout message.sent:", fanoutErr);
+    }
   }
 
   return message;

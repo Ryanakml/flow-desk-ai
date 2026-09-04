@@ -458,8 +458,8 @@ integration("M5 AUTO post-generation runtime against PostgreSQL RLS (#178)", () 
       const eventId = `evt_test_${randomUUID()}`;
       await pool.query(
         `INSERT INTO flowdesk.outbox_events
-         (organization_id, aggregate_type, aggregate_id, event_type, schema_version, payload, correlation_id)
-         VALUES ($1, 'webhook_subscription', $2, 'developer.webhook.dispatch', 1, $3::jsonb, $4)`,
+         (organization_id, aggregate_type, aggregate_id, event_type, schema_version, payload)
+         VALUES ($1, 'webhook_subscription', $2, 'developer.webhook.dispatch', 1, $3::jsonb)`,
         [
           organizationA,
           sub.id,
@@ -468,8 +468,7 @@ integration("M5 AUTO post-generation runtime against PostgreSQL RLS (#178)", () 
             eventId,
             eventType: "conversation.created",
             payload: { event: "conversation.created", conversationId: "conv-int-1" }
-          }),
-          eventId
+          })
         ]
       );
 
@@ -499,8 +498,8 @@ integration("M5 AUTO post-generation runtime against PostgreSQL RLS (#178)", () 
       const eventId2 = `evt_test_${randomUUID()}`;
       await pool.query(
         `INSERT INTO flowdesk.outbox_events
-         (organization_id, aggregate_type, aggregate_id, event_type, schema_version, payload, correlation_id)
-         VALUES ($1, 'webhook_subscription', $2, 'developer.webhook.dispatch', 1, $3::jsonb, $4)`,
+         (organization_id, aggregate_type, aggregate_id, event_type, schema_version, payload)
+         VALUES ($1, 'webhook_subscription', $2, 'developer.webhook.dispatch', 1, $3::jsonb)`,
         [
           organizationA,
           sub.id,
@@ -509,8 +508,7 @@ integration("M5 AUTO post-generation runtime against PostgreSQL RLS (#178)", () 
             eventId: eventId2,
             eventType: "message.sent",
             payload: { event: "message.sent" }
-          }),
-          eventId2
+          })
         ]
       );
 
@@ -528,8 +526,8 @@ integration("M5 AUTO post-generation runtime against PostgreSQL RLS (#178)", () 
       const eventId3 = `evt_test_${randomUUID()}`;
       await pool.query(
         `INSERT INTO flowdesk.outbox_events
-         (organization_id, aggregate_type, aggregate_id, event_type, schema_version, payload, correlation_id, attempts)
-         VALUES ($1, 'webhook_subscription', $2, 'developer.webhook.dispatch', 1, $3::jsonb, $4, 4)`,
+         (organization_id, aggregate_type, aggregate_id, event_type, schema_version, payload, attempts)
+         VALUES ($1, 'webhook_subscription', $2, 'developer.webhook.dispatch', 1, $3::jsonb, 4)`,
         [
           organizationA,
           sub.id,
@@ -538,8 +536,7 @@ integration("M5 AUTO post-generation runtime against PostgreSQL RLS (#178)", () 
             eventId: eventId3,
             eventType: "message.sent",
             payload: { event: "message.sent" }
-          }),
-          eventId3
+          })
         ]
       );
 
@@ -560,8 +557,8 @@ integration("M5 AUTO post-generation runtime against PostgreSQL RLS (#178)", () 
       const eventId4 = `evt_test_${randomUUID()}`;
       await pool.query(
         `INSERT INTO flowdesk.outbox_events
-         (organization_id, aggregate_type, aggregate_id, event_type, schema_version, payload, correlation_id)
-         VALUES ($1, 'webhook_subscription', $2, 'developer.webhook.dispatch', 1, $3::jsonb, $4)`,
+         (organization_id, aggregate_type, aggregate_id, event_type, schema_version, payload)
+         VALUES ($1, 'webhook_subscription', $2, 'developer.webhook.dispatch', 1, $3::jsonb)`,
         [
           organizationA,
           sub.id,
@@ -570,8 +567,7 @@ integration("M5 AUTO post-generation runtime against PostgreSQL RLS (#178)", () 
             eventId: eventId4,
             eventType: "message.sent",
             payload: { event: "message.sent" }
-          }),
-          eventId4
+          })
         ]
       );
       const countBefore = receivedRequests.length;
