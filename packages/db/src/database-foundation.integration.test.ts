@@ -2133,12 +2133,7 @@ describe("database foundation", () => {
     const channelIdA = "00000000-0000-7000-8000-000000000603";
     const userA = "00000000-0000-7000-8000-000000000604";
 
-    const testPool = new Pool({
-      connectionString: connectionString.replace(
-        "flowdesk_test:flowdesk_test_local",
-        "flowdesk_runtime:flowdesk_runtime_local"
-      )
-    });
+    const testPool = new Pool({ connectionString });
 
     await admin.query("DELETE FROM flowdesk.webhook_deliveries WHERE organization_id IN ($1, $2)", [
       orgIdA,
@@ -2218,23 +2213,30 @@ describe("database foundation", () => {
       );
 
       // Authenticate via findApiKeyByHash under flowdesk_runtime (NOBYPASSRLS, without tenant context)
-      const authenticatedValid = await findApiKeyByHash(testPool, validHash);
-      expect(authenticatedValid).not.toBeNull();
-      expect(authenticatedValid?.organizationId).toBe(orgIdA);
-      expect(authenticatedValid?.scopes).toEqual(["conversation:read", "message:write"]);
+      const runtimeClient = await testPool.connect();
+      try {
+        await runtimeClient.query("SET ROLE flowdesk_runtime");
+        const authenticatedValid = await findApiKeyByHash(runtimeClient, validHash);
+        expect(authenticatedValid).not.toBeNull();
+        expect(authenticatedValid?.organizationId).toBe(orgIdA);
+        expect(authenticatedValid?.scopes).toEqual(["conversation:read", "message:write"]);
 
-      const authenticatedRevoked = await findApiKeyByHash(testPool, revokedHash);
-      expect(authenticatedRevoked).toBeNull();
+        const authenticatedRevoked = await findApiKeyByHash(runtimeClient, revokedHash);
+        expect(authenticatedRevoked).toBeNull();
 
-      const authenticatedExpired = await findApiKeyByHash(testPool, expiredHash);
-      expect(authenticatedExpired).toBeNull();
+        const authenticatedExpired = await findApiKeyByHash(runtimeClient, expiredHash);
+        expect(authenticatedExpired).toBeNull();
 
-      const authenticatedRandom = await findApiKeyByHash(testPool, "d".repeat(64));
-      expect(authenticatedRandom).toBeNull();
+        const authenticatedRandom = await findApiKeyByHash(runtimeClient, "d".repeat(64));
+        expect(authenticatedRandom).toBeNull();
 
-      // Direct query on api_keys without tenant context returns empty (FORCE RLS denies)
-      const directRuntimeQuery = await testPool.query("SELECT * FROM flowdesk.api_keys");
-      expect(directRuntimeQuery.rows.length).toBe(0);
+        // Direct query on api_keys without tenant context returns empty (FORCE RLS denies)
+        const directRuntimeQuery = await runtimeClient.query("SELECT * FROM flowdesk.api_keys");
+        expect(directRuntimeQuery.rows.length).toBe(0);
+      } finally {
+        await runtimeClient.query("RESET ROLE").catch(() => undefined);
+        runtimeClient.release();
+      }
 
       // Tenant B transaction cannot see Tenant A's api_keys
       const tenantBKeys = await withTenantTransaction(
