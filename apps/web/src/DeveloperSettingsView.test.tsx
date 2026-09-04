@@ -73,49 +73,51 @@ describe("DeveloperSettingsView component (M6-02)", () => {
     let createBody: Record<string, unknown> | null = null;
     let created = false;
 
-    globalThis.fetch = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = getUrlString(input);
-      if (url.endsWith(`/api/v1/organizations/${orgId}/developer/api-keys`)) {
-        if (init?.method === "POST") {
-          createBody = JSON.parse(String(init.body)) as Record<string, unknown>;
-          created = true;
+    globalThis.fetch = vi
+      .fn()
+      .mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = getUrlString(input);
+        if (url.endsWith(`/api/v1/organizations/${orgId}/developer/api-keys`)) {
+          if (init?.method === "POST") {
+            createBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+            created = true;
+            return Promise.resolve(
+              jsonResponse(
+                {
+                  id: "key-new",
+                  organizationId: orgId,
+                  name: "Acceptance Key",
+                  keyPrefix: "fd_live_",
+                  rawKey: `fd_live_${"a".repeat(48)}`,
+                  scopes: ["conversation:read", "message:write"],
+                  createdAt: new Date().toISOString()
+                },
+                201
+              )
+            );
+          }
           return Promise.resolve(
             jsonResponse(
-              {
-                id: "key-new",
-                organizationId: orgId,
-                name: "Acceptance Key",
-                keyPrefix: "fd_live_",
-                rawKey: `fd_live_${"a".repeat(48)}`,
-                scopes: ["conversation:read", "message:write"],
-                createdAt: new Date().toISOString()
-              },
-              201
+              created
+                ? [
+                    {
+                      id: "key-new",
+                      organizationId: orgId,
+                      name: "Acceptance Key",
+                      keyPrefix: "fd_live_",
+                      scopes: ["conversation:read", "message:write"],
+                      createdAt: new Date().toISOString()
+                    }
+                  ]
+                : []
             )
           );
         }
-        return Promise.resolve(
-          jsonResponse(
-            created
-              ? [
-                  {
-                    id: "key-new",
-                    organizationId: orgId,
-                    name: "Acceptance Key",
-                    keyPrefix: "fd_live_",
-                    scopes: ["conversation:read", "message:write"],
-                    createdAt: new Date().toISOString()
-                  }
-                ]
-              : []
-          )
-        );
-      }
-      if (url.endsWith(`/api/v1/organizations/${orgId}/developer/webhooks`)) {
-        return Promise.resolve(jsonResponse([]));
-      }
-      return Promise.reject(new Error(`Unhandled URL: ${url}`));
-    }) as typeof fetch;
+        if (url.endsWith(`/api/v1/organizations/${orgId}/developer/webhooks`)) {
+          return Promise.resolve(jsonResponse([]));
+        }
+        return Promise.reject(new Error(`Unhandled URL: ${url}`));
+      }) as typeof fetch;
 
     render(<DeveloperSettingsView orgId={orgId} canManage={true} showToast={showToast} />);
     await waitFor(() => expect(screen.getByText("No API keys created yet.")).toBeTruthy());
@@ -134,59 +136,63 @@ describe("DeveloperSettingsView component (M6-02)", () => {
     let created = false;
     const rawSecret = testWebhookSecret();
 
-    globalThis.fetch = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = getUrlString(input);
-      if (url.endsWith(`/api/v1/organizations/${orgId}/developer/api-keys`)) {
-        return Promise.resolve(jsonResponse([]));
-      }
-      if (url.endsWith(`/api/v1/organizations/${orgId}/developer/webhooks`)) {
-        if (init?.method === "POST") {
-          created = true;
+    globalThis.fetch = vi
+      .fn()
+      .mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = getUrlString(input);
+        if (url.endsWith(`/api/v1/organizations/${orgId}/developer/api-keys`)) {
+          return Promise.resolve(jsonResponse([]));
+        }
+        if (url.endsWith(`/api/v1/organizations/${orgId}/developer/webhooks`)) {
+          if (init?.method === "POST") {
+            created = true;
+            return Promise.resolve(
+              jsonResponse(
+                {
+                  id: "wh-1",
+                  organizationId: orgId,
+                  name: "Acceptance Hook",
+                  url: "https://receiver.example.com/flowdesk",
+                  secret: rawSecret,
+                  events: ["conversation.created", "message.received"],
+                  isActive: true,
+                  verificationStatus: "unverified",
+                  createdAt: new Date().toISOString(),
+                  updatedAt: new Date().toISOString()
+                },
+                201
+              )
+            );
+          }
           return Promise.resolve(
             jsonResponse(
-              {
-                id: "wh-1",
-                organizationId: orgId,
-                name: "Acceptance Hook",
-                url: "https://receiver.example.com/flowdesk",
-                secret: rawSecret,
-                events: ["conversation.created", "message.received"],
-                isActive: true,
-                verificationStatus: "unverified",
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-              },
-              201
+              created
+                ? [
+                    {
+                      id: "wh-1",
+                      organizationId: orgId,
+                      name: "Acceptance Hook",
+                      url: "https://receiver.example.com/flowdesk",
+                      secret: "whsec_****************",
+                      events: ["conversation.created", "message.received"],
+                      isActive: true,
+                      verificationStatus: "unverified",
+                      createdAt: new Date().toISOString(),
+                      updatedAt: new Date().toISOString()
+                    }
+                  ]
+                : []
             )
           );
         }
-        return Promise.resolve(
-          jsonResponse(
-            created
-              ? [
-                  {
-                    id: "wh-1",
-                    organizationId: orgId,
-                    name: "Acceptance Hook",
-                    url: "https://receiver.example.com/flowdesk",
-                    secret: "whsec_****************",
-                    events: ["conversation.created", "message.received"],
-                    isActive: true,
-                    verificationStatus: "unverified",
-                    createdAt: new Date().toISOString(),
-                    updatedAt: new Date().toISOString()
-                  }
-                ]
-              : []
-          )
-        );
-      }
-      return Promise.reject(new Error(`Unhandled URL: ${url}`));
-    }) as typeof fetch;
+        return Promise.reject(new Error(`Unhandled URL: ${url}`));
+      }) as typeof fetch;
 
     render(<DeveloperSettingsView orgId={orgId} canManage={true} showToast={showToast} />);
     fireEvent.click(screen.getByText("Webhooks"));
-    await waitFor(() => expect(screen.getByText("No outbound webhook subscriptions registered yet.")).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getByText("No outbound webhook subscriptions registered yet.")).toBeTruthy()
+    );
 
     fireEvent.click(screen.getByText("+ Register Webhook"));
     fireEvent.change(screen.getByPlaceholderText("e.g. CRM Sync Handler"), {
@@ -197,7 +203,9 @@ describe("DeveloperSettingsView component (M6-02)", () => {
     });
     fireEvent.click(screen.getByText("Register Webhook"));
 
-    await waitFor(() => expect(screen.getByText("Save Your Webhook Signing Secret")).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getByText("Save Your Webhook Signing Secret")).toBeTruthy()
+    );
     expect(screen.getByText(rawSecret)).toBeTruthy();
 
     fireEvent.click(screen.getByText("Close ✕"));
@@ -225,38 +233,45 @@ describe("DeveloperSettingsView component (M6-02)", () => {
       updatedAt: new Date().toISOString()
     };
 
-    globalThis.fetch = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = getUrlString(input);
-      if (url.endsWith(`/api/v1/organizations/${orgId}/developer/api-keys`)) {
-        return Promise.resolve(jsonResponse([]));
-      }
-      if (url.endsWith(`/api/v1/organizations/${orgId}/developer/webhooks/wh-1/test`)) {
-        verified = true;
-        return Promise.resolve(jsonResponse({ enqueued: true, eventId: "evt_test_1" }));
-      }
-      if (url.endsWith(`/api/v1/organizations/${orgId}/developer/webhooks/wh-1/deliveries`)) {
-        return Promise.resolve(jsonResponse(verified ? [delivery] : []));
-      }
-      if (url.endsWith(`/api/v1/organizations/${orgId}/developer/webhooks`) && !init?.method) {
-        return Promise.resolve(
-          jsonResponse([
-            {
-              id: "wh-1",
-              organizationId: orgId,
-              name: "CRM Dispatcher",
-              url: "https://crm.example.com/webhook",
-              secret: "whsec_****************",
-              events: ["conversation.created"],
-              isActive: true,
-              verificationStatus: verified ? "verified" : "unverified",
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString()
-            }
-          ])
-        );
-      }
-      return Promise.reject(new Error(`Unhandled URL: ${url}`));
-    }) as typeof fetch;
+    globalThis.fetch = vi
+      .fn()
+      .mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = getUrlString(input);
+        if (url.endsWith(`/api/v1/organizations/${orgId}/developer/api-keys`)) {
+          return Promise.resolve(jsonResponse([]));
+        }
+        if (url.endsWith(`/api/v1/organizations/${orgId}/developer/webhooks/wh-1/test`)) {
+          verified = true;
+          return Promise.resolve(jsonResponse({ enqueued: true, eventId: "evt_test_1" }));
+        }
+        if (
+          url.endsWith(`/api/v1/organizations/${orgId}/developer/webhooks/wh-1/deliveries`)
+        ) {
+          return Promise.resolve(jsonResponse(verified ? [delivery] : []));
+        }
+        if (
+          url.endsWith(`/api/v1/organizations/${orgId}/developer/webhooks`) &&
+          !init?.method
+        ) {
+          return Promise.resolve(
+            jsonResponse([
+              {
+                id: "wh-1",
+                organizationId: orgId,
+                name: "CRM Dispatcher",
+                url: "https://crm.example.com/webhook",
+                secret: "whsec_****************",
+                events: ["conversation.created"],
+                isActive: true,
+                verificationStatus: verified ? "verified" : "unverified",
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+              }
+            ])
+          );
+        }
+        return Promise.reject(new Error(`Unhandled URL: ${url}`));
+      }) as typeof fetch;
 
     render(<DeveloperSettingsView orgId={orgId} canManage={true} showToast={showToast} />);
     fireEvent.click(screen.getByText("Webhooks"));
