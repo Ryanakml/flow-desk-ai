@@ -69,9 +69,7 @@ export function DeveloperSettingsView({
   } | null>(null);
   const [testingWebhookId, setTestingWebhookId] = useState<string | null>(null);
   const [expandedWebhookId, setExpandedWebhookId] = useState<string | null>(null);
-  const [loadingDeliveriesWebhookId, setLoadingDeliveriesWebhookId] = useState<string | null>(
-    null
-  );
+  const [loadingDeliveriesWebhookId, setLoadingDeliveriesWebhookId] = useState<string | null>(null);
   const [deliveriesByWebhook, setDeliveriesByWebhook] = useState<
     Record<string, WebhookDeliveryClientRecord[]>
   >({});
@@ -150,9 +148,7 @@ export function DeveloperSettingsView({
 
   const handleRevokeKey = async (keyId: string) => {
     if (
-      !window.confirm(
-        "Are you sure you want to revoke this API key? This action cannot be undone."
-      )
+      !window.confirm("Are you sure you want to revoke this API key? This action cannot be undone.")
     ) {
       return;
     }
@@ -246,9 +242,7 @@ export function DeveloperSettingsView({
 
   const toggleScope = (scope: string, checked: boolean) => {
     setKeyScopes((current) =>
-      checked
-        ? Array.from(new Set([...current, scope]))
-        : current.filter((item) => item !== scope)
+      checked ? Array.from(new Set([...current, scope])) : current.filter((item) => item !== scope)
     );
   };
 
@@ -386,9 +380,7 @@ export function DeveloperSettingsView({
                       <h4 className="font-semibold text-gray-900">{key.name}</h4>
                       <span
                         className={`px-2 py-0.5 text-xs font-medium rounded-full ${
-                          key.revokedAt
-                            ? "bg-red-100 text-red-800"
-                            : "bg-green-100 text-green-800"
+                          key.revokedAt ? "bg-red-100 text-red-800" : "bg-green-100 text-green-800"
                         }`}
                       >
                         {key.revokedAt ? "REVOKED" : "ACTIVE"}
@@ -664,20 +656,16 @@ export function DeveloperSettingsView({
                   Subscribed Events
                 </label>
                 <div className="space-y-1 text-sm">
-                  {["conversation.created", "message.received", "message.sent"].map(
-                    (eventName) => (
-                      <label key={eventName} className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={webhookEvents.includes(eventName)}
-                          onChange={(event) =>
-                            toggleWebhookEvent(eventName, event.target.checked)
-                          }
-                        />
-                        <span>{eventName}</span>
-                      </label>
-                    )
-                  )}
+                  {["conversation.created", "message.received", "message.sent"].map((eventName) => (
+                    <label key={eventName} className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={webhookEvents.includes(eventName)}
+                        onChange={(event) => toggleWebhookEvent(eventName, event.target.checked)}
+                      />
+                      <span>{eventName}</span>
+                    </label>
+                  ))}
                 </div>
               </div>
               <div className="flex justify-end gap-2 border-t pt-4">
