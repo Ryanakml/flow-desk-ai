@@ -44,7 +44,14 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test:coverage
       - run: pnpm build
-      - run: pnpm audit --prod --audit-level high
+      - name: Security audit
+        run: |
+          for attempt in {1..5}; do
+            pnpm audit --prod --audit-level high && exit 0
+            echo "pnpm audit attempt $attempt failed, retrying in 10s..."
+            sleep 10
+          done
+          exit 1
       - run: node scripts/scan-secrets.mjs
       - name: Validate staging deployment health configuration
         run: |

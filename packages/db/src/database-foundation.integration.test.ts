@@ -40,8 +40,14 @@ import {
 } from "./automation-policy.js";
 import { createRoutingRule, listRoutingRules } from "./routing.js";
 import { resolveAutomationSafety } from "./automation-safety.js";
-import { findOrCreateConversation, createMessage } from "./conversations.js";
+import {
+  findOrCreateConversation,
+  createMessage,
+  createOutboundMessageWithOutbox,
+  type MessageRecord
+} from "./conversations.js";
 import { createChannel } from "./channels.js";
+import { getMonthlyAiSpend, MICROCENTS_PER_CENT } from "./auto-send.js";
 import type { DbClient } from "./auth.js";
 
 const executeFile = promisify(execFile);
@@ -129,7 +135,8 @@ describe("database foundation", () => {
       "0030_m5_auto_release_gate.sql",
       "0031_m5_auto_release_gates_rls.sql",
       "0032_m5_routing_logs_policy_rule_id.sql",
-      "0033_m5_automation_safety_global_resolution.sql"
+      "0033_m5_automation_safety_global_resolution.sql",
+      "0034_m5_bot_runs_monthly_cost_index.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -1927,6 +1934,179 @@ describe("database foundation", () => {
         "DELETE FROM flowdesk.automation_safety_controls WHERE organization_id IN ($1, $2) OR scope = 'global'",
         [orgIdA, orgIdB]
       );
+      await admin.query("DELETE FROM flowdesk.organizations WHERE id IN ($1, $2)", [
+        orgIdA,
+        orgIdB
+      ]);
+      await testPool.end();
+    }
+  });
+
+  it("enforces monthly AI spend aggregation, monthly boundary reset, tenant isolation, and manual operations (#179)", async () => {
+    const runtimeUrl = process.env["DATABASE_URL"] ?? connectionString;
+    const testPool = new Pool({ connectionString: runtimeUrl });
+
+    const orgIdA = "11111111-1111-4111-8111-111111111179";
+    const orgIdB = "22222222-2222-4222-8222-222222222179";
+
+    try {
+      await admin.query(
+        "INSERT INTO flowdesk.organizations (id, slug, display_name) VALUES ($1, $2, $3)",
+        [orgIdA, "org-cost-test-a", "Org Cost Test A"]
+      );
+      await admin.query(
+        "INSERT INTO flowdesk.organizations (id, slug, display_name) VALUES ($1, $2, $3)",
+        [orgIdB, "org-cost-test-b", "Org Cost Test B"]
+      );
+
+      const channelResA = await admin.query<{ id: string }>(
+        `INSERT INTO flowdesk.channels (organization_id, type, name, phone_number_id, waba_id, encrypted_credentials)
+         VALUES ($1, 'whatsapp', 'WhatsApp Cost A', 'cost-phone-a-1', 'waba-cost-a', 'encrypted-test-value') RETURNING id`,
+        [orgIdA]
+      );
+      const channelIdA = channelResA.rows[0]!.id;
+
+      const channelResB = await admin.query<{ id: string }>(
+        `INSERT INTO flowdesk.channels (organization_id, type, name, phone_number_id, waba_id, encrypted_credentials)
+         VALUES ($1, 'whatsapp', 'WhatsApp Cost B', 'cost-phone-b-1', 'waba-cost-b', 'encrypted-test-value') RETURNING id`,
+        [orgIdB]
+      );
+      const channelIdB = channelResB.rows[0]!.id;
+
+      const convResA = await admin.query<{ id: string }>(
+        `INSERT INTO flowdesk.conversations (organization_id, channel_id, customer_phone, customer_name)
+         VALUES ($1, $2, '+62811111179', 'Customer Cost A') RETURNING id`,
+        [orgIdA, channelIdA]
+      );
+      const convIdA = convResA.rows[0]!.id;
+
+      const convResB = await admin.query<{ id: string }>(
+        `INSERT INTO flowdesk.conversations (organization_id, channel_id, customer_phone, customer_name)
+         VALUES ($1, $2, '+62822222179', 'Customer Cost B') RETURNING id`,
+        [orgIdB, channelIdB]
+      );
+      const convIdB = convResB.rows[0]!.id;
+
+      // 1. Prior month boundary check: insert a bot run created 35 days ago for Tenant A
+      await admin.query(
+        `INSERT INTO flowdesk.bot_runs (organization_id, conversation_id, mode, status, cost_estimate_microcents, created_at)
+         VALUES ($1, $2, 'auto', 'completed', $3, clock_timestamp() - INTERVAL '35 days')`,
+        [orgIdA, convIdA, 100 * Number(MICROCENTS_PER_CENT)]
+      );
+
+      // Verify prior month run is excluded by date_trunc('month', clock_timestamp())
+      const initialSpendA = await withTenantTransaction(
+        testPool,
+        { organizationId: orgIdA },
+        async (client) => getMonthlyAiSpend(client, orgIdA)
+      );
+      expect(initialSpendA.totalMicrocents).toBe(0n);
+      expect(initialSpendA.totalCents).toBe(0);
+
+      // 2. Current month spend: insert run for Tenant A with 50 cents spend
+      await admin.query(
+        `INSERT INTO flowdesk.bot_runs (organization_id, conversation_id, mode, status, cost_estimate_microcents, created_at)
+         VALUES ($1, $2, 'auto', 'completed', $3, clock_timestamp() - INTERVAL '10 minutes')`,
+        [orgIdA, convIdA, 50 * Number(MICROCENTS_PER_CENT)]
+      );
+
+      const currentSpendA = await withTenantTransaction(
+        testPool,
+        { organizationId: orgIdA },
+        async (client) => getMonthlyAiSpend(client, orgIdA)
+      );
+      expect(currentSpendA.totalMicrocents).toBe(50n * MICROCENTS_PER_CENT);
+      expect(currentSpendA.totalCents).toBe(50);
+
+      // 3. Tenant isolation: insert large spend (50000 cents) for Tenant B in current month
+      await admin.query(
+        `INSERT INTO flowdesk.bot_runs (organization_id, conversation_id, mode, status, cost_estimate_microcents, created_at)
+         VALUES ($1, $2, 'auto', 'completed', $3, clock_timestamp() - INTERVAL '5 minutes')`,
+        [orgIdB, convIdB, 50000 * Number(MICROCENTS_PER_CENT)]
+      );
+
+      const spendB = await withTenantTransaction(
+        testPool,
+        { organizationId: orgIdB },
+        async (client) => getMonthlyAiSpend(client, orgIdB)
+      );
+      expect(spendB.totalCents).toBe(50000);
+
+      // Tenant A spend must remain strictly isolated (still 50 cents)
+      const recheckSpendA = await withTenantTransaction(
+        testPool,
+        { organizationId: orgIdA },
+        async (client) => getMonthlyAiSpend(client, orgIdA)
+      );
+      expect(recheckSpendA.totalCents).toBe(50);
+
+      // 4. Manual operations unaffected: even though Tenant B is at/above ceiling, manual operations and inbound messages succeed
+      const manualOutboundB = await withTenantTransaction<MessageRecord>(
+        testPool,
+        { organizationId: orgIdB },
+        async (client) => {
+          return createOutboundMessageWithOutbox(client, {
+            organizationId: orgIdB,
+            conversationId: convIdB,
+            senderUserId: null,
+            senderType: "agent",
+            content: "Manual agent reply to customer"
+          });
+        }
+      );
+      expect(manualOutboundB.id).toBeDefined();
+      expect(manualOutboundB.senderType).toBe("agent");
+
+      // Customer inbound message succeeds
+      const customerInboundB = await withTenantTransaction<MessageRecord>(
+        testPool,
+        { organizationId: orgIdB },
+        async (client) => {
+          return createMessage(client, {
+            organizationId: orgIdB,
+            conversationId: convIdB,
+            channelId: channelIdB,
+            senderType: "customer",
+            content: "Customer asking follow up question",
+            direction: "inbound"
+          });
+        }
+      );
+      expect(customerInboundB.id).toBeDefined();
+      expect(customerInboundB.senderType).toBe("customer");
+    } finally {
+      await admin.query("DELETE FROM flowdesk.outbox_events WHERE organization_id IN ($1, $2)", [
+        orgIdA,
+        orgIdB
+      ]);
+      await admin.query("DELETE FROM flowdesk.messages WHERE organization_id IN ($1, $2)", [
+        orgIdA,
+        orgIdB
+      ]);
+      await admin.query("DELETE FROM flowdesk.bot_runs WHERE organization_id IN ($1, $2)", [
+        orgIdA,
+        orgIdB
+      ]);
+      await admin.query("DELETE FROM flowdesk.conversations WHERE organization_id IN ($1, $2)", [
+        orgIdA,
+        orgIdB
+      ]);
+      await admin.query("DELETE FROM flowdesk.contacts WHERE organization_id IN ($1, $2)", [
+        orgIdA,
+        orgIdB
+      ]);
+      await admin.query("DELETE FROM flowdesk.channels WHERE organization_id IN ($1, $2)", [
+        orgIdA,
+        orgIdB
+      ]);
+      await admin.query(
+        "DELETE FROM flowdesk.realtime_versions WHERE organization_id IN ($1, $2)",
+        [orgIdA, orgIdB]
+      );
+      await admin.query("DELETE FROM flowdesk.bot_configs WHERE organization_id IN ($1, $2)", [
+        orgIdA,
+        orgIdB
+      ]);
       await admin.query("DELETE FROM flowdesk.organizations WHERE id IN ($1, $2)", [
         orgIdA,
         orgIdB
