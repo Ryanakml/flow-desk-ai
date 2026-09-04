@@ -2424,6 +2424,10 @@ describe("database foundation", () => {
         orgIdA,
         orgIdB
       ]);
+      await admin.query("DELETE FROM flowdesk.contacts WHERE organization_id IN ($1, $2)", [
+        orgIdA,
+        orgIdB
+      ]);
       await admin.query("DELETE FROM flowdesk.channels WHERE organization_id IN ($1, $2)", [
         orgIdA,
         orgIdB
