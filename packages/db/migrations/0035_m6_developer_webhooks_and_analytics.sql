@@ -145,7 +145,73 @@ ALTER FUNCTION flowdesk.list_active_organization_ids() OWNER TO flowdesk_system;
 REVOKE ALL ON FUNCTION flowdesk.list_active_organization_ids() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION flowdesk.list_active_organization_ids() TO flowdesk_runtime;
 
--- 6. Grants to Runtime and Reporting Roles
+-- 6. Extend the existing narrow outbox claimer for developer webhook dispatches.
+-- The worker already uses this SECURITY DEFINER function for durable queue claims;
+-- M6 adds a third supported event type rather than granting direct cross-tenant queue access.
+CREATE OR REPLACE FUNCTION flowdesk.claim_outbox_events(
+    input_event_type text,
+    input_limit integer
+) RETURNS TABLE (
+    id uuid,
+    organization_id uuid,
+    aggregate_type text,
+    aggregate_id uuid,
+    event_type text,
+    payload jsonb,
+    correlation_id uuid,
+    causation_id uuid,
+    occurred_at timestamptz,
+    attempts integer
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, flowdesk
+AS $$
+BEGIN
+    IF input_event_type NOT IN (
+        'webhook.received',
+        'message.outbound.created',
+        'developer.webhook.dispatch'
+    ) THEN
+        RAISE EXCEPTION 'Unsupported outbox event type';
+    END IF;
+    IF input_limit < 1 OR input_limit > 100 THEN
+        RAISE EXCEPTION 'Outbox claim limit must be between 1 and 100';
+    END IF;
+
+    RETURN QUERY
+    WITH candidates AS (
+        SELECT event.id
+        FROM flowdesk.outbox_events AS event
+        WHERE event.event_type = input_event_type
+          AND event.published_at IS NULL
+          AND event.available_at <= clock_timestamp()
+          AND (event.claimed_until IS NULL OR event.claimed_until < clock_timestamp())
+        ORDER BY event.occurred_at ASC
+        FOR UPDATE SKIP LOCKED
+        LIMIT input_limit
+    ), claimed AS (
+        UPDATE flowdesk.outbox_events AS event
+        SET claim_token = gen_random_uuid(),
+            claimed_until = clock_timestamp() + interval '30 seconds'
+        FROM candidates
+        WHERE event.id = candidates.id
+        RETURNING event.id, event.organization_id, event.aggregate_type,
+          event.aggregate_id, event.event_type, event.payload, event.correlation_id,
+          event.causation_id, event.occurred_at, event.attempts
+    )
+    SELECT claimed.id, claimed.organization_id, claimed.aggregate_type,
+      claimed.aggregate_id, claimed.event_type, claimed.payload,
+      claimed.correlation_id, claimed.causation_id, claimed.occurred_at,
+      claimed.attempts
+    FROM claimed;
+END $$;
+
+ALTER FUNCTION flowdesk.claim_outbox_events(text, integer) OWNER TO flowdesk_system;
+REVOKE ALL ON FUNCTION flowdesk.claim_outbox_events(text, integer) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION flowdesk.claim_outbox_events(text, integer) TO flowdesk_runtime;
+
+-- 7. Grants to Runtime and Reporting Roles
 GRANT SELECT, INSERT, UPDATE, DELETE ON
     flowdesk.webhook_deliveries,
     flowdesk.analytics_aggregates_hourly,
