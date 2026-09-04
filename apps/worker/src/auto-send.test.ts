@@ -93,6 +93,12 @@ function createCompletedAutoRunDb(
     botPaused: boolean;
     latestMessageId: string;
     emergencyDisabled: boolean;
+    durableSafety: {
+      control_id: string;
+      scope: "global" | "tenant" | "bot" | "channel" | "conversation";
+      reason: string;
+      expires_at: Date | null;
+    } | null;
   }> = {}
 ) {
   const now = new Date();
@@ -102,6 +108,9 @@ function createCompletedAutoRunDb(
       await Promise.resolve();
       const sql = queryText.replace(/\s+/g, " ").trim();
       calls.push(sql);
+      if (sql.includes("resolve_automation_safety")) {
+        return { rows: overrides.durableSafety ? [overrides.durableSafety] : [] };
+      }
       if (sql.includes("metadata->>'aiBotRunId'")) return { rows: [] };
       if (sql.includes("FROM flowdesk.bot_runs AS run")) {
         return {
@@ -227,5 +236,39 @@ describe("completed AUTO run final gate (#178)", () => {
     expect(result.autoSent).toBe(false);
     expect(result.reason).toContain("newer customer message");
     expect(calls.some((sql) => sql.includes("INSERT INTO flowdesk.messages"))).toBe(false);
+  });
+
+  it("denies AUTO dispatch when a durable global safety stop is active (#177)", async () => {
+    const { db, calls } = createCompletedAutoRunDb({
+      durableSafety: {
+        control_id: "00000000-0000-4000-8000-000000000099",
+        scope: "global",
+        reason: "M5 staging acceptance global halt",
+        expires_at: null
+      }
+    });
+    const result = await processCompletedAutoRun(db, {
+      organizationId: mockOrgId,
+      runId: "run-auto-1"
+    });
+    expect(result.autoSent).toBe(false);
+    expect(result.reason).toBe(
+      "Automation safety stop is active (global): M5 staging acceptance global halt"
+    );
+    expect(calls.some((sql) => sql.includes("INSERT INTO flowdesk.messages"))).toBe(false);
+    expect(calls.some((sql) => sql.includes("INSERT INTO flowdesk.outbox_events"))).toBe(false);
+  });
+
+  it("allows AUTO dispatch when durable safety is inactive/cleared (#177)", async () => {
+    const { db, calls } = createCompletedAutoRunDb({
+      durableSafety: null
+    });
+    const result = await processCompletedAutoRun(db, {
+      organizationId: mockOrgId,
+      runId: "run-auto-1"
+    });
+    expect(result.autoSent).toBe(true);
+    expect(calls.some((sql) => sql.includes("INSERT INTO flowdesk.messages"))).toBe(true);
+    expect(calls.some((sql) => sql.includes("INSERT INTO flowdesk.outbox_events"))).toBe(true);
   });
 });
