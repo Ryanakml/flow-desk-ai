@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   validatePromotionImageTag,
+  validateImageDigest,
+  validateProductionEnvironmentConfig,
   validateCanaryWeightTransition,
   evaluateCanaryHealthGate,
   validateMigrationExpandCompatibility,
@@ -8,7 +10,7 @@ import {
   DEFAULT_CANARY_THRESHOLDS
 } from "./production-release.js";
 
-describe("Production Release, Canary Gates, and Rollback Domain (M5-07 / #181)", () => {
+describe("Production Release, Canary Gates, and Rollback Domain (M5-07 / #181, #203)", () => {
   describe("validatePromotionImageTag", () => {
     it("accepts valid 40-character git commit SHA", () => {
       const validSha = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
@@ -30,6 +32,79 @@ describe("Production Release, Canary Gates, and Rollback Domain (M5-07 / #181)",
         false
       );
       expect(validatePromotionImageTag("").valid).toBe(false);
+    });
+  });
+
+  describe("validateImageDigest", () => {
+    it("accepts image reference pinned with valid sha256 digest", () => {
+      const validRef =
+        "ghcr.io/ryanakml/flowdesk-api@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+      const result = validateImageDigest(validRef);
+      expect(result.valid).toBe(true);
+      expect(result.error).toBeUndefined();
+    });
+
+    it("rejects mutable tag or reference without sha256 prefix", () => {
+      expect(validateImageDigest("ghcr.io/ryanakml/flowdesk-api:latest").valid).toBe(false);
+      expect(
+        validateImageDigest(
+          "ghcr.io/ryanakml/flowdesk-api:1fed41e3a777ea017222d27aada4c2929b9a4f6a"
+        ).valid
+      ).toBe(false);
+      expect(validateImageDigest("ghcr.io/ryanakml/flowdesk-api@md5:123456").valid).toBe(false);
+      expect(validateImageDigest("").valid).toBe(false);
+    });
+
+    it("rejects invalid sha256 digest length", () => {
+      expect(validateImageDigest("ghcr.io/ryanakml/flowdesk-api@sha256:short").valid).toBe(false);
+    });
+  });
+
+  describe("validateProductionEnvironmentConfig", () => {
+    it("passes when all required infrastructure ARNs are configured", () => {
+      const config = {
+        listenerArn:
+          "arn:aws:elasticloadbalancing:ap-southeast-1:111122223333:listener/app/prod-alb/123",
+        stableTgArn:
+          "arn:aws:elasticloadbalancing:ap-southeast-1:111122223333:targetgroup/prod-stable/456",
+        canaryTgArn:
+          "arn:aws:elasticloadbalancing:ap-southeast-1:111122223333:targetgroup/prod-canary/789",
+        canaryEndpointUrl: "https://canary.flowdesk.ai"
+      };
+      const result = validateProductionEnvironmentConfig(config);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it("fails closed when required ARNs are missing", () => {
+      const config = {
+        canaryEndpointUrl: "https://canary.flowdesk.ai"
+      };
+      const result = validateProductionEnvironmentConfig(config);
+      expect(result.valid).toBe(false);
+      expect(result.errors.length).toBeGreaterThanOrEqual(3);
+    });
+
+    it("rejects localhost endpoints in production configuration", () => {
+      const config = {
+        listenerArn:
+          "arn:aws:elasticloadbalancing:ap-southeast-1:111122223333:listener/app/prod-alb/123",
+        stableTgArn:
+          "arn:aws:elasticloadbalancing:ap-southeast-1:111122223333:targetgroup/prod-stable/456",
+        canaryTgArn:
+          "arn:aws:elasticloadbalancing:ap-southeast-1:111122223333:targetgroup/prod-canary/789",
+        canaryEndpointUrl: "http://127.0.0.1:4000"
+      };
+      const result = validateProductionEnvironmentConfig(config);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.includes("localhost"))).toBe(true);
+    });
+
+    it("allows mock configuration during rehearsal/test mode", () => {
+      const config = { isMock: true };
+      const result = validateProductionEnvironmentConfig(config);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
     });
   });
 
@@ -173,18 +248,24 @@ describe("Production Release, Canary Gates, and Rollback Domain (M5-07 / #181)",
   });
 
   describe("createProductionDeploymentRecord", () => {
+    const dummyDigests = {
+      web: "ghcr.io/ryanakml/flowdesk-web@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      api: "ghcr.io/ryanakml/flowdesk-api@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      ingress:
+        "ghcr.io/ryanakml/flowdesk-ingress@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      worker:
+        "ghcr.io/ryanakml/flowdesk-worker@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      scheduler:
+        "ghcr.io/ryanakml/flowdesk-scheduler@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      migrator:
+        "ghcr.io/ryanakml/flowdesk-migrator@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    };
+
     it("generates immutable deployment record with required audit metadata", () => {
       const sha = "1234567890abcdef1234567890abcdef12345678";
       const record = createProductionDeploymentRecord({
         sourceSha: sha,
-        imageDigests: {
-          web: "sha256:111",
-          api: "sha256:222",
-          ingress: "sha256:333",
-          worker: "sha256:444",
-          scheduler: "sha256:555",
-          migrator: "sha256:666"
-        },
+        imageDigests: dummyDigests,
         actor: "release-engineer",
         environment: "production",
         canaryWeights: [5, 25, 100],
@@ -209,7 +290,7 @@ describe("Production Release, Canary Gates, and Rollback Domain (M5-07 / #181)",
       expect(() =>
         createProductionDeploymentRecord({
           sourceSha: "latest",
-          imageDigests: {},
+          imageDigests: dummyDigests,
           actor: "dev",
           environment: "production",
           canaryWeights: [],
@@ -218,6 +299,24 @@ describe("Production Release, Canary Gates, and Rollback Domain (M5-07 / #181)",
           outcome: "promoted"
         })
       ).toThrow("Mutable tag 'latest' rejected");
+    });
+
+    it("throws when promoted record contains non-sha256 mutable image references", () => {
+      expect(() =>
+        createProductionDeploymentRecord({
+          sourceSha: "1234567890abcdef1234567890abcdef12345678",
+          imageDigests: {
+            ...dummyDigests,
+            web: "ghcr.io/ryanakml/flowdesk-web:latest"
+          },
+          actor: "release-engineer",
+          environment: "production",
+          canaryWeights: [5, 25, 100],
+          migrationApplied: true,
+          gates: [],
+          outcome: "promoted"
+        })
+      ).toThrow("not pinned by an immutable sha256 digest");
     });
   });
 });
