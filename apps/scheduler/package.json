@@ -17,9 +17,12 @@
   },
   "dependencies": {
     "@flowdesk/config": "workspace:*",
-    "@flowdesk/observability": "workspace:*"
+    "@flowdesk/db": "workspace:*",
+    "@flowdesk/observability": "workspace:*",
+    "pg": "8.16.3"
   },
   "devDependencies": {
+    "@types/pg": "8.15.5",
     "tsx": "^4.20.5"
   }
 }

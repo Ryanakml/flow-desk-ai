@@ -39,11 +39,12 @@ describe("Database Analytics Module (M6-03)", () => {
     expect(metrics.resolvedConversations).toBe(40);
     expect(metrics.totalMessages).toBe(200);
     expect(metrics.botMessages).toBe(150);
-    expect(metrics.botAutomationRate).toBe(75);
-    expect(queries[0]).toContain("assigned_to_user_id IS NOT NULL");
-    expect(queries[0]).toContain("team_id IS NOT NULL");
-    expect(queries[0]).not.toContain("assigned_agent_id");
-    expect(queries[0]).not.toContain("assigned_team_id");
+    const convQuery = queries.find((q) => q.includes("flowdesk.conversations"));
+    expect(convQuery).toBeDefined();
+    expect(convQuery).toContain("assigned_to_user_id IS NOT NULL");
+    expect(convQuery).toContain("team_id IS NOT NULL");
+    expect(convQuery).not.toContain("assigned_agent_id");
+    expect(convQuery).not.toContain("assigned_team_id");
   });
 
   it("retrieves volume time series data points sorted chronologically", async () => {

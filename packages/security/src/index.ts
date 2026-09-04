@@ -31,7 +31,13 @@ export {
   type WhatsAppChannelCredentials,
   type WhatsAppCredentialErrorCode
 } from "./whatsapp-credentials.js";
-export { computeMetaSignature, verifyMetaSignature, computeSha256 } from "./signature.js";
+export {
+  computeMetaSignature,
+  verifyMetaSignature,
+  computeSha256,
+  computeWebhookSignature,
+  verifyWebhookSignature
+} from "./signature.js";
 export {
   generateApiKey,
   hashApiKey,

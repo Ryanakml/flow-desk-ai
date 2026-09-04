@@ -15,6 +15,7 @@ import {
 import { Pool } from "pg";
 import { processOutboxWebhookBatch } from "./normalization.js";
 import { processOutboxOutboundBatch, dispatchOutboundMessage } from "./dispatch.js";
+import { processOutboxWebhookDispatchBatch } from "./webhook-dispatch.js";
 import {
   ClamAvScanner,
   createAiProviderRuntime,
@@ -99,6 +100,7 @@ if (dbPool) {
         },
         10
       ),
+      processOutboxWebhookDispatchBatch(dbPool, {}, 10),
       ...(aiRuntime
         ? [
             processKnowledgeIngestionBatch(
@@ -151,15 +153,16 @@ if (dbPool) {
         : [])
     ])
       .then((counts) => {
-        const [webhookCount = 0, outboundCount = 0] = counts;
-        const knowledgeCount = aiRuntime ? (counts[2] ?? 0) : 0;
-        const botDraftCount = aiRuntime ? (counts[3] ?? 0) : 0;
-        const mediaOffset = aiRuntime ? 4 : 2;
+        const [webhookCount = 0, outboundCount = 0, devWebhookCount = 0] = counts;
+        const knowledgeCount = aiRuntime ? (counts[3] ?? 0) : 0;
+        const botDraftCount = aiRuntime ? (counts[4] ?? 0) : 0;
+        const mediaOffset = aiRuntime ? 5 : 3;
         const scanCount = counts[mediaOffset] ?? 0;
         const retentionCount = counts[mediaOffset + 1] ?? 0;
         if (
           webhookCount > 0 ||
           outboundCount > 0 ||
+          devWebhookCount > 0 ||
           knowledgeCount > 0 ||
           botDraftCount > 0 ||
           scanCount > 0 ||
@@ -169,6 +172,7 @@ if (dbPool) {
             {
               webhookProcessed: webhookCount,
               outboundProcessed: outboundCount,
+              devWebhookProcessed: devWebhookCount,
               knowledgeProcessed: knowledgeCount,
               botDraftProcessed: botDraftCount,
               attachmentScanned: scanCount,

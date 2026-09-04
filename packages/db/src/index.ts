@@ -276,12 +276,20 @@ export {
   listWebhookSubscriptions,
   createWebhookSubscription,
   deleteWebhookSubscription,
+  getWebhookSubscriptionById,
+  createWebhookDelivery,
+  listWebhookDeliveries,
+  updateWebhookDeliveryOutcome,
   type WebhookSubscriptionRecord,
-  type CreateWebhookSubscriptionParams
+  type CreateWebhookSubscriptionParams,
+  type WebhookDeliveryRecord,
+  type WebhookDeliveryStatus,
+  type CreateWebhookDeliveryParams
 } from "./webhook-subscriptions.js";
 export {
   getAnalyticsOverview,
   getVolumeTimeSeries,
+  aggregateHourlyMetricsForOrg,
   type AnalyticsOverviewMetrics,
   type VolumeTimeSeriesPoint
 } from "./analytics.js";
