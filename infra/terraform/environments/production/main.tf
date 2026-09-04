@@ -49,11 +49,20 @@ variable "enable_canary_routing" {
 
 variable "canary_weight" {
   type        = number
-  default     = 5
+  default     = 0
   description = "Percentage of production traffic routed to canary slice (0, 5, 25, 100)"
   validation {
     condition     = contains([0, 5, 25, 100], var.canary_weight)
     error_message = "canary_weight must be 0, 5, 25, or 100."
+  }
+}
+
+variable "bootstrap_image_digest" {
+  type        = string
+  description = "Immutable pinned sha256 image digest for production bootstrap (e.g. ghcr.io/ryanakml/flowdesk-api@sha256:<64-hex>). Mutable tags (:latest, etc.) are strictly prohibited."
+  validation {
+    condition     = can(regex("^ghcr\\.io/ryanakml/flowdesk-api@sha256:[0-9a-f]{64}$", var.bootstrap_image_digest))
+    error_message = "bootstrap_image_digest must be an immutable pinned digest matching 'ghcr.io/ryanakml/flowdesk-api@sha256:<64-hex-chars>'. Mutable tags like :latest are prohibited."
   }
 }
 
@@ -314,7 +323,7 @@ resource "aws_ecs_task_definition" "production_stable" {
   container_definitions = jsonencode([
     {
       name      = "api"
-      image     = "ghcr.io/ryanakml/flowdesk-api:latest"
+      image     = var.bootstrap_image_digest
       essential = true
       portMappings = [
         {
@@ -354,7 +363,7 @@ resource "aws_ecs_task_definition" "production_canary" {
   container_definitions = jsonencode([
     {
       name      = "api"
-      image     = "ghcr.io/ryanakml/flowdesk-api:latest"
+      image     = var.bootstrap_image_digest
       essential = true
       portMappings = [
         {
@@ -594,4 +603,8 @@ output "stable_service_name" {
 
 output "canary_service_name" {
   value = aws_ecs_service.production_canary.name
+}
+
+output "bootstrap_image_digest" {
+  value = var.bootstrap_image_digest
 }

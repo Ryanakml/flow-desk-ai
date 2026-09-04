@@ -149,11 +149,13 @@ TASK_DEF_JSON=$(aws ecs describe-task-definition \
   --task-definition "${TASK_DEF_ARN}" \
   --query "taskDefinition" \
   --output json)
+export TASK_DEF_JSON
 
 # Create new task definition JSON injecting verified immutable sha256 digests
 NEW_TASK_DEF_PAYLOAD=$(node -e "
   const fs = require('fs');
-  const taskDef = JSON.parse(process.env.TASK_DEF_JSON);
+  const raw = JSON.parse(process.env.TASK_DEF_JSON);
+  const taskDef = raw.taskDefinition || raw;
   const digestsPath = process.argv[1];
   const digestsData = JSON.parse(fs.readFileSync(digestsPath, 'utf8'));
   const digests = digestsData.digests || digestsData.imageDigests;
@@ -213,6 +215,7 @@ RUNNING_TASK_ARNS=$(aws ecs list-tasks \
   --desired-status RUNNING \
   --query "taskArns" \
   --output json)
+export RUNNING_TASK_ARNS
 
 node -e "
   const taskArns = JSON.parse(process.env.RUNNING_TASK_ARNS || '[]');
@@ -227,6 +230,7 @@ DESCRIBE_TASKS_JSON=$(aws ecs describe-tasks \
   --cluster "${ECS_CLUSTER_NAME}" \
   --tasks $(echo "${RUNNING_TASK_ARNS}" | node -e "const fs = require('fs'); console.log(JSON.parse(fs.readFileSync(0, 'utf8')).join(' '))") \
   --output json)
+export DESCRIBE_TASKS_JSON
 
 # Validate that running tasks are using the expected image digests
 node -e "
@@ -268,6 +272,7 @@ TG_HEALTH=$(aws elbv2 describe-target-health \
   --target-group-arn "${PROD_TG_ARN}" \
   --query "TargetHealthDescriptions[].TargetHealth.State" \
   --output json)
+export TG_HEALTH
 
 node -e "
   const states = JSON.parse(process.env.TG_HEALTH || '[]');

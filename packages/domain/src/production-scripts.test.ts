@@ -58,6 +58,62 @@ interface DeploymentRecord {
   deployedAt: string;
 }
 
+function setupStubAws(
+  config: Record<string, { output?: string; error?: string; exitCode?: number }>
+) {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "stub-aws-"));
+  const awsBin = path.join(tempDir, "aws");
+  const configFile = path.join(tempDir, "stub-aws-config.json");
+  fs.writeFileSync(configFile, JSON.stringify(config, null, 2));
+
+  const stubScript = `#!/usr/bin/env node
+const fs = require('fs');
+const args = process.argv.slice(2);
+const configFile = process.env.STUB_AWS_CONFIG_FILE;
+if (!configFile || !fs.existsSync(configFile)) {
+  process.exit(1);
+}
+const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+
+let matchedKey = null;
+let bestMatchLength = 0;
+const joined = args.join(' ');
+for (const key of Object.keys(config)) {
+  if (joined.startsWith(key) && key.length > bestMatchLength) {
+    matchedKey = key;
+    bestMatchLength = key.length;
+  }
+}
+
+if (!matchedKey) {
+  const cmd = args.slice(0, 2).join(' ');
+  if (config[cmd]) {
+    matchedKey = cmd;
+  }
+}
+
+if (matchedKey && config[matchedKey]) {
+  const entry = config[matchedKey];
+  if (entry.output) process.stdout.write(entry.output);
+  if (entry.error) process.stderr.write(entry.error);
+  process.exit(entry.exitCode !== undefined ? entry.exitCode : 0);
+}
+
+process.stdout.write('{}');
+process.exit(0);
+`;
+
+  fs.writeFileSync(awsBin, stubScript, { mode: 0o755 });
+
+  return {
+    binDir: tempDir,
+    configFile,
+    cleanup: () => {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  };
+}
+
 describe("Production Deployment Scripts Integration Tests (M5-07 / #181, #203, #205)", () => {
   const sampleDigests = {
     web: "ghcr.io/ryanakml/flowdesk-web@sha256:1111111111111111111111111111111111111111111111111111111111111111",
@@ -172,6 +228,260 @@ describe("Production Deployment Scripts Integration Tests (M5-07 / #181, #203, #
       fs.unlinkSync(digestsFile);
       fs.unlinkSync(stateFile);
     });
+
+    it("executes non-mock AWS path and correctly parses exported TASK_DEF_JSON, RUNNING_TASK_ARNS, DESCRIBE_TASKS_JSON, and TG_HEALTH", () => {
+      const digestsFile = path.join(os.tmpdir(), "nonmock-digests-" + Date.now() + ".json");
+      fs.writeFileSync(digestsFile, JSON.stringify({ digests: sampleDigests }));
+
+      const stub = setupStubAws({
+        "ecs describe-services": {
+          output:
+            "arn:aws:ecs:ap-southeast-1:123456789012:task-definition/flowdesk-production-api-canary:1\n"
+        },
+        "ecs describe-task-definition": {
+          output: JSON.stringify({
+            family: "flowdesk-production-api-canary",
+            taskDefinitionArn:
+              "arn:aws:ecs:ap-southeast-1:123456789012:task-definition/flowdesk-production-api-canary:1",
+            revision: 1,
+            containerDefinitions: [
+              { name: "api", image: "ghcr.io/ryanakml/flowdesk-api:old" },
+              { name: "web", image: "ghcr.io/ryanakml/flowdesk-web:old" }
+            ]
+          })
+        },
+        "ecs register-task-definition": {
+          output: JSON.stringify({
+            taskDefinition: {
+              taskDefinitionArn:
+                "arn:aws:ecs:ap-southeast-1:123456789012:task-definition/flowdesk-production-api-canary:2"
+            }
+          })
+        },
+        "ecs update-service": {
+          output: ""
+        },
+        "ecs wait services-stable": {
+          output: ""
+        },
+        "ecs list-tasks": {
+          output: '["arn:aws:ecs:ap-southeast-1:123456789012:task/cluster/task-canary-1"]\n'
+        },
+        "ecs describe-tasks": {
+          output: JSON.stringify({
+            tasks: [
+              {
+                taskArn: "arn:aws:ecs:ap-southeast-1:123456789012:task/cluster/task-canary-1",
+                containers: [
+                  {
+                    name: "api",
+                    image: sampleDigests.api,
+                    imageDigest: sampleDigests.api.split("@")[1]
+                  },
+                  {
+                    name: "web",
+                    image: sampleDigests.web,
+                    imageDigest: sampleDigests.web.split("@")[1]
+                  }
+                ]
+              }
+            ]
+          })
+        },
+        "elbv2 describe-target-health": {
+          output: '["healthy"]\n'
+        }
+      });
+
+      try {
+        const output = execFileSync(deployWorkloadScript, ["canary", digestsFile], {
+          cwd: repoRoot,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${stub.binDir}:${process.env["PATH"]}`,
+            STUB_AWS_CONFIG_FILE: stub.configFile,
+            FLOWDESK_MOCK_COMPUTE_CONTROLLER: "false",
+            ECS_CLUSTER_NAME: "flowdesk-production-cluster",
+            ECS_SERVICE_NAME: "flowdesk-production-canary-api",
+            PROD_CANARY_TG_ARN:
+              "arn:aws:elasticloadbalancing:ap-southeast-1:123:targetgroup/canary/1",
+            AWS_REGION: "ap-southeast-1"
+          }
+        });
+
+        expect(output).toContain("Registered new task definition");
+        expect(output).toContain(
+          "All running tasks verified executing expected immutable digests."
+        );
+        expect(output).toContain("All 1 targets in");
+        expect(output).toContain(
+          "Workload deployment for canary completed successfully and verified."
+        );
+      } finally {
+        stub.cleanup();
+        fs.unlinkSync(digestsFile);
+      }
+    });
+
+    it("fails closed in non-mock AWS path when running container digest differs from expected", () => {
+      const digestsFile = path.join(os.tmpdir(), "nonmock-fail-digests-" + Date.now() + ".json");
+      fs.writeFileSync(digestsFile, JSON.stringify({ digests: sampleDigests }));
+
+      const stub = setupStubAws({
+        "ecs describe-services": {
+          output:
+            "arn:aws:ecs:ap-southeast-1:123456789012:task-definition/flowdesk-production-api-canary:1\n"
+        },
+        "ecs describe-task-definition": {
+          output: JSON.stringify({
+            family: "flowdesk-production-api-canary",
+            taskDefinitionArn:
+              "arn:aws:ecs:ap-southeast-1:123456789012:task-definition/flowdesk-production-api-canary:1",
+            revision: 1,
+            containerDefinitions: [{ name: "api", image: "old" }]
+          })
+        },
+        "ecs register-task-definition": {
+          output: JSON.stringify({
+            taskDefinition: {
+              taskDefinitionArn:
+                "arn:aws:ecs:ap-southeast-1:123456789012:task-definition/flowdesk-production-api-canary:2"
+            }
+          })
+        },
+        "ecs update-service": { output: "" },
+        "ecs wait services-stable": { output: "" },
+        "ecs list-tasks": {
+          output: '["arn:aws:ecs:ap-southeast-1:123456789012:task/cluster/task-1"]\n'
+        },
+        "ecs describe-tasks": {
+          output: JSON.stringify({
+            tasks: [
+              {
+                taskArn: "arn:aws:ecs:ap-southeast-1:123456789012:task/cluster/task-1",
+                containers: [
+                  {
+                    name: "api",
+                    image:
+                      "ghcr.io/ryanakml/flowdesk-api@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                    imageDigest:
+                      "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                  }
+                ]
+              }
+            ]
+          })
+        },
+        "elbv2 describe-target-health": { output: '["healthy"]\n' }
+      });
+
+      try {
+        expect(() => {
+          execFileSync(deployWorkloadScript, ["canary", digestsFile], {
+            cwd: repoRoot,
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              PATH: `${stub.binDir}:${process.env["PATH"]}`,
+              STUB_AWS_CONFIG_FILE: stub.configFile,
+              FLOWDESK_MOCK_COMPUTE_CONTROLLER: "false",
+              ECS_CLUSTER_NAME: "flowdesk-production-cluster",
+              ECS_SERVICE_NAME: "flowdesk-production-canary-api",
+              PROD_CANARY_TG_ARN:
+                "arn:aws:elasticloadbalancing:ap-southeast-1:123:targetgroup/canary/1",
+              AWS_REGION: "ap-southeast-1"
+            },
+            stdio: ["pipe", "pipe", "pipe"]
+          });
+        }).toThrow(/running digest mismatch/);
+      } finally {
+        stub.cleanup();
+        fs.unlinkSync(digestsFile);
+      }
+    });
+
+    it("fails closed in non-mock AWS path when target health check reports unhealthy targets", () => {
+      const digestsFile = path.join(os.tmpdir(), "nonmock-unhealthy-" + Date.now() + ".json");
+      fs.writeFileSync(digestsFile, JSON.stringify({ digests: sampleDigests }));
+
+      const stub = setupStubAws({
+        "ecs describe-services": {
+          output:
+            "arn:aws:ecs:ap-southeast-1:123456789012:task-definition/flowdesk-production-api-canary:1\n"
+        },
+        "ecs describe-task-definition": {
+          output: JSON.stringify({
+            family: "flowdesk-production-api-canary",
+            taskDefinitionArn:
+              "arn:aws:ecs:ap-southeast-1:123456789012:task-definition/flowdesk-production-api-canary:1",
+            revision: 1,
+            containerDefinitions: [{ name: "api", image: "old" }]
+          })
+        },
+        "ecs register-task-definition": {
+          output: JSON.stringify({
+            taskDefinition: {
+              taskDefinitionArn:
+                "arn:aws:ecs:ap-southeast-1:123456789012:task-definition/flowdesk-production-api-canary:2"
+            }
+          })
+        },
+        "ecs update-service": { output: "" },
+        "ecs wait services-stable": { output: "" },
+        "ecs list-tasks": {
+          output: '["arn:aws:ecs:ap-southeast-1:123456789012:task/cluster/task-1"]\n'
+        },
+        "ecs describe-tasks": {
+          output: JSON.stringify({
+            tasks: [
+              {
+                taskArn: "arn:aws:ecs:ap-southeast-1:123456789012:task/cluster/task-1",
+                containers: [
+                  {
+                    name: "api",
+                    image: sampleDigests.api,
+                    imageDigest: sampleDigests.api.split("@")[1]
+                  },
+                  {
+                    name: "web",
+                    image: sampleDigests.web,
+                    imageDigest: sampleDigests.web.split("@")[1]
+                  }
+                ]
+              }
+            ]
+          })
+        },
+        "elbv2 describe-target-health": {
+          output: '["unhealthy"]\n'
+        }
+      });
+
+      try {
+        expect(() => {
+          execFileSync(deployWorkloadScript, ["canary", digestsFile], {
+            cwd: repoRoot,
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              PATH: `${stub.binDir}:${process.env["PATH"]}`,
+              STUB_AWS_CONFIG_FILE: stub.configFile,
+              FLOWDESK_MOCK_COMPUTE_CONTROLLER: "false",
+              ECS_CLUSTER_NAME: "flowdesk-production-cluster",
+              ECS_SERVICE_NAME: "flowdesk-production-canary-api",
+              PROD_CANARY_TG_ARN:
+                "arn:aws:elasticloadbalancing:ap-southeast-1:123:targetgroup/canary/1",
+              AWS_REGION: "ap-southeast-1"
+            },
+            stdio: ["pipe", "pipe", "pipe"]
+          });
+        }).toThrow(/Target group .* has unhealthy targets/);
+      } finally {
+        stub.cleanup();
+        fs.unlinkSync(digestsFile);
+      }
+    });
   });
 
   describe("verify-workload.sh", () => {
@@ -224,6 +534,143 @@ describe("Production Deployment Scripts Integration Tests (M5-07 / #181, #203, #
       }).toThrow(/Mock workload state file .* not found/);
 
       fs.unlinkSync(digestsFile);
+    });
+
+    it("executes non-mock AWS path and correctly parses exported RUNNING_TASK_ARNS and DESCRIBE_TASKS_JSON", () => {
+      const digestsFile = path.join(os.tmpdir(), "v-nonmock-digests-" + Date.now() + ".json");
+      fs.writeFileSync(digestsFile, JSON.stringify({ digests: sampleDigests }));
+
+      const stub = setupStubAws({
+        "ecs list-tasks": {
+          output: '["arn:aws:ecs:ap-southeast-1:123456789012:task/cluster/task-v1"]\n'
+        },
+        "ecs describe-tasks": {
+          output: JSON.stringify({
+            tasks: [
+              {
+                taskArn: "arn:aws:ecs:ap-southeast-1:123456789012:task/cluster/task-v1",
+                containers: [
+                  {
+                    name: "api",
+                    image: sampleDigests.api,
+                    imageDigest: sampleDigests.api.split("@")[1]
+                  },
+                  {
+                    name: "web",
+                    image: sampleDigests.web,
+                    imageDigest: sampleDigests.web.split("@")[1]
+                  }
+                ]
+              }
+            ]
+          })
+        }
+      });
+
+      try {
+        const output = execFileSync(verifyWorkloadScript, ["canary", digestsFile], {
+          cwd: repoRoot,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${stub.binDir}:${process.env["PATH"]}`,
+            STUB_AWS_CONFIG_FILE: stub.configFile,
+            FLOWDESK_MOCK_COMPUTE_CONTROLLER: "false",
+            ECS_CLUSTER_NAME: "flowdesk-production-cluster",
+            ECS_SERVICE_NAME: "flowdesk-production-canary-api",
+            AWS_REGION: "ap-southeast-1"
+          }
+        });
+
+        expect(output).toContain("Running tasks confirmed executing expected immutable digests.");
+      } finally {
+        stub.cleanup();
+        fs.unlinkSync(digestsFile);
+      }
+    });
+
+    it("fails closed in non-mock AWS path when running digest mismatch occurs", () => {
+      const digestsFile = path.join(os.tmpdir(), "v-nonmock-mismatch-" + Date.now() + ".json");
+      fs.writeFileSync(digestsFile, JSON.stringify({ digests: sampleDigests }));
+
+      const stub = setupStubAws({
+        "ecs list-tasks": {
+          output: '["arn:aws:ecs:ap-southeast-1:123456789012:task/cluster/task-v1"]\n'
+        },
+        "ecs describe-tasks": {
+          output: JSON.stringify({
+            tasks: [
+              {
+                taskArn: "arn:aws:ecs:ap-southeast-1:123456789012:task/cluster/task-v1",
+                containers: [
+                  {
+                    name: "api",
+                    image:
+                      "ghcr.io/ryanakml/flowdesk-api@sha256:9999999999999999999999999999999999999999999999999999999999999999",
+                    imageDigest:
+                      "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+                  }
+                ]
+              }
+            ]
+          })
+        }
+      });
+
+      try {
+        expect(() => {
+          execFileSync(verifyWorkloadScript, ["canary", digestsFile], {
+            cwd: repoRoot,
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              PATH: `${stub.binDir}:${process.env["PATH"]}`,
+              STUB_AWS_CONFIG_FILE: stub.configFile,
+              FLOWDESK_MOCK_COMPUTE_CONTROLLER: "false",
+              ECS_CLUSTER_NAME: "flowdesk-production-cluster",
+              ECS_SERVICE_NAME: "flowdesk-production-canary-api",
+              AWS_REGION: "ap-southeast-1"
+            },
+            stdio: ["pipe", "pipe", "pipe"]
+          });
+        }).toThrow(/Running digest mismatch for api/);
+      } finally {
+        stub.cleanup();
+        fs.unlinkSync(digestsFile);
+      }
+    });
+
+    it("fails closed in non-mock AWS path when no running tasks are returned", () => {
+      const digestsFile = path.join(os.tmpdir(), "v-nonmock-notasks-" + Date.now() + ".json");
+      fs.writeFileSync(digestsFile, JSON.stringify({ digests: sampleDigests }));
+
+      const stub = setupStubAws({
+        "ecs list-tasks": {
+          output: "[]\n"
+        }
+      });
+
+      try {
+        expect(() => {
+          execFileSync(verifyWorkloadScript, ["canary", digestsFile], {
+            cwd: repoRoot,
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              PATH: `${stub.binDir}:${process.env["PATH"]}`,
+              STUB_AWS_CONFIG_FILE: stub.configFile,
+              FLOWDESK_MOCK_COMPUTE_CONTROLLER: "false",
+              ECS_CLUSTER_NAME: "flowdesk-production-cluster",
+              ECS_SERVICE_NAME: "flowdesk-production-canary-api",
+              AWS_REGION: "ap-southeast-1"
+            },
+            stdio: ["pipe", "pipe", "pipe"]
+          });
+        }).toThrow(/No running tasks found/);
+      } finally {
+        stub.cleanup();
+        fs.unlinkSync(digestsFile);
+      }
     });
   });
 
@@ -301,6 +748,66 @@ describe("Production Deployment Scripts Integration Tests (M5-07 / #181, #203, #
       expect(state.stableWeight).toBe(100);
 
       fs.unlinkSync(stateFile);
+    });
+
+    it("executes non-mock AWS path and correctly parses exported DESCRIBE_OUTPUT from stubbed AWS CLI", () => {
+      const stub = setupStubAws({
+        "elbv2 modify-listener": { output: "" },
+        "elbv2 describe-listeners": {
+          output: JSON.stringify({
+            Listeners: [
+              {
+                ListenerArn: "arn:aws:elasticloadbalancing:ap-southeast-1:123:listener/app/alb/1",
+                DefaultActions: [
+                  {
+                    Type: "forward",
+                    ForwardConfig: {
+                      TargetGroups: [
+                        {
+                          TargetGroupArn:
+                            "arn:aws:elasticloadbalancing:ap-southeast-1:123:targetgroup/stable/1",
+                          Weight: 95
+                        },
+                        {
+                          TargetGroupArn:
+                            "arn:aws:elasticloadbalancing:ap-southeast-1:123:targetgroup/canary/1",
+                          Weight: 5
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          })
+        }
+      });
+
+      try {
+        const output = execFileSync(canaryScript, ["5"], {
+          cwd: repoRoot,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${stub.binDir}:${process.env["PATH"]}`,
+            STUB_AWS_CONFIG_FILE: stub.configFile,
+            FLOWDESK_MOCK_TRAFFIC_CONTROLLER: "false",
+            PROD_LISTENER_ARN: "arn:aws:elasticloadbalancing:ap-southeast-1:123:listener/app/alb/1",
+            PROD_STABLE_TG_ARN:
+              "arn:aws:elasticloadbalancing:ap-southeast-1:123:targetgroup/stable/1",
+            PROD_CANARY_TG_ARN:
+              "arn:aws:elasticloadbalancing:ap-southeast-1:123:targetgroup/canary/1",
+            AWS_REGION: "ap-southeast-1"
+          }
+        });
+
+        expect(output).toContain("Verified active AWS ALB weights: Stable=95%, Canary=5%");
+        expect(output).toContain(
+          "Canary weight 5% successfully established and verified on AWS ALB."
+        );
+      } finally {
+        stub.cleanup();
+      }
     });
   });
 
@@ -465,6 +972,35 @@ describe("Production Deployment Scripts Integration Tests (M5-07 / #181, #203, #
         (g: DeploymentGate) => g.name === "canary_workload_deployed"
       );
       expect(canaryDeployGate?.passed).toBe(false);
+
+      fs.unlinkSync(recordFile);
+    });
+
+    it("records rolled_back release on full promotion / stable catchup failure", () => {
+      const recordFile = path.join(
+        os.tmpdir(),
+        "test-record-rollback-full-" + Date.now() + ".json"
+      );
+
+      execFileSync(recordScript, [validSha, "rolled_back", "test-actor", recordFile], {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          FAILED_STAGE: "full_promotion"
+        }
+      });
+
+      const record = JSON.parse(fs.readFileSync(recordFile, "utf8")) as DeploymentRecord;
+      expect(record.outcome).toBe("rolled_back");
+      expect(record.canaryWeights).toEqual([0]);
+      const canary100Gate = record.gates.find((g: DeploymentGate) => g.name === "canary_100pct");
+      expect(canary100Gate?.passed).toBe(false);
+      const stableWorkloadGate = record.gates.find(
+        (g: DeploymentGate) => g.name === "stable_workload_promoted"
+      );
+      expect(stableWorkloadGate?.passed).toBe(false);
+      expect(stableWorkloadGate?.skipped).toBe(true);
 
       fs.unlinkSync(recordFile);
     });
