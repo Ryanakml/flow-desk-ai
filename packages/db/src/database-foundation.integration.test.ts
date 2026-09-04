@@ -2075,6 +2075,10 @@ describe("database foundation", () => {
       expect(customerInboundB.id).toBeDefined();
       expect(customerInboundB.senderType).toBe("customer");
     } finally {
+      await admin.query("DELETE FROM flowdesk.outbox_events WHERE organization_id IN ($1, $2)", [
+        orgIdA,
+        orgIdB
+      ]);
       await admin.query("DELETE FROM flowdesk.messages WHERE organization_id IN ($1, $2)", [
         orgIdA,
         orgIdB
@@ -2084,6 +2088,10 @@ describe("database foundation", () => {
         orgIdB
       ]);
       await admin.query("DELETE FROM flowdesk.conversations WHERE organization_id IN ($1, $2)", [
+        orgIdA,
+        orgIdB
+      ]);
+      await admin.query("DELETE FROM flowdesk.contacts WHERE organization_id IN ($1, $2)", [
         orgIdA,
         orgIdB
       ]);
