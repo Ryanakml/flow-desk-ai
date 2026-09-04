@@ -15,6 +15,8 @@ import {
 } from "@flowdesk/db";
 import { dispatchDeveloperWebhook } from "./webhook-dispatch.js";
 
+const testWebhookSecret = (seed = "test") => `whsec_${seed.padEnd(32, "x")}`;
+
 describe("Milestone 6 End-to-End Community Platform Suite (M6-06)", () => {
   describe("M6-02: Developer API Keys & Scopes", () => {
     it("generates and verifies scoped developer API keys with cryptographic security", () => {
@@ -28,10 +30,10 @@ describe("Milestone 6 End-to-End Community Platform Suite (M6-06)", () => {
       expect(verifyApiKeyHash("fd_live_invalid_key_12345", keyHash)).toBe(false);
 
       // Scopes enforcement check
-      const scopes = ["conversation:read", "message:write"];
-      expect(hasRequiredScope(scopes, "conversation:read")).toBe(true);
-      expect(hasRequiredScope(scopes, "message:write")).toBe(true);
-      expect(hasRequiredScope(scopes, "conversation:write")).toBe(false);
+      expect(
+        hasRequiredScope(["conversations:read", "conversations:write"], "conversations:read")
+      ).toBe(true);
+      expect(hasRequiredScope(["conversations:read"], "conversations:write")).toBe(false);
       expect(hasRequiredScope(["*"], "anything:allowed")).toBe(true);
     });
   });
@@ -39,7 +41,7 @@ describe("Milestone 6 End-to-End Community Platform Suite (M6-06)", () => {
   describe("M6-02: Webhook Signing & Verification", () => {
     it("computes HMAC-SHA256 signature and verifies within clock tolerance", () => {
       const payload = JSON.stringify({ event: "conversation.created", conversationId: "conv-101" });
-      const secret = "whsec_0123456789abcdef0123456789abcdef";
+      const secret = testWebhookSecret("valid");
       const nowSeconds = Math.floor(Date.now() / 1000);
 
       const header = computeWebhookSignature(payload, secret, nowSeconds);
@@ -56,7 +58,7 @@ describe("Milestone 6 End-to-End Community Platform Suite (M6-06)", () => {
       // Wrong secret fails
       const wrongSecretValid = verifyWebhookSignature(
         payload,
-        "whsec_wrongsecret999999999999999",
+        testWebhookSecret("wrong"),
         header,
         300
       );
@@ -125,7 +127,7 @@ describe("Milestone 6 End-to-End Community Platform Suite (M6-06)", () => {
           eventId: "evt-1",
           eventType: "conversation.created",
           url: "https://example.com/webhooks",
-          secret: "whsec_test_secret_1234567890",
+          secret: testWebhookSecret("sub1"),
           payload: { event: "conversation.created", id: "conv-1" }
         },
         correlationId: "evt-1",
@@ -207,7 +209,7 @@ describe("Milestone 6 End-to-End Community Platform Suite (M6-06)", () => {
           eventId: "evt-2",
           eventType: "message.received",
           url: "https://example.com/webhooks",
-          secret: "whsec_test_secret_1234567890",
+          secret: testWebhookSecret("sub2"),
           payload: { event: "message.received" }
         },
         correlationId: "evt-2",

@@ -438,7 +438,8 @@ integration("M5 AUTO post-generation runtime against PostgreSQL RLS (#178)", () 
     const address = subscriberServer.address();
     const port = typeof address === "object" && address !== null ? address.port : 9999;
     const targetUrl = `http://127.0.0.1:${port}/webhook`;
-    const webhookSecret = "whsec_0123456789abcdef0123456789abcdef";
+    const testWebhookSecret = (seed = "test") => `whsec_${seed.padEnd(32, "x")}`;
+    const webhookSecret = testWebhookSecret("vslice");
     const encryptedSecret = encryptWebhookSecret(webhookSecret, encryptionKey);
 
     try {

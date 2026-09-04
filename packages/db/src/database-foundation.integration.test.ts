@@ -2134,53 +2134,61 @@ describe("database foundation", () => {
     const userA = "00000000-0000-7000-8000-000000000604";
 
     const testPool = new Pool({ connectionString });
+    const testWebhookSecret = (seed = "test") => `whsec_${seed.padEnd(32, "x")}`;
 
-    await admin.query("DELETE FROM flowdesk.webhook_deliveries WHERE organization_id IN ($1, $2)", [
-      orgIdA,
-      orgIdB
-    ]);
-    await admin.query("DELETE FROM flowdesk.outbox_events WHERE organization_id IN ($1, $2)", [
-      orgIdA,
-      orgIdB
-    ]);
-    await admin.query(
-      "DELETE FROM flowdesk.webhook_subscriptions WHERE organization_id IN ($1, $2)",
-      [orgIdA, orgIdB]
-    );
-    await admin.query("DELETE FROM flowdesk.api_keys WHERE organization_id IN ($1, $2)", [
-      orgIdA,
-      orgIdB
-    ]);
-    await admin.query(
-      "DELETE FROM flowdesk.analytics_aggregates_hourly WHERE organization_id IN ($1, $2)",
-      [orgIdA, orgIdB]
-    );
-    await admin.query(
-      "DELETE FROM flowdesk.analytics_watermarks WHERE organization_id IN ($1, $2)",
-      [orgIdA, orgIdB]
-    );
-    await admin.query("DELETE FROM flowdesk.messages WHERE organization_id IN ($1, $2)", [
-      orgIdA,
-      orgIdB
-    ]);
-    await admin.query("DELETE FROM flowdesk.conversations WHERE organization_id IN ($1, $2)", [
-      orgIdA,
-      orgIdB
-    ]);
-    await admin.query("DELETE FROM flowdesk.contacts WHERE organization_id IN ($1, $2)", [
-      orgIdA,
-      orgIdB
-    ]);
-    await admin.query("DELETE FROM flowdesk.channels WHERE organization_id IN ($1, $2)", [
-      orgIdA,
-      orgIdB
-    ]);
-    await admin.query("DELETE FROM flowdesk.realtime_versions WHERE organization_id IN ($1, $2)", [
-      orgIdA,
-      orgIdB
-    ]);
-    await admin.query("DELETE FROM flowdesk.users WHERE id = $1", [userA]);
-    await admin.query("DELETE FROM flowdesk.organizations WHERE id IN ($1, $2)", [orgIdA, orgIdB]);
+    const cleanupM6Fixtures = async () => {
+      await admin.query(
+        "DELETE FROM flowdesk.webhook_deliveries WHERE organization_id IN ($1, $2)",
+        [orgIdA, orgIdB]
+      );
+      await admin.query("DELETE FROM flowdesk.outbox_events WHERE organization_id IN ($1, $2)", [
+        orgIdA,
+        orgIdB
+      ]);
+      await admin.query(
+        "DELETE FROM flowdesk.webhook_subscriptions WHERE organization_id IN ($1, $2)",
+        [orgIdA, orgIdB]
+      );
+      await admin.query("DELETE FROM flowdesk.api_keys WHERE organization_id IN ($1, $2)", [
+        orgIdA,
+        orgIdB
+      ]);
+      await admin.query(
+        "DELETE FROM flowdesk.analytics_aggregates_hourly WHERE organization_id IN ($1, $2)",
+        [orgIdA, orgIdB]
+      );
+      await admin.query(
+        "DELETE FROM flowdesk.analytics_watermarks WHERE organization_id IN ($1, $2)",
+        [orgIdA, orgIdB]
+      );
+      await admin.query("DELETE FROM flowdesk.messages WHERE organization_id IN ($1, $2)", [
+        orgIdA,
+        orgIdB
+      ]);
+      await admin.query("DELETE FROM flowdesk.conversations WHERE organization_id IN ($1, $2)", [
+        orgIdA,
+        orgIdB
+      ]);
+      await admin.query("DELETE FROM flowdesk.contacts WHERE organization_id IN ($1, $2)", [
+        orgIdA,
+        orgIdB
+      ]);
+      await admin.query("DELETE FROM flowdesk.channels WHERE organization_id IN ($1, $2)", [
+        orgIdA,
+        orgIdB
+      ]);
+      await admin.query(
+        "DELETE FROM flowdesk.realtime_versions WHERE organization_id IN ($1, $2)",
+        [orgIdA, orgIdB]
+      );
+      await admin.query("DELETE FROM flowdesk.users WHERE id = $1", [userA]);
+      await admin.query("DELETE FROM flowdesk.organizations WHERE id IN ($1, $2)", [
+        orgIdA,
+        orgIdB
+      ]);
+    };
+
+    await cleanupM6Fixtures();
 
     try {
       await admin.query(
@@ -2270,7 +2278,7 @@ describe("database foundation", () => {
             organizationId: orgIdA,
             name: "Verified Webhook Org A",
             url: "https://example.com/webhook",
-            secret: "whsec_encrypted_envelope_json_test_12345",
+            secret: testWebhookSecret("verified_a"),
             events: ["*"],
             verificationStatus: "verified"
           });
@@ -2281,7 +2289,7 @@ describe("database foundation", () => {
           organizationId: orgIdA,
           name: "Unverified Webhook Org A",
           url: "https://example.com/unverified",
-          secret: "whsec_unverified_secret_test_12345",
+          secret: testWebhookSecret("unverified_a"),
           events: ["*"],
           verificationStatus: "unverified"
         });
@@ -2291,7 +2299,7 @@ describe("database foundation", () => {
           organizationId: orgIdB,
           name: "Verified Webhook Org B",
           url: "https://example.com/org-b",
-          secret: "whsec_org_b_secret_test_12345",
+          secret: testWebhookSecret("verified_b"),
           events: ["*"],
           verificationStatus: "verified"
         });
@@ -2400,55 +2408,7 @@ describe("database foundation", () => {
       );
       expect(watermarkA.rows.length).toBe(1);
     } finally {
-      await admin.query(
-        "DELETE FROM flowdesk.webhook_deliveries WHERE organization_id IN ($1, $2)",
-        [orgIdA, orgIdB]
-      );
-      await admin.query("DELETE FROM flowdesk.outbox_events WHERE organization_id IN ($1, $2)", [
-        orgIdA,
-        orgIdB
-      ]);
-      await admin.query(
-        "DELETE FROM flowdesk.webhook_subscriptions WHERE organization_id IN ($1, $2)",
-        [orgIdA, orgIdB]
-      );
-      await admin.query("DELETE FROM flowdesk.api_keys WHERE organization_id IN ($1, $2)", [
-        orgIdA,
-        orgIdB
-      ]);
-      await admin.query(
-        "DELETE FROM flowdesk.analytics_aggregates_hourly WHERE organization_id IN ($1, $2)",
-        [orgIdA, orgIdB]
-      );
-      await admin.query(
-        "DELETE FROM flowdesk.analytics_watermarks WHERE organization_id IN ($1, $2)",
-        [orgIdA, orgIdB]
-      );
-      await admin.query("DELETE FROM flowdesk.messages WHERE organization_id IN ($1, $2)", [
-        orgIdA,
-        orgIdB
-      ]);
-      await admin.query("DELETE FROM flowdesk.conversations WHERE organization_id IN ($1, $2)", [
-        orgIdA,
-        orgIdB
-      ]);
-      await admin.query("DELETE FROM flowdesk.contacts WHERE organization_id IN ($1, $2)", [
-        orgIdA,
-        orgIdB
-      ]);
-      await admin.query("DELETE FROM flowdesk.channels WHERE organization_id IN ($1, $2)", [
-        orgIdA,
-        orgIdB
-      ]);
-      await admin.query(
-        "DELETE FROM flowdesk.realtime_versions WHERE organization_id IN ($1, $2)",
-        [orgIdA, orgIdB]
-      );
-      await admin.query("DELETE FROM flowdesk.users WHERE id = $1", [userA]);
-      await admin.query("DELETE FROM flowdesk.organizations WHERE id IN ($1, $2)", [
-        orgIdA,
-        orgIdB
-      ]);
+      await cleanupM6Fixtures();
       await testPool.end();
     }
   });
