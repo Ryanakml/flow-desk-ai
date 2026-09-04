@@ -16,6 +16,8 @@ import {
   updateConversation,
   performConversationOperation,
   sendOutboundMessage,
+  testWebhookApi,
+  listWebhookDeliveriesApi,
   ApiError
 } from "./api.js";
 
@@ -536,6 +538,52 @@ describe("typed API client (M1-07)", () => {
     expect(fetcher).toHaveBeenCalledWith(
       expect.stringContaining("/actions"),
       expect.objectContaining({ method: "POST" })
+    );
+  });
+
+  it("dispatches test webhook ping via testWebhookApi", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ enqueued: true, eventId: "evt_test_123" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      })
+    );
+    const result = await testWebhookApi("org-1", "wh-1", fetcher);
+    expect(result).toEqual({ enqueued: true, eventId: "evt_test_123" });
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/v1/organizations/org-1/developer/webhooks/wh-1/test",
+      { method: "POST" }
+    );
+  });
+
+  it("retrieves webhook deliveries via listWebhookDeliveriesApi", async () => {
+    const delivery = {
+      id: "del-1",
+      organizationId: "org-1",
+      subscriptionId: "wh-1",
+      eventId: "evt-1",
+      eventType: "endpoint.test",
+      payload: {},
+      status: "delivered",
+      attemptCount: 1,
+      maxAttempts: 5,
+      nextAttemptAt: new Date().toISOString(),
+      deliveredAt: new Date().toISOString(),
+      responseStatusCode: 200,
+      lastError: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify([delivery]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      })
+    );
+    const result = await listWebhookDeliveriesApi("org-1", "wh-1", fetcher);
+    expect(result).toEqual([delivery]);
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/v1/organizations/org-1/developer/webhooks/wh-1/deliveries"
     );
   });
 });

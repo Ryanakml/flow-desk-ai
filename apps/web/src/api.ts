@@ -689,6 +689,8 @@ export interface DeveloperApiKeyRecord {
   createdAt: string;
 }
 
+export type WebhookVerificationStatus = "unverified" | "verified" | "failed";
+
 export interface WebhookSubscriptionClientRecord {
   id: string;
   organizationId: string;
@@ -697,7 +699,27 @@ export interface WebhookSubscriptionClientRecord {
   secret: string;
   events: string[];
   isActive: boolean;
+  verificationStatus?: WebhookVerificationStatus;
   createdAt: string;
+  updatedAt?: string;
+}
+
+export interface WebhookDeliveryClientRecord {
+  id: string;
+  organizationId: string;
+  subscriptionId: string;
+  eventId: string;
+  eventType: string;
+  payload: Record<string, unknown>;
+  status: "pending" | "delivered" | "failed" | "dead_letter";
+  attemptCount: number;
+  maxAttempts: number;
+  nextAttemptAt: string;
+  deliveredAt: string | null;
+  responseStatusCode: number | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export async function listApiKeysApi(
@@ -751,6 +773,28 @@ export async function createWebhookApi(
     body: JSON.stringify(body)
   });
   return (await handleResponse<unknown>(res)) as WebhookSubscriptionClientRecord;
+}
+
+export async function testWebhookApi(
+  orgId: string,
+  webhookId: string,
+  fetcher: typeof fetch = fetch
+): Promise<{ enqueued: boolean; eventId: string }> {
+  const res = await fetcher(`/api/v1/organizations/${orgId}/developer/webhooks/${webhookId}/test`, {
+    method: "POST"
+  });
+  return (await handleResponse<unknown>(res)) as { enqueued: boolean; eventId: string };
+}
+
+export async function listWebhookDeliveriesApi(
+  orgId: string,
+  webhookId: string,
+  fetcher: typeof fetch = fetch
+): Promise<WebhookDeliveryClientRecord[]> {
+  const res = await fetcher(
+    `/api/v1/organizations/${orgId}/developer/webhooks/${webhookId}/deliveries`
+  );
+  return (await handleResponse<unknown>(res)) as WebhookDeliveryClientRecord[];
 }
 
 export async function deleteWebhookApi(
