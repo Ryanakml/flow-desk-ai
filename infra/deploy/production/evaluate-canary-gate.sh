@@ -89,6 +89,10 @@ if [[ -n "${PROMETHEUS_URL}" ]]; then
   BURN_RATE_QUERY='sum(rate(http_requests_total{status=~"5..",slice="canary"}[1h])) / (0.001 * sum(rate(http_requests_total{slice="canary"}[1h])))'
   BURN_RATE_RESP=$(curl -s -G --data-urlencode "query=${BURN_RATE_QUERY}" "${PROMETHEUS_URL%/}/api/v1/query" || echo "{}")
 
+  export ERROR_RATE_RESP
+  export LATENCY_RESP
+  export BURN_RATE_RESP
+
   node -e "
     const parseVal = (resp) => {
       try {
@@ -123,7 +127,7 @@ if [[ -n "${PROMETHEUS_URL}" ]]; then
       console.error('::error::Canary error budget burn rate exceeded threshold: ' + burnRate.toFixed(2) + ' > 1.0');
       process.exit(2);
     }
-  " ERROR_RATE_RESP="${ERROR_RATE_RESP}" LATENCY_RESP="${LATENCY_RESP}" BURN_RATE_RESP="${BURN_RATE_RESP}"
+  "
 
   echo "Prometheus SLO metrics verified within acceptable thresholds."
 elif [[ -n "${PROD_CANARY_TG_ARN:-}" && -n "${AWS_REGION:-}" && "${EVALUATE_CLOUDWATCH_METRICS:-false}" == "true" ]]; then

@@ -129,6 +129,15 @@ if (outcome === 'promoted') {
       { name: 'stable_workload_promoted', passed: false, skipped: true, timestamp: now },
       { name: 'full_production_promote', passed: false, skipped: true, timestamp: now }
     );
+  } else if (failedStage === 'full_promotion' || failedStage === 'canary_100pct') {
+    gates.push(
+      { name: 'canary_workload_deployed', passed: true, timestamp: now },
+      { name: 'canary_5pct', passed: true, timestamp: now },
+      { name: 'canary_25pct', passed: true, timestamp: now },
+      { name: 'canary_100pct', passed: false, error: '100% canary SLO evaluation or stable catchup failed', timestamp: now },
+      { name: 'stable_workload_promoted', passed: false, skipped: true, timestamp: now },
+      { name: 'full_production_promote', passed: false, error: 'Rolled back to 100% stable', timestamp: now }
+    );
   } else {
     gates.push(
       { name: 'canary_workload_deployed', passed: true, timestamp: now },

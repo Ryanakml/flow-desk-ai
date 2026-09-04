@@ -120,6 +120,10 @@ else
     --output json)
 fi
 
+export DESCRIBE_OUTPUT
+export PROD_STABLE_TG_ARN
+export PROD_CANARY_TG_ARN
+
 # Verify the live state returned from AWS matches the intended weights
 node -e "
   const output = JSON.parse(process.env.DESCRIBE_OUTPUT || '{}');
@@ -147,6 +151,6 @@ node -e "
     process.exit(1);
   }
   console.log('Verified active AWS ALB weights: Stable=' + stable.Weight + '%, Canary=' + canary.Weight + '%');
-" DESCRIBE_OUTPUT="${DESCRIBE_OUTPUT}" PROD_STABLE_TG_ARN="${PROD_STABLE_TG_ARN}" PROD_CANARY_TG_ARN="${PROD_CANARY_TG_ARN}"
+"
 
 echo "Canary weight ${WEIGHT}% successfully established and verified on AWS ALB."

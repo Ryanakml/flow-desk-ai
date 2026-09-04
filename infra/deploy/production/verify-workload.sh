@@ -72,12 +72,22 @@ RUNNING_TASK_ARNS=$(aws ecs list-tasks \
   --desired-status RUNNING \
   --query "taskArns" \
   --output json)
+export RUNNING_TASK_ARNS
+
+node -e "
+  const taskArns = JSON.parse(process.env.RUNNING_TASK_ARNS || '[]');
+  if (!taskArns || taskArns.length === 0) {
+    console.error('::error::No running tasks found for service ${ECS_SERVICE_NAME}');
+    process.exit(1);
+  }
+"
 
 DESCRIBE_TASKS_JSON=$(aws ecs describe-tasks \
   --region "${AWS_REGION}" \
   --cluster "${ECS_CLUSTER_NAME}" \
   --tasks $(echo "${RUNNING_TASK_ARNS}" | node -e "const fs = require('fs'); console.log(JSON.parse(fs.readFileSync(0, 'utf8')).join(' '))") \
   --output json)
+export DESCRIBE_TASKS_JSON
 
 node -e "
   const fs = require('fs');
