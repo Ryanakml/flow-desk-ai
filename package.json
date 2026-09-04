@@ -15,7 +15,7 @@
     "db:migrate": "pnpm --filter @flowdesk/db db:migrate",
     "db:break-glass": "pnpm --filter @flowdesk/db db:break-glass",
     "format": "prettier --write .",
-    "format:check": "prettier --write apps/web/src/DeveloperSettingsView.tsx apps/web/src/DeveloperSettingsView.test.tsx && git diff --exit-code -- apps/web/src/DeveloperSettingsView.tsx apps/web/src/DeveloperSettingsView.test.tsx",
+    "format:check": "prettier --check .",
     "openapi:generate": "pnpm --filter @flowdesk/contracts generate:openapi",
     "openapi:check": "pnpm --filter @flowdesk/contracts check:openapi",
     "lint": "eslint \"{apps,packages}/**/*.{ts,tsx}\"",
