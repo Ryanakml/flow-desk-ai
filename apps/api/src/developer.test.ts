@@ -99,7 +99,7 @@ function createMockDb(): DbClient {
         };
       }
 
-      if (sql.includes("key_hash = $1")) {
+      if (sql.includes("key_hash = $1") || sql.includes("authenticate_api_key")) {
         const hashParam = params[0] as string;
         const matching = Array.from(apiKeys.values()).filter(
           (k) => k.key_hash === hashParam && !k.revoked_at

@@ -13,13 +13,14 @@ import {
   recordAuditEvent,
   runInTenantTransaction
 } from "@flowdesk/db";
-import { generateApiKey } from "@flowdesk/security";
+import { generateApiKey, encryptWebhookSecret, validateWebhookUrl } from "@flowdesk/security";
 
 import { createRequireAuthMiddleware } from "./auth.js";
 import { createRequireOrgPermissionMiddleware } from "./organizations.js";
 
 export interface DeveloperRouterOptions {
   db: DbClient;
+  encryptionKey?: string;
 }
 
 function getParam(params: Record<string, string | string[] | undefined>, key: string): string {
@@ -237,9 +238,10 @@ export function createDeveloperRouter(options: DeveloperRouterOptions): Router {
             organizationId: s.organizationId,
             name: s.name,
             url: s.url,
-            secret: `${s.secret.slice(0, 10)}****************`,
+            secret: "whsec_****************",
             events: s.events,
             isActive: s.isActive,
+            verificationStatus: s.verificationStatus,
             createdAt: s.createdAt,
             updatedAt: s.updatedAt
           }))
@@ -278,17 +280,35 @@ export function createDeveloperRouter(options: DeveloperRouterOptions): Router {
           ? eventsVal.filter((e): e is string => typeof e === "string")
           : ["*"];
 
-        if (!name || !url || !url.startsWith("http")) {
+        if (!name || !url) {
           return sendProblem(
             response,
             400,
             "BAD_REQUEST",
             "Invalid Webhook Subscription input",
-            "Missing or invalid required fields: name, url (must start with http)"
+            "Missing required fields: name, url"
           );
         }
 
-        const secret = `whsec_${randomBytes(16).toString("hex")}`;
+        try {
+          await validateWebhookUrl(url);
+        } catch (ssrfErr) {
+          return sendProblem(
+            response,
+            400,
+            "BAD_REQUEST",
+            "Invalid Webhook URL",
+            ssrfErr instanceof Error ? ssrfErr.message : "SSRF validation failed for target URL"
+          );
+        }
+
+        const rawSecret = `whsec_${randomBytes(16).toString("hex")}`;
+        const encryptionKey =
+          options.encryptionKey ??
+          process.env["ENCRYPTION_KEY"] ??
+          "flowdesk-local-dev-encryption-key-32b";
+        const encryptedSecret = encryptWebhookSecret(rawSecret, encryptionKey);
+
         const sub = await runInTenantTransaction(
           options.db,
           { organizationId: orgId },
@@ -297,8 +317,9 @@ export function createDeveloperRouter(options: DeveloperRouterOptions): Router {
               organizationId: orgId,
               name,
               url,
-              secret,
-              events
+              secret: encryptedSecret,
+              events,
+              verificationStatus: "unverified"
             });
 
             await recordAuditEvent(db, {
@@ -315,7 +336,10 @@ export function createDeveloperRouter(options: DeveloperRouterOptions): Router {
           }
         );
 
-        return response.status(201).json(sub);
+        return response.status(201).json({
+          ...sub,
+          secret: rawSecret
+        });
       } catch (err) {
         return sendProblem(
           response,
@@ -365,8 +389,6 @@ export function createDeveloperRouter(options: DeveloperRouterOptions): Router {
                   subscriptionId: webhookId,
                   eventId: testEventId,
                   eventType: "endpoint.test",
-                  url: sub.url,
-                  secret: sub.secret,
                   payload: testPayload
                 }),
                 testEventId

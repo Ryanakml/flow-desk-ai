@@ -100,7 +100,13 @@ if (dbPool) {
         },
         10
       ),
-      processOutboxWebhookDispatchBatch(dbPool, {}, 10),
+      processOutboxWebhookDispatchBatch(
+        dbPool,
+        {
+          encryptionKey: channelEncryptionConfig.ENCRYPTION_KEY
+        },
+        10
+      ),
       ...(aiRuntime
         ? [
             processKnowledgeIngestionBatch(

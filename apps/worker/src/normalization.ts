@@ -10,7 +10,8 @@ import {
   recordRoutingLogWithTrace,
   getBotConfig,
   getLatestKnowledgeVersion,
-  enqueueBotDraftRun
+  enqueueBotDraftRun,
+  fanoutDeveloperWebhookEvents
 } from "@flowdesk/db";
 import {
   type MessageStatus,
@@ -319,6 +320,32 @@ export async function processWebhookPayload(
           status: "delivered"
         });
         result.processedInboundCount += 1;
+
+        try {
+          await fanoutDeveloperWebhookEvents(client, {
+            organizationId: params.organizationId,
+            eventType: "message.received",
+            eventId: `evt_msg_${inboundMessage.id}`,
+            payload: {
+              event: "message.received",
+              timestamp: new Date().toISOString(),
+              organizationId: params.organizationId,
+              conversationId: conversation.id,
+              message: {
+                id: inboundMessage.id,
+                channelId,
+                direction: "inbound",
+                senderType: "customer",
+                content: inboundMessage.content,
+                providerMessageId: inboundMessage.providerMessageId,
+                sentAt: inboundMessage.sentAt,
+                createdAt: inboundMessage.createdAt
+              }
+            }
+          });
+        } catch {
+          // Fail-safe: do not drop normalized message if developer webhook fanout fails
+        }
 
         // M5-01 / M5 #180: Evaluate versioned policy or routing rules for incoming conversation
         const autoConfig = await getBotConfig(client, params.organizationId);

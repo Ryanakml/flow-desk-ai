@@ -294,3 +294,39 @@ export async function fetchWithAntiSsrf(
 
   throw new SsrfProtectionError("Exceeded maximum allowed redirects (5).", "TOO_MANY_REDIRECTS");
 }
+
+export interface ValidateWebhookUrlOptions {
+  allowLoopbackForTest?: boolean;
+  allowHttpForLocal?: boolean;
+}
+
+/**
+ * Validates a webhook destination URL against anti-SSRF policy and protocol security rules.
+ */
+export async function validateWebhookUrl(
+  targetUrl: string,
+  options: ValidateWebhookUrlOptions = {}
+): Promise<URL> {
+  let parsed: URL;
+  try {
+    parsed = new URL(targetUrl);
+  } catch {
+    throw new SsrfProtectionError("Invalid target URL format.", "INVALID_URL");
+  }
+
+  const isTest = process.env["NODE_ENV"] === "test";
+  const isDev = process.env["NODE_ENV"] === "development";
+  const allowHttp = Boolean(
+    options.allowHttpForLocal || (options.allowLoopbackForTest ?? isTest) || isDev
+  );
+
+  if (parsed.protocol !== "https:" && (!allowHttp || parsed.protocol !== "http:")) {
+    throw new SsrfProtectionError(
+      "Webhook URL must use HTTPS protocol in production environments.",
+      "HTTPS_REQUIRED"
+    );
+  }
+
+  const allowLoopback = options.allowLoopbackForTest ?? isTest;
+  return validateUrlForIngestion(targetUrl, { allowLoopbackForTest: allowLoopback });
+}

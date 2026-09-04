@@ -89,7 +89,63 @@ CREATE POLICY tenant_isolation_analytics_watermarks ON flowdesk.analytics_waterm
     USING (organization_id = flowdesk.current_organization_id())
     WITH CHECK (organization_id = flowdesk.current_organization_id());
 
--- 4. Grants to Runtime and Reporting Roles
+-- 4. Add verification_status to webhook_subscriptions
+ALTER TABLE flowdesk.webhook_subscriptions
+    ADD COLUMN IF NOT EXISTS verification_status text NOT NULL DEFAULT 'verified'
+    CHECK (verification_status IN ('unverified', 'verified', 'failed'));
+
+-- 5. Narrow System Functions for Bootstrap Authentication and Organization Discovery
+GRANT USAGE ON SCHEMA flowdesk TO flowdesk_system;
+GRANT SELECT ON flowdesk.api_keys, flowdesk.organizations TO flowdesk_system;
+
+-- Narrow API key bootstrap authentication without weakening tenant FORCE RLS
+CREATE OR REPLACE FUNCTION flowdesk.authenticate_api_key(p_key_hash text)
+RETURNS TABLE (
+    id uuid,
+    organization_id uuid,
+    name text,
+    key_prefix text,
+    scopes jsonb,
+    created_by_user_id uuid,
+    expires_at timestamptz
+)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = flowdesk, pg_temp
+AS $$
+    SELECT id, organization_id, name, key_prefix, scopes, created_by_user_id, expires_at
+    FROM flowdesk.api_keys
+    WHERE key_hash = p_key_hash
+      AND revoked_at IS NULL
+      AND (expires_at IS NULL OR expires_at > clock_timestamp())
+    LIMIT 1;
+$$;
+
+ALTER FUNCTION flowdesk.authenticate_api_key(text) OWNER TO flowdesk_system;
+REVOKE ALL ON FUNCTION flowdesk.authenticate_api_key(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION flowdesk.authenticate_api_key(text) TO flowdesk_runtime;
+
+-- Narrow cross-tenant active organization discovery for background scheduler
+CREATE OR REPLACE FUNCTION flowdesk.list_active_organization_ids()
+RETURNS TABLE (id uuid)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = flowdesk, pg_temp
+AS $$
+    SELECT id
+    FROM flowdesk.organizations
+    WHERE status = 'active'
+      AND deleted_at IS NULL
+    ORDER BY created_at ASC;
+$$;
+
+ALTER FUNCTION flowdesk.list_active_organization_ids() OWNER TO flowdesk_system;
+REVOKE ALL ON FUNCTION flowdesk.list_active_organization_ids() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION flowdesk.list_active_organization_ids() TO flowdesk_runtime;
+
+-- 6. Grants to Runtime and Reporting Roles
 GRANT SELECT, INSERT, UPDATE, DELETE ON
     flowdesk.webhook_deliveries,
     flowdesk.analytics_aggregates_hourly,
@@ -101,3 +157,4 @@ GRANT SELECT ON
     flowdesk.analytics_aggregates_hourly,
     flowdesk.analytics_watermarks
 TO flowdesk_reporting;
+

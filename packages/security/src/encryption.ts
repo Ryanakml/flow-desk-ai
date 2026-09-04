@@ -52,3 +52,51 @@ export function decryptSecret(envelope: EncryptedEnvelope, secretKey: string | B
   const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
   return decrypted.toString("utf8");
 }
+
+/**
+ * Encrypts a webhook signing secret for secure at-rest storage.
+ */
+export function encryptWebhookSecret(secret: string, secretKey: string | Buffer): string {
+  return JSON.stringify(encryptSecret(secret, secretKey));
+}
+
+/**
+ * Decrypts a webhook signing secret from its at-rest format.
+ */
+export function decryptWebhookSecret(storedSecret: string, secretKey: string | Buffer): string {
+  try {
+    const parsed: unknown = JSON.parse(storedSecret);
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "ciphertext" in parsed &&
+      "iv" in parsed &&
+      "tag" in parsed &&
+      typeof (parsed as Record<string, unknown>)["ciphertext"] === "string" &&
+      typeof (parsed as Record<string, unknown>)["iv"] === "string" &&
+      typeof (parsed as Record<string, unknown>)["tag"] === "string"
+    ) {
+      const record = parsed as Record<string, unknown>;
+      return decryptSecret(
+        {
+          ciphertext: record["ciphertext"] as string,
+          iv: record["iv"] as string,
+          tag: record["tag"] as string,
+          version: typeof record["version"] === "number" ? record["version"] : 1
+        },
+        secretKey
+      );
+    }
+  } catch {
+    // If not JSON envelope, check if plaintext fallback (e.g. legacy/mock tests)
+    if (storedSecret.startsWith("whsec_")) {
+      return storedSecret;
+    }
+    throw new Error("Failed to decrypt webhook secret: invalid envelope");
+  }
+
+  if (storedSecret.startsWith("whsec_")) {
+    return storedSecret;
+  }
+  throw new Error("Failed to decrypt webhook secret: unknown format");
+}

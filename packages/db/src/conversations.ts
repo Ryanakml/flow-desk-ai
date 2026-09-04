@@ -9,6 +9,7 @@ import {
 } from "@flowdesk/domain";
 import type { DbClient } from "./auth.js";
 import { runInTenantTransaction, type TenantContext } from "./tenant-context.js";
+import { fanoutDeveloperWebhookEvents } from "./webhook-subscriptions.js";
 
 export class OptimisticConcurrencyError extends Error {
   constructor(message = "Resource version conflict; please reload and retry.") {
@@ -151,7 +152,32 @@ export async function findOrCreateConversation(
     ]
   );
 
-  return insertRes.rows[0]!;
+  const createdConv = insertRes.rows[0]!;
+  try {
+    await fanoutDeveloperWebhookEvents(client, {
+      organizationId: input.organizationId,
+      eventType: "conversation.created",
+      eventId: `evt_conv_${createdConv.id}`,
+      payload: {
+        event: "conversation.created",
+        timestamp: new Date().toISOString(),
+        organizationId: input.organizationId,
+        conversationId: createdConv.id,
+        conversation: {
+          id: createdConv.id,
+          channelId: createdConv.channelId,
+          customerPhone: createdConv.customerPhone,
+          customerName: createdConv.customerName,
+          status: createdConv.status,
+          createdAt: createdConv.createdAt
+        }
+      }
+    });
+  } catch {
+    // Fail-safe: do not block conversation creation if webhook fanout encounters error
+  }
+
+  return createdConv;
 }
 
 /**
@@ -684,6 +710,31 @@ export async function createOutboundMessageWithOutbox(
      VALUES ($1, 'message', $2, 'message.outbound.created', $3, $4)`,
     [input.organizationId, message.id, JSON.stringify(outboxPayload), input.correlationId ?? null]
   );
+
+  try {
+    await fanoutDeveloperWebhookEvents(client, {
+      organizationId: input.organizationId,
+      eventType: "message.sent",
+      eventId: `evt_msg_${message.id}`,
+      payload: {
+        event: "message.sent",
+        timestamp: new Date().toISOString(),
+        organizationId: input.organizationId,
+        conversationId: input.conversationId,
+        message: {
+          id: message.id,
+          channelId: conversation.channelId,
+          direction: "outbound",
+          senderType: input.senderType,
+          senderUserId: input.senderUserId ?? null,
+          content: input.content,
+          createdAt: message.createdAt
+        }
+      }
+    });
+  } catch {
+    // Fail-safe: do not block message outbox creation if webhook fanout encounters error
+  }
 
   return message;
 }

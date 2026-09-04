@@ -28,7 +28,26 @@ export async function aggregateHourlyMetricsForOrg(
   organizationId: string,
   since?: Date
 ): Promise<number> {
-  const startTime = since ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  let startTime: Date;
+  if (since) {
+    startTime = since;
+  } else {
+    const watermarkRes = await db.query<{
+      last_aggregated_at?: Date;
+      last_aggregated_hour?: Date;
+    }>(`SELECT last_aggregated_at FROM flowdesk.analytics_watermarks WHERE organization_id = $1`, [
+      organizationId
+    ]);
+    const row = watermarkRes.rows[0];
+    const lastAggregated = row?.last_aggregated_at ?? row?.last_aggregated_hour;
+    if (lastAggregated) {
+      // Bounded overlap lookback of 24 hours so late-arriving SLA resolutions and updates are accurately recalculated
+      const lookbackMs = 24 * 60 * 60 * 1000;
+      startTime = new Date(new Date(lastAggregated).getTime() - lookbackMs);
+    } else {
+      startTime = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    }
+  }
 
   // 1. Hourly message metrics
   const msgHourly = await db.query<{
@@ -45,7 +64,7 @@ export async function aggregateHourlyMetricsForOrg(
       COUNT(*) FILTER (WHERE sender_type = 'bot') AS bot,
       COUNT(*) FILTER (WHERE sender_type IN ('agent', 'customer')) AS human
      FROM flowdesk.messages
-     WHERE organization_id = $1 AND created_at >= $2
+     WHERE organization_id = $1 AND (created_at >= $2 OR updated_at >= $2)
      GROUP BY 1`,
     [organizationId, startTime]
   );
@@ -75,7 +94,7 @@ export async function aggregateHourlyMetricsForOrg(
       COUNT(*) FILTER (WHERE (first_response_due_at IS NOT NULL AND (first_responded_at IS NULL AND clock_timestamp() > first_response_due_at OR first_responded_at > first_response_due_at))
                           OR (resolution_due_at IS NOT NULL AND (resolved_at IS NULL AND clock_timestamp() > resolution_due_at OR resolved_at > resolution_due_at))) AS sla_breach
      FROM flowdesk.conversations
-     WHERE organization_id = $1 AND created_at >= $2
+     WHERE organization_id = $1 AND (created_at >= $2 OR updated_at >= $2)
      GROUP BY 1`,
     [organizationId, startTime]
   );
@@ -190,9 +209,9 @@ export async function aggregateHourlyMetricsForOrg(
 
   await db.query(
     `INSERT INTO flowdesk.analytics_watermarks (organization_id, last_aggregated_at, updated_at)
-     VALUES ($1, clock_timestamp(), clock_timestamp())
+     VALUES ($1, date_trunc('hour', clock_timestamp()), clock_timestamp())
      ON CONFLICT (organization_id) DO UPDATE
-       SET last_aggregated_at = clock_timestamp(), updated_at = clock_timestamp()`,
+       SET last_aggregated_at = date_trunc('hour', clock_timestamp()), updated_at = clock_timestamp()`,
     [organizationId]
   );
 
@@ -242,7 +261,7 @@ export async function getAnalyticsOverview(
     ? (parseInt(aggRow.inbound, 10) || 0) + (parseInt(aggRow.outbound, 10) || 0)
     : 0;
 
-  // If aggregate table has data, combine with live conversation status counts
+  // If aggregate table has data, combine with live conversation status counts and live current-hour slice
   if (aggRow && aggTotalMsg > 0) {
     const liveConvRes = await db.query<{
       total: string;

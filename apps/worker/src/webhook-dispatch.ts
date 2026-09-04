@@ -4,22 +4,29 @@ import {
   updateWebhookDeliveryOutcome,
   markOutboxEventPublished,
   recordOutboxEventFailure,
+  getWebhookSubscriptionById,
+  updateWebhookSubscriptionVerification,
   runInTenantTransaction
 } from "@flowdesk/db";
-import { computeWebhookSignature } from "@flowdesk/security";
+import {
+  computeWebhookSignature,
+  decryptWebhookSecret,
+  validateWebhookUrl
+} from "@flowdesk/security";
 
 export interface DeveloperWebhookPayload {
   subscriptionId: string;
   eventId: string;
   eventType: string;
-  url: string;
-  secret: string;
   payload: Record<string, unknown>;
+  url?: string;
+  secret?: string;
 }
 
 export interface WebhookDispatchWorkerOptions {
   timeoutMs?: number;
   fetchFn?: typeof fetch;
+  encryptionKey?: string;
 }
 
 export interface WebhookDispatchResult {
@@ -42,9 +49,90 @@ export async function dispatchDeveloperWebhook(
   const timeoutMs = options.timeoutMs ?? 10000;
   const fetchFn = options.fetchFn ?? fetch;
 
+  const subscription = await runInTenantTransaction(client, { organizationId }, (db) =>
+    getWebhookSubscriptionById(db, payload.subscriptionId, organizationId)
+  );
+
+  let targetUrl = payload.url;
+  let storedSecret = payload.secret;
+  const isTestEvent = payload.eventType === "endpoint.test";
+
+  if (subscription) {
+    if (!subscription.isActive) {
+      await runInTenantTransaction(client, { organizationId }, (db) =>
+        markOutboxEventPublished(db, event.id)
+      );
+      return {
+        subscriptionId: payload.subscriptionId,
+        eventId: payload.eventId,
+        status: "failed",
+        error: "Webhook subscription is inactive"
+      };
+    }
+
+    if (!isTestEvent && subscription.verificationStatus !== "verified") {
+      await runInTenantTransaction(client, { organizationId }, (db) =>
+        markOutboxEventPublished(db, event.id)
+      );
+      return {
+        subscriptionId: payload.subscriptionId,
+        eventId: payload.eventId,
+        status: "failed",
+        error: `Webhook subscription is not verified (status: ${subscription.verificationStatus})`
+      };
+    }
+
+    targetUrl = subscription.url;
+    storedSecret = subscription.secret;
+  }
+
+  if (!targetUrl || !storedSecret) {
+    await runInTenantTransaction(client, { organizationId }, (db) =>
+      markOutboxEventPublished(db, event.id)
+    );
+    return {
+      subscriptionId: payload.subscriptionId,
+      eventId: payload.eventId,
+      status: "failed",
+      error: "Missing webhook subscription destination or secret"
+    };
+  }
+
+  // Validate target URL against anti-SSRF policy
+  try {
+    const validated = await validateWebhookUrl(targetUrl);
+    targetUrl = validated.toString();
+  } catch (urlErr) {
+    const errorDetail = urlErr instanceof Error ? urlErr.message : String(urlErr);
+    if (subscription) {
+      await runInTenantTransaction(client, { organizationId }, async (db) => {
+        await updateWebhookSubscriptionVerification(db, subscription.id, organizationId, "failed");
+        await markOutboxEventPublished(db, event.id);
+      });
+    }
+    return {
+      subscriptionId: payload.subscriptionId,
+      eventId: payload.eventId,
+      status: "failed",
+      error: `SSRF validation blocked webhook destination: ${errorDetail}`
+    };
+  }
+
+  // Decrypt secret only in memory
+  const encryptionKey =
+    options.encryptionKey ??
+    process.env["ENCRYPTION_KEY"] ??
+    "flowdesk-local-dev-encryption-key-32b";
+  let secret: string;
+  try {
+    secret = decryptWebhookSecret(storedSecret, encryptionKey);
+  } catch {
+    secret = storedSecret;
+  }
+
   const nowSeconds = Math.floor(Date.now() / 1000);
   const rawBody = JSON.stringify(payload.payload);
-  const signature = computeWebhookSignature(rawBody, payload.secret, nowSeconds);
+  const signature = computeWebhookSignature(rawBody, secret, nowSeconds);
 
   // 1. Durably record / upsert delivery record in pending state
   const delivery = await runInTenantTransaction(client, { organizationId }, (db) =>
@@ -62,7 +150,7 @@ export async function dispatchDeveloperWebhook(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const res = await fetchFn(payload.url, {
+    const res = await fetchFn(targetUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -83,6 +171,14 @@ export async function dispatchDeveloperWebhook(
           responseStatusCode: res.status,
           lastError: null
         });
+        if (isTestEvent && subscription && subscription.verificationStatus !== "verified") {
+          await updateWebhookSubscriptionVerification(
+            db,
+            subscription.id,
+            organizationId,
+            "verified"
+          );
+        }
         await markOutboxEventPublished(db, event.id);
       });
 
@@ -106,6 +202,9 @@ export async function dispatchDeveloperWebhook(
         lastError: errorText,
         nextAttemptAt: new Date(Date.now() + Math.min(300, Math.pow(2, event.attempts + 1)) * 1000)
       });
+      if (isTestEvent && subscription && isDeadLetter) {
+        await updateWebhookSubscriptionVerification(db, subscription.id, organizationId, "failed");
+      }
       await recordOutboxEventFailure(db, event.id, errorText, isDeadLetter);
     });
 
@@ -129,6 +228,9 @@ export async function dispatchDeveloperWebhook(
         lastError: errorDetail,
         nextAttemptAt: new Date(Date.now() + Math.min(300, Math.pow(2, event.attempts + 1)) * 1000)
       });
+      if (isTestEvent && subscription && isDeadLetter) {
+        await updateWebhookSubscriptionVerification(db, subscription.id, organizationId, "failed");
+      }
       await recordOutboxEventFailure(db, event.id, errorDetail, isDeadLetter);
     });
 

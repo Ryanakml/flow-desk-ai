@@ -119,10 +119,33 @@ export async function findApiKeyByHash(
   keyHash: string
 ): Promise<ApiKeyRecord | null> {
   const res = await db.query<RawApiKeyRow>(
-    `SELECT * FROM flowdesk.api_keys
-     WHERE key_hash = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > clock_timestamp())`,
+    `SELECT id, organization_id, name, key_prefix, scopes, created_by_user_id, expires_at
+     FROM flowdesk.authenticate_api_key($1)`,
     [keyHash]
   );
   const row = res.rows[0];
-  return row ? mapApiKeyRow(row) : null;
+  if (!row) return null;
+  return {
+    id: row.id,
+    organizationId: row.organization_id,
+    name: row.name,
+    keyPrefix: row.key_prefix,
+    keyHash,
+    scopes: Array.isArray(row.scopes)
+      ? (row.scopes as string[])
+      : typeof row.scopes === "string"
+        ? (() => {
+            try {
+              return JSON.parse(row.scopes) as string[];
+            } catch {
+              return [];
+            }
+          })()
+        : [],
+    createdByUserId: row.created_by_user_id,
+    expiresAt: row.expires_at ? new Date(row.expires_at) : null,
+    revokedAt: null,
+    createdAt: new Date(),
+    updatedAt: new Date()
+  };
 }

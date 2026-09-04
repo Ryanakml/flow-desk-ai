@@ -10,7 +10,10 @@ describe("scheduler skeleton", () => {
     const mockDb: DbClient = {
       async query(sql: string) {
         await Promise.resolve();
-        if (sql.includes("flowdesk.organizations")) {
+        if (
+          sql.includes("flowdesk.organizations") ||
+          sql.includes("list_active_organization_ids")
+        ) {
           return {
             rows: [{ id: "org-sched-1" }],
             rowCount: 1,

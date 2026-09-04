@@ -30,9 +30,11 @@ if (dbPool) {
   aggregationTimer = setInterval(() => {
     if (isAggregating) return;
     isAggregating = true;
-    runAnalyticsAggregationJob(dbPool)
+    runAnalyticsAggregationJob(dbPool, {
+      logError: (details) => logger.error(details, "scheduler.analytics_aggregation.tenant_error")
+    })
       .then((res) => {
-        if (res.totalBucketsAggregated > 0) {
+        if (res.totalBucketsAggregated > 0 || res.errors.length > 0) {
           logger.info(res, "scheduler.analytics_aggregation.processed");
         }
       })

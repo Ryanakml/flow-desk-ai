@@ -265,7 +265,8 @@ export function createApiApp(options: ApiAppOptions) {
     app.use(
       "/api/v1/organizations/:orgId/developer",
       createDeveloperRouter({
-        db: options.auth.db
+        db: options.auth.db,
+        ...(options.auth.encryptionKey ? { encryptionKey: options.auth.encryptionKey } : {})
       })
     );
     app.use(

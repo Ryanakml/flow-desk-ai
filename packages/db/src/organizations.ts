@@ -344,3 +344,10 @@ export async function listUserOrganizations(
     membershipId: row.membership_id
   }));
 }
+
+export async function listActiveOrganizationIds(db: DbClient): Promise<string[]> {
+  const result = await db.query<{ id: string }>(
+    "SELECT id FROM flowdesk.list_active_organization_ids()"
+  );
+  return result.rows.map((row) => row.id);
+}

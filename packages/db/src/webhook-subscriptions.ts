@@ -1,5 +1,7 @@
 import type { DbClient } from "./auth.js";
 
+export type WebhookVerificationStatus = "unverified" | "verified" | "failed";
+
 export interface WebhookSubscriptionRecord {
   id: string;
   organizationId: string;
@@ -8,6 +10,7 @@ export interface WebhookSubscriptionRecord {
   secret: string;
   events: string[];
   isActive: boolean;
+  verificationStatus: WebhookVerificationStatus;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -20,6 +23,7 @@ interface RawWebhookSubscriptionRow {
   secret: string;
   events: unknown;
   is_active: boolean;
+  verification_status?: string;
   created_at: Date;
   updated_at: Date;
 }
@@ -44,6 +48,7 @@ function mapWebhookSubscriptionRow(row: RawWebhookSubscriptionRow): WebhookSubsc
     secret: row.secret,
     events: parsedEvents,
     isActive: row.is_active,
+    verificationStatus: (row.verification_status as WebhookVerificationStatus) ?? "unverified",
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at)
   };
@@ -66,6 +71,7 @@ export interface CreateWebhookSubscriptionParams {
   url: string;
   secret: string;
   events: string[];
+  verificationStatus?: WebhookVerificationStatus;
 }
 
 export async function createWebhookSubscription(
@@ -74,10 +80,17 @@ export async function createWebhookSubscription(
 ): Promise<WebhookSubscriptionRecord> {
   const res = await db.query<RawWebhookSubscriptionRow>(
     `INSERT INTO flowdesk.webhook_subscriptions (
-      organization_id, name, url, secret, events
-    ) VALUES ($1, $2, $3, $4, $5::jsonb)
+      organization_id, name, url, secret, events, verification_status
+    ) VALUES ($1, $2, $3, $4, $5::jsonb, $6)
     RETURNING *`,
-    [params.organizationId, params.name, params.url, params.secret, JSON.stringify(params.events)]
+    [
+      params.organizationId,
+      params.name,
+      params.url,
+      params.secret,
+      JSON.stringify(params.events),
+      params.verificationStatus ?? "unverified"
+    ]
   );
 
   const row = res.rows[0];
@@ -85,6 +98,65 @@ export async function createWebhookSubscription(
     throw new Error("Failed to insert webhook subscription");
   }
   return mapWebhookSubscriptionRow(row);
+}
+
+export async function updateWebhookSubscriptionVerification(
+  db: DbClient,
+  id: string,
+  organizationId: string,
+  verificationStatus: WebhookVerificationStatus
+): Promise<boolean> {
+  const res = await db.query(
+    `UPDATE flowdesk.webhook_subscriptions
+     SET verification_status = $1, updated_at = clock_timestamp()
+     WHERE id = $2 AND organization_id = $3`,
+    [verificationStatus, id, organizationId]
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
+export interface FanoutDeveloperWebhookParams {
+  organizationId: string;
+  eventType: string;
+  eventId: string;
+  payload: Record<string, unknown>;
+}
+
+export async function fanoutDeveloperWebhookEvents(
+  db: DbClient,
+  params: FanoutDeveloperWebhookParams
+): Promise<number> {
+  const subs = await db.query<{ id: string }>(
+    `SELECT id FROM flowdesk.webhook_subscriptions
+     WHERE organization_id = $1
+       AND is_active = true
+       AND verification_status = 'verified'
+       AND (
+         events @> jsonb_build_array($2::text)
+         OR events @> '["*"]'::jsonb
+       )`,
+    [params.organizationId, params.eventType]
+  );
+
+  let insertedCount = 0;
+  for (const sub of subs.rows) {
+    const outboxPayload = {
+      subscriptionId: sub.id,
+      eventId: params.eventId,
+      eventType: params.eventType,
+      payload: params.payload
+    };
+
+    await db.query(
+      `INSERT INTO flowdesk.outbox_events
+       (organization_id, aggregate_type, aggregate_id, event_type, schema_version, payload, correlation_id)
+       VALUES ($1, 'webhook_subscription', $2, 'developer.webhook.dispatch', 1, $3::jsonb, $4)`,
+      [params.organizationId, sub.id, JSON.stringify(outboxPayload), params.eventId]
+    );
+    insertedCount++;
+  }
+
+  return insertedCount;
 }
 
 export async function deleteWebhookSubscription(
