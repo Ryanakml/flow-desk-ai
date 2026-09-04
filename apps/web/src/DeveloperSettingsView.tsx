@@ -69,7 +69,9 @@ export function DeveloperSettingsView({
   } | null>(null);
   const [testingWebhookId, setTestingWebhookId] = useState<string | null>(null);
   const [expandedWebhookId, setExpandedWebhookId] = useState<string | null>(null);
-  const [loadingDeliveriesWebhookId, setLoadingDeliveriesWebhookId] = useState<string | null>(null);
+  const [loadingDeliveriesWebhookId, setLoadingDeliveriesWebhookId] = useState<string | null>(
+    null
+  );
   const [deliveriesByWebhook, setDeliveriesByWebhook] = useState<
     Record<string, WebhookDeliveryClientRecord[]>
   >({});
@@ -122,8 +124,6 @@ export function DeveloperSettingsView({
   useEffect(() => {
     void fetchKeys();
     void fetchWebhooks();
-    // The selected organization is the intended reload boundary for this settings view.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
   const handleCreateKey = async (event: React.FormEvent) => {
@@ -149,7 +149,11 @@ export function DeveloperSettingsView({
   };
 
   const handleRevokeKey = async (keyId: string) => {
-    if (!window.confirm("Are you sure you want to revoke this API key? This action cannot be undone.")) {
+    if (
+      !window.confirm(
+        "Are you sure you want to revoke this API key? This action cannot be undone."
+      )
+    ) {
       return;
     }
 
@@ -242,7 +246,9 @@ export function DeveloperSettingsView({
 
   const toggleScope = (scope: string, checked: boolean) => {
     setKeyScopes((current) =>
-      checked ? Array.from(new Set([...current, scope])) : current.filter((item) => item !== scope)
+      checked
+        ? Array.from(new Set([...current, scope]))
+        : current.filter((item) => item !== scope)
     );
   };
 
@@ -343,7 +349,11 @@ export function DeveloperSettingsView({
           <div className="flex justify-between items-center mb-4">
             <h3 className="text-lg font-semibold text-gray-800">Scoped API Keys</h3>
             {canManage && (
-              <button type="button" className="btn btn-primary btn-sm" onClick={() => setShowKeyModal(true)}>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={() => setShowKeyModal(true)}
+              >
                 + Generate New API Key
               </button>
             )}
@@ -355,7 +365,11 @@ export function DeveloperSettingsView({
             <div className="card p-8 text-center text-gray-500 border border-dashed rounded-lg">
               <p className="mb-4">No API keys created yet.</p>
               {canManage && (
-                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowKeyModal(true)}>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setShowKeyModal(true)}
+                >
                   Create your first API key
                 </button>
               )}
@@ -363,25 +377,43 @@ export function DeveloperSettingsView({
           ) : (
             <div className="space-y-3">
               {keys.map((key) => (
-                <div key={key.id} className="card p-4 border rounded-lg shadow-sm bg-white flex justify-between items-center">
+                <div
+                  key={key.id}
+                  className="card p-4 border rounded-lg shadow-sm bg-white flex justify-between items-center"
+                >
                   <div>
                     <div className="flex items-center gap-2 mb-1">
                       <h4 className="font-semibold text-gray-900">{key.name}</h4>
-                      <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${key.revokedAt ? "bg-red-100 text-red-800" : "bg-green-100 text-green-800"}`}>
+                      <span
+                        className={`px-2 py-0.5 text-xs font-medium rounded-full ${
+                          key.revokedAt
+                            ? "bg-red-100 text-red-800"
+                            : "bg-green-100 text-green-800"
+                        }`}
+                      >
                         {key.revokedAt ? "REVOKED" : "ACTIVE"}
                       </span>
                     </div>
-                    <p className="text-xs text-gray-600 font-mono mb-1">Prefix: {key.keyPrefix}••••••••</p>
+                    <p className="text-xs text-gray-600 font-mono mb-1">
+                      Prefix: {key.keyPrefix}••••••••
+                    </p>
                     <div className="flex gap-1">
                       {key.scopes.map((scope) => (
-                        <span key={scope} className="px-2 py-0.5 text-xs bg-gray-100 text-gray-700 rounded">
+                        <span
+                          key={scope}
+                          className="px-2 py-0.5 text-xs bg-gray-100 text-gray-700 rounded"
+                        >
                           {scope}
                         </span>
                       ))}
                     </div>
                   </div>
                   {canManage && !key.revokedAt && (
-                    <button type="button" className="btn btn-danger btn-sm text-red-600 hover:text-red-800" onClick={() => void handleRevokeKey(key.id)}>
+                    <button
+                      type="button"
+                      className="btn btn-danger btn-sm text-red-600 hover:text-red-800"
+                      onClick={() => void handleRevokeKey(key.id)}
+                    >
                       Revoke Key
                     </button>
                   )}
@@ -397,7 +429,11 @@ export function DeveloperSettingsView({
           <div className="flex justify-between items-center mb-4">
             <h3 className="text-lg font-semibold text-gray-800">Outbound Webhook Subscriptions</h3>
             {canManage && (
-              <button type="button" className="btn btn-primary btn-sm" onClick={() => setShowWebhookModal(true)}>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={() => setShowWebhookModal(true)}
+              >
                 + Register Webhook
               </button>
             )}
@@ -409,7 +445,11 @@ export function DeveloperSettingsView({
             <div className="card p-8 text-center text-gray-500 border border-dashed rounded-lg">
               <p className="mb-4">No outbound webhook subscriptions registered yet.</p>
               {canManage && (
-                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowWebhookModal(true)}>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setShowWebhookModal(true)}
+                >
                   Register your first webhook
                 </button>
               )}
@@ -426,7 +466,11 @@ export function DeveloperSettingsView({
                       <div>
                         <div className="flex items-center gap-2 mb-1">
                           <h4 className="font-semibold text-gray-900">{webhook.name}</h4>
-                          <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${verificationBadgeClass(verificationStatus)}`}>
+                          <span
+                            className={`px-2 py-0.5 text-xs font-medium rounded-full ${verificationBadgeClass(
+                              verificationStatus
+                            )}`}
+                          >
                             {verificationStatus.toUpperCase()}
                           </span>
                         </div>
@@ -436,7 +480,10 @@ export function DeveloperSettingsView({
                         </p>
                         <div className="flex gap-1 flex-wrap">
                           {webhook.events.map((eventName) => (
-                            <span key={eventName} className="px-2 py-0.5 text-xs bg-blue-50 text-blue-700 rounded">
+                            <span
+                              key={eventName}
+                              className="px-2 py-0.5 text-xs bg-blue-50 text-blue-700 rounded"
+                            >
                               {eventName}
                             </span>
                           ))}
@@ -453,11 +500,19 @@ export function DeveloperSettingsView({
                             {testingWebhookId === webhook.id ? "Testing…" : "Send Test / Verify"}
                           </button>
                         )}
-                        <button type="button" className="btn btn-secondary btn-sm" onClick={() => void handleToggleDeliveries(webhook.id)}>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => void handleToggleDeliveries(webhook.id)}
+                        >
                           {expanded ? "Hide Deliveries" : "View Deliveries"}
                         </button>
                         {canManage && (
-                          <button type="button" className="btn btn-danger btn-sm text-red-600 hover:text-red-800" onClick={() => void handleDeleteWebhook(webhook.id)}>
+                          <button
+                            type="button"
+                            className="btn btn-danger btn-sm text-red-600 hover:text-red-800"
+                            onClick={() => void handleDeleteWebhook(webhook.id)}
+                          >
                             Delete
                           </button>
                         )}
@@ -465,8 +520,13 @@ export function DeveloperSettingsView({
                     </div>
 
                     {expanded && (
-                      <div className="mt-4 border-t pt-3" data-testid={`webhook-deliveries-${webhook.id}`}>
-                        <h5 className="text-sm font-semibold text-gray-800 mb-2">Delivery History</h5>
+                      <div
+                        className="mt-4 border-t pt-3"
+                        data-testid={`webhook-deliveries-${webhook.id}`}
+                      >
+                        <h5 className="text-sm font-semibold text-gray-800 mb-2">
+                          Delivery History
+                        </h5>
                         {loadingDeliveriesWebhookId === webhook.id ? (
                           <p className="text-xs text-gray-500">Loading deliveries...</p>
                         ) : deliveries.length === 0 ? (
@@ -474,18 +534,30 @@ export function DeveloperSettingsView({
                         ) : (
                           <div className="space-y-2">
                             {deliveries.map((delivery) => (
-                              <div key={delivery.id} className="flex justify-between gap-4 text-xs border rounded p-2">
+                              <div
+                                key={delivery.id}
+                                className="flex justify-between gap-4 text-xs border rounded p-2"
+                              >
                                 <div>
-                                  <div className="font-mono text-gray-800">{delivery.eventType}</div>
+                                  <div className="font-mono text-gray-800">
+                                    {delivery.eventType}
+                                  </div>
                                   <div className="text-gray-500">{delivery.eventId}</div>
-                                  {delivery.lastError && <div className="text-red-600">{delivery.lastError}</div>}
+                                  {delivery.lastError && (
+                                    <div className="text-red-600">{delivery.lastError}</div>
+                                  )}
                                 </div>
                                 <div className="text-right">
-                                  <span className={`px-2 py-0.5 rounded-full font-medium ${deliveryBadgeClass(delivery.status)}`}>
+                                  <span
+                                    className={`px-2 py-0.5 rounded-full font-medium ${deliveryBadgeClass(
+                                      delivery.status
+                                    )}`}
+                                  >
                                     {delivery.status}
                                   </span>
                                   <div className="mt-1 text-gray-500">
-                                    HTTP {delivery.responseStatusCode ?? "—"} · attempts {delivery.attemptCount}/{delivery.maxAttempts}
+                                    HTTP {delivery.responseStatusCode ?? "—"} · attempts{" "}
+                                    {delivery.attemptCount}/{delivery.maxAttempts}
                                   </div>
                                 </div>
                               </div>
@@ -519,7 +591,9 @@ export function DeveloperSettingsView({
                 />
               </div>
               <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">Permissions / Scopes</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Permissions / Scopes
+                </label>
                 <div className="space-y-1 text-sm">
                   {CANONICAL_KEY_SCOPES.map((scope) => (
                     <label key={scope} className="flex items-center gap-2">
@@ -542,7 +616,11 @@ export function DeveloperSettingsView({
                 </div>
               </div>
               <div className="flex justify-end gap-2 border-t pt-4">
-                <button type="button" className="btn btn-secondary text-sm" onClick={() => setShowKeyModal(false)}>
+                <button
+                  type="button"
+                  className="btn btn-secondary text-sm"
+                  onClick={() => setShowKeyModal(false)}
+                >
                   Cancel
                 </button>
                 <button type="submit" disabled={submitting} className="btn btn-primary text-sm">
@@ -582,22 +660,32 @@ export function DeveloperSettingsView({
                 />
               </div>
               <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">Subscribed Events</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Subscribed Events
+                </label>
                 <div className="space-y-1 text-sm">
-                  {["conversation.created", "message.received", "message.sent"].map((eventName) => (
-                    <label key={eventName} className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={webhookEvents.includes(eventName)}
-                        onChange={(event) => toggleWebhookEvent(eventName, event.target.checked)}
-                      />
-                      <span>{eventName}</span>
-                    </label>
-                  ))}
+                  {["conversation.created", "message.received", "message.sent"].map(
+                    (eventName) => (
+                      <label key={eventName} className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={webhookEvents.includes(eventName)}
+                          onChange={(event) =>
+                            toggleWebhookEvent(eventName, event.target.checked)
+                          }
+                        />
+                        <span>{eventName}</span>
+                      </label>
+                    )
+                  )}
                 </div>
               </div>
               <div className="flex justify-end gap-2 border-t pt-4">
-                <button type="button" className="btn btn-secondary text-sm" onClick={() => setShowWebhookModal(false)}>
+                <button
+                  type="button"
+                  className="btn btn-secondary text-sm"
+                  onClick={() => setShowWebhookModal(false)}
+                >
                   Cancel
                 </button>
                 <button type="submit" disabled={submitting} className="btn btn-primary text-sm">
