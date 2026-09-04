@@ -1,20 +1,18 @@
 import React, { useEffect, useState } from "react";
 import {
   type DeveloperApiKeyRecord,
-  type WebhookSubscriptionClientRecord,
-  listApiKeysApi,
-  createApiKeyApi,
-  revokeApiKeyApi,
-  listWebhooksApi,
-  createWebhookApi,
-  deleteWebhookApi
-} from "./api.js";
-import {
   type WebhookDeliveryClientRecord,
+  type WebhookSubscriptionClientRecord,
   type WebhookVerificationStatus,
+  createApiKeyApi,
+  createWebhookApi,
+  deleteWebhookApi,
+  listApiKeysApi,
   listWebhookDeliveriesApi,
+  listWebhooksApi,
+  revokeApiKeyApi,
   testWebhookApi
-} from "./developer-integrations-api.js";
+} from "./api.js";
 
 export interface DeveloperSettingsViewProps {
   orgId: string;

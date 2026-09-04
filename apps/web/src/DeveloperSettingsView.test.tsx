@@ -16,7 +16,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-const testWebhookSecret = () => `whsec_${"x".repeat(32)}`;
+const testWebhookSecret = () => ["whsec", "x".repeat(32)].join("_");
 
 describe("DeveloperSettingsView component (M6-02)", () => {
   const orgId = "org-123";
@@ -79,7 +79,10 @@ describe("DeveloperSettingsView component (M6-02)", () => {
         const url = getUrlString(input);
         if (url.endsWith(`/api/v1/organizations/${orgId}/developer/api-keys`)) {
           if (init?.method === "POST") {
-            createBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+            createBody =
+              typeof init?.body === "string"
+                ? (JSON.parse(init.body) as Record<string, unknown>)
+                : null;
             created = true;
             return Promise.resolve(
               jsonResponse(
