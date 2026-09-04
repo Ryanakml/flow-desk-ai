@@ -27,13 +27,19 @@ variable "environment" {
 variable "vpc_id" {
   type        = string
   default     = ""
-  description = "VPC ID where the production ALB and Target Groups are deployed"
+  description = "VPC ID where the production ALB, Target Groups, and ECS services are deployed"
 }
 
 variable "subnet_ids" {
   type        = list(string)
   default     = []
   description = "Public subnet IDs for the Application Load Balancer"
+}
+
+variable "private_subnet_ids" {
+  type        = list(string)
+  default     = []
+  description = "Private subnet IDs for the ECS Fargate tasks"
 }
 
 variable "enable_canary_routing" {
@@ -49,6 +55,18 @@ variable "canary_weight" {
     condition     = contains([0, 5, 25, 100], var.canary_weight)
     error_message = "canary_weight must be 0, 5, 25, or 100."
   }
+}
+
+variable "api_container_cpu" {
+  type        = number
+  default     = 512
+  description = "Fargate task CPU units"
+}
+
+variable "api_container_memory" {
+  type        = number
+  default     = 1024
+  description = "Fargate task memory in MB"
 }
 
 locals {
@@ -192,6 +210,230 @@ resource "aws_lb_listener" "production_http" {
   }
 }
 
+# --- AWS ECS Fargate Production Compute (ADR-003 / Spec §21.1) ---
+
+resource "aws_ecs_cluster" "production" {
+  name = "${local.name_prefix}-cluster"
+
+  setting {
+    name  = "containerInsights"
+    value = "enabled"
+  }
+
+  tags = {
+    Environment = var.environment
+    ManagedBy   = "terraform"
+  }
+}
+
+resource "aws_iam_role" "ecs_execution_role" {
+  name = "${local.name_prefix}-ecs-execution-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = "ecs-tasks.amazonaws.com"
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+
+  tags = {
+    Environment = var.environment
+    ManagedBy   = "terraform"
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "ecs_execution_role_policy" {
+  role       = aws_iam_role.ecs_execution_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+resource "aws_iam_role" "ecs_task_role" {
+  name = "${local.name_prefix}-ecs-task-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = "ecs-tasks.amazonaws.com"
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+
+  tags = {
+    Environment = var.environment
+    ManagedBy   = "terraform"
+  }
+}
+
+resource "aws_security_group" "ecs_tasks" {
+  name        = "${local.name_prefix}-ecs-tasks-sg"
+  description = "Security group for production ECS tasks"
+  vpc_id      = var.vpc_id != "" ? var.vpc_id : null
+
+  ingress {
+    description     = "Allow HTTP ingress from ALB"
+    from_port       = 4000
+    to_port         = 4000
+    protocol        = "tcp"
+    security_groups = [aws_security_group.production_alb.id]
+  }
+
+  egress {
+    description = "Allow all outbound traffic"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Environment = var.environment
+    ManagedBy   = "terraform"
+  }
+}
+
+resource "aws_ecs_task_definition" "production_stable" {
+  family                   = "${local.name_prefix}-api-stable"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = tostring(var.api_container_cpu)
+  memory                   = tostring(var.api_container_memory)
+  execution_role_arn       = aws_iam_role.ecs_execution_role.arn
+  task_role_arn            = aws_iam_role.ecs_task_role.arn
+
+  container_definitions = jsonencode([
+    {
+      name      = "api"
+      image     = "ghcr.io/ryanakml/flowdesk-api:latest"
+      essential = true
+      portMappings = [
+        {
+          containerPort = 4000
+          hostPort      = 4000
+          protocol      = "tcp"
+        }
+      ]
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = "/ecs/${local.name_prefix}-api-stable"
+          "awslogs-region"        = var.aws_region
+          "awslogs-stream-prefix" = "api"
+          "awslogs-create-group"  = "true"
+        }
+      }
+    }
+  ])
+
+  tags = {
+    Environment = var.environment
+    Slice       = "stable"
+    ManagedBy   = "terraform"
+  }
+}
+
+resource "aws_ecs_task_definition" "production_canary" {
+  family                   = "${local.name_prefix}-api-canary"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = tostring(var.api_container_cpu)
+  memory                   = tostring(var.api_container_memory)
+  execution_role_arn       = aws_iam_role.ecs_execution_role.arn
+  task_role_arn            = aws_iam_role.ecs_task_role.arn
+
+  container_definitions = jsonencode([
+    {
+      name      = "api"
+      image     = "ghcr.io/ryanakml/flowdesk-api:latest"
+      essential = true
+      portMappings = [
+        {
+          containerPort = 4000
+          hostPort      = 4000
+          protocol      = "tcp"
+        }
+      ]
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = "/ecs/${local.name_prefix}-api-canary"
+          "awslogs-region"        = var.aws_region
+          "awslogs-stream-prefix" = "api"
+          "awslogs-create-group"  = "true"
+        }
+      }
+    }
+  ])
+
+  tags = {
+    Environment = var.environment
+    Slice       = "canary"
+    ManagedBy   = "terraform"
+  }
+}
+
+resource "aws_ecs_service" "production_stable" {
+  name            = "${local.name_prefix}-stable-api"
+  cluster         = aws_ecs_cluster.production.id
+  task_definition = aws_ecs_task_definition.production_stable.arn
+  desired_count   = 2
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets          = length(var.private_subnet_ids) > 0 ? var.private_subnet_ids : var.subnet_ids
+    security_groups  = [aws_security_group.ecs_tasks.id]
+    assign_public_ip = length(var.private_subnet_ids) == 0
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.production_stable.arn
+    container_name   = "api"
+    container_port   = 4000
+  }
+
+  tags = {
+    Environment = var.environment
+    Slice       = "stable"
+    ManagedBy   = "terraform"
+  }
+}
+
+resource "aws_ecs_service" "production_canary" {
+  name            = "${local.name_prefix}-canary-api"
+  cluster         = aws_ecs_cluster.production.id
+  task_definition = aws_ecs_task_definition.production_canary.arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets          = length(var.private_subnet_ids) > 0 ? var.private_subnet_ids : var.subnet_ids
+    security_groups  = [aws_security_group.ecs_tasks.id]
+    assign_public_ip = length(var.private_subnet_ids) == 0
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.production_canary.arn
+    container_name   = "api"
+    container_port   = 4000
+  }
+
+  tags = {
+    Environment = var.environment
+    Slice       = "canary"
+    ManagedBy   = "terraform"
+  }
+}
+
 # GitHub Actions OIDC Short-Lived Role for Production Promotion
 resource "aws_iam_role" "github_actions_production_oidc" {
   name = "${local.name_prefix}-github-actions-oidc"
@@ -224,10 +466,10 @@ resource "aws_iam_role" "github_actions_production_oidc" {
   }
 }
 
-# Policy allowing GitHub Actions to modify listener weights and query CloudWatch alarms
+# Policy allowing GitHub Actions to modify listener weights, update ECS workloads, and query CloudWatch alarms
 resource "aws_iam_policy" "github_actions_canary_traffic" {
   name        = "${local.name_prefix}-canary-traffic-policy"
-  description = "Allows GitHub Actions production workflow to adjust canary traffic weights on the ALB listener"
+  description = "Allows GitHub Actions production workflow to adjust canary traffic weights on the ALB listener and deploy ECS workloads"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -243,6 +485,28 @@ resource "aws_iam_policy" "github_actions_canary_traffic" {
           "elasticloadbalancing:DescribeTargetHealth"
         ]
         Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ecs:UpdateService",
+          "ecs:DescribeServices",
+          "ecs:DescribeTasks",
+          "ecs:ListTasks",
+          "ecs:RegisterTaskDefinition",
+          "ecs:DescribeTaskDefinition"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "iam:PassRole"
+        ]
+        Resource = [
+          aws_iam_role.ecs_execution_role.arn,
+          aws_iam_role.ecs_task_role.arn
+        ]
       },
       {
         Effect = "Allow"
@@ -318,4 +582,16 @@ output "canary_target_group_arn" {
 
 output "oidc_role_arn" {
   value = aws_iam_role.github_actions_production_oidc.arn
+}
+
+output "ecs_cluster_name" {
+  value = aws_ecs_cluster.production.name
+}
+
+output "stable_service_name" {
+  value = aws_ecs_service.production_stable.name
+}
+
+output "canary_service_name" {
+  value = aws_ecs_service.production_canary.name
 }

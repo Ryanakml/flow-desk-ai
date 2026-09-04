@@ -84,11 +84,11 @@ jobs:
           retention-days: 90
 
   canary-deployment-5pct:
-    name: Canary Slice (5% Traffic)
+    name: Deploy Canary Workload & 5% Traffic Slice
     needs: validate-provenance
     runs-on: ubuntu-24.04
     environment: production
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout Source
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
@@ -107,6 +107,27 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME || vars.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
           role-session-name: FlowDesk-Production-Canary-5pct
+
+      - name: Deploy Verified Image Digests to Canary Workload
+        env:
+          ECS_CLUSTER_NAME: ${{ secrets.ECS_CLUSTER_NAME || vars.ECS_CLUSTER_NAME || 'flowdesk-production-cluster' }}
+          ECS_SERVICE_NAME: ${{ secrets.ECS_CANARY_SERVICE_NAME || vars.ECS_CANARY_SERVICE_NAME || 'flowdesk-production-canary-api' }}
+          PROD_CANARY_TG_ARN: ${{ secrets.PROD_CANARY_TG_ARN || vars.PROD_CANARY_TG_ARN }}
+          AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
+          DIGESTS_FILE: "artifacts/provenance/image-digests.json"
+        run: |
+          chmod +x infra/deploy/production/deploy-workload.sh
+          ./infra/deploy/production/deploy-workload.sh canary "artifacts/provenance/image-digests.json"
+
+      - name: Verify Running Canary Workload Digest & Target Health
+        env:
+          ECS_CLUSTER_NAME: ${{ secrets.ECS_CLUSTER_NAME || vars.ECS_CLUSTER_NAME || 'flowdesk-production-cluster' }}
+          ECS_SERVICE_NAME: ${{ secrets.ECS_CANARY_SERVICE_NAME || vars.ECS_CANARY_SERVICE_NAME || 'flowdesk-production-canary-api' }}
+          AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
+          DIGESTS_FILE: "artifacts/provenance/image-digests.json"
+        run: |
+          chmod +x infra/deploy/production/verify-workload.sh
+          ./infra/deploy/production/verify-workload.sh canary "artifacts/provenance/image-digests.json"
 
       - name: Shift Traffic to Canary (5% Weight)
         env:
@@ -228,11 +249,11 @@ jobs:
           retention-days: 90
 
   full-production-promote:
-    name: Full Production Promotion (100% Traffic)
+    name: Full Production Promotion & Stable Catchup
     needs: canary-deployment-25pct
     runs-on: ubuntu-24.04
     environment: production
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout Source
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
@@ -252,7 +273,7 @@ jobs:
           aws-region: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
           role-session-name: FlowDesk-Production-Promote-100pct
 
-      - name: Promote Traffic to 100%
+      - name: Shift Traffic to 100% Canary
         env:
           PROD_LISTENER_ARN: ${{ secrets.PROD_LISTENER_ARN || vars.PROD_LISTENER_ARN }}
           PROD_RULE_ARN: ${{ secrets.PROD_RULE_ARN || vars.PROD_RULE_ARN }}
@@ -262,6 +283,43 @@ jobs:
         run: |
           chmod +x infra/deploy/production/canary-traffic.sh
           ./infra/deploy/production/canary-traffic.sh 100
+
+      - name: Evaluate Canary Health at 100% Traffic
+        env:
+          CANARY_ENDPOINT_URL: ${{ vars.CANARY_ENDPOINT_URL || secrets.CANARY_ENDPOINT_URL }}
+          PROMETHEUS_URL: ${{ vars.PROMETHEUS_URL || secrets.PROMETHEUS_URL }}
+          PROD_CANARY_TG_ARN: ${{ secrets.PROD_CANARY_TG_ARN || vars.PROD_CANARY_TG_ARN }}
+          AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
+          EVALUATE_CLOUDWATCH_METRICS: "true"
+        run: |
+          chmod +x infra/deploy/production/evaluate-canary-gate.sh
+          ./infra/deploy/production/evaluate-canary-gate.sh 100
+
+      - name: Promote Verified Release to Stable Workload (Catchup)
+        env:
+          ECS_CLUSTER_NAME: ${{ secrets.ECS_CLUSTER_NAME || vars.ECS_CLUSTER_NAME || 'flowdesk-production-cluster' }}
+          ECS_SERVICE_NAME: ${{ secrets.ECS_STABLE_SERVICE_NAME || vars.ECS_STABLE_SERVICE_NAME || 'flowdesk-production-stable-api' }}
+          PROD_STABLE_TG_ARN: ${{ secrets.PROD_STABLE_TG_ARN || vars.PROD_STABLE_TG_ARN }}
+          AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
+          DIGESTS_FILE: "artifacts/provenance/image-digests.json"
+        run: |
+          echo "Promoting verified release to permanent stable production workload..."
+          chmod +x infra/deploy/production/deploy-workload.sh
+          ./infra/deploy/production/deploy-workload.sh stable "artifacts/provenance/image-digests.json"
+          chmod +x infra/deploy/production/verify-workload.sh
+          ./infra/deploy/production/verify-workload.sh stable "artifacts/provenance/image-digests.json"
+
+      - name: Reset Traffic Distribution to 100% Stable (Catchup Complete)
+        env:
+          PROD_LISTENER_ARN: ${{ secrets.PROD_LISTENER_ARN || vars.PROD_LISTENER_ARN }}
+          PROD_RULE_ARN: ${{ secrets.PROD_RULE_ARN || vars.PROD_RULE_ARN }}
+          PROD_STABLE_TG_ARN: ${{ secrets.PROD_STABLE_TG_ARN || vars.PROD_STABLE_TG_ARN }}
+          PROD_CANARY_TG_ARN: ${{ secrets.PROD_CANARY_TG_ARN || vars.PROD_CANARY_TG_ARN }}
+          AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
+        run: |
+          echo "Resetting traffic distribution to 100% stable / 0% canary..."
+          chmod +x infra/deploy/production/canary-traffic.sh
+          ./infra/deploy/production/canary-traffic.sh 0
 
       - name: Generate Production Deployment Record
         env:
