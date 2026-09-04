@@ -93,6 +93,8 @@ function createCompletedAutoRunDb(
     botPaused: boolean;
     latestMessageId: string;
     emergencyDisabled: boolean;
+    monthlyCostCeilingCents: number | null;
+    monthlySpendMicrocents: bigint | number;
     durableSafety: {
       control_id: string;
       scope: "global" | "tenant" | "bot" | "channel" | "conversation";
@@ -110,6 +112,15 @@ function createCompletedAutoRunDb(
       calls.push(sql);
       if (sql.includes("resolve_automation_safety")) {
         return { rows: overrides.durableSafety ? [overrides.durableSafety] : [] };
+      }
+      if (sql.includes("FROM flowdesk.bot_configs WHERE organization_id = $1 FOR UPDATE")) {
+        return { rows: [{ id: "config-1" }], rowCount: 1 };
+      }
+      if (sql.includes("COALESCE(SUM(cost_estimate_microcents)")) {
+        return {
+          rows: [{ total_microcents: String(overrides.monthlySpendMicrocents ?? 0) }],
+          rowCount: 1
+        };
       }
       if (sql.includes("metadata->>'aiBotRunId'")) return { rows: [] };
       if (sql.includes("FROM flowdesk.bot_runs AS run")) {
@@ -134,7 +145,15 @@ function createCompletedAutoRunDb(
               config_mode: "auto",
               emergency_disabled: overrides.emergencyDisabled ?? false,
               confidence_threshold: 0.9,
-              config_is_current: true
+              config_is_current: true,
+              auto_enabled: true,
+              rate_limit_per_hour: 60,
+              monthly_cost_ceiling_cents:
+                overrides.monthlyCostCeilingCents !== undefined
+                  ? overrides.monthlyCostCeilingCents
+                  : 50000,
+              customer_consent_required: true,
+              ai_disclosure_enabled: true
             }
           ]
         };
@@ -270,5 +289,77 @@ describe("completed AUTO run final gate (#178)", () => {
     expect(result.autoSent).toBe(true);
     expect(calls.some((sql) => sql.includes("INSERT INTO flowdesk.messages"))).toBe(true);
     expect(calls.some((sql) => sql.includes("INSERT INTO flowdesk.outbox_events"))).toBe(true);
+  });
+
+  it("allows AUTO dispatch when monthly AI spend is below ceiling (#179)", async () => {
+    const { db, calls } = createCompletedAutoRunDb({
+      monthlyCostCeilingCents: 50000,
+      monthlySpendMicrocents: 10_000_000_000n // 10,000 cents ($100.00) < 50,000 cents ($500.00)
+    });
+    const result = await processCompletedAutoRun(db, {
+      organizationId: mockOrgId,
+      runId: "run-auto-1"
+    });
+    expect(result.autoSent).toBe(true);
+    expect(calls.some((sql) => sql.includes("INSERT INTO flowdesk.messages"))).toBe(true);
+  });
+
+  it("denies AUTO dispatch when monthly AI spend is at ceiling (#179)", async () => {
+    const { db, calls } = createCompletedAutoRunDb({
+      monthlyCostCeilingCents: 50000,
+      monthlySpendMicrocents: 50_000_000_000n // exactly 50,000 cents ($500.00)
+    });
+    const result = await processCompletedAutoRun(db, {
+      organizationId: mockOrgId,
+      runId: "run-auto-1"
+    });
+    expect(result.autoSent).toBe(false);
+    expect(result.reason).toBe("AUTO monthly AI cost ceiling reached (50000/50000 cents)");
+    expect(calls.some((sql) => sql.includes("INSERT INTO flowdesk.messages"))).toBe(false);
+    expect(calls.some((sql) => sql.includes("INSERT INTO flowdesk.outbox_events"))).toBe(false);
+  });
+
+  it("denies AUTO dispatch when monthly AI spend is above ceiling (#179)", async () => {
+    const { db, calls } = createCompletedAutoRunDb({
+      monthlyCostCeilingCents: 50000,
+      monthlySpendMicrocents: 60_000_000_000n // 60,000 cents ($600.00) > 50,000 cents
+    });
+    const result = await processCompletedAutoRun(db, {
+      organizationId: mockOrgId,
+      runId: "run-auto-1"
+    });
+    expect(result.autoSent).toBe(false);
+    expect(result.reason).toBe("AUTO monthly AI cost ceiling reached (60000/50000 cents)");
+    expect(calls.some((sql) => sql.includes("INSERT INTO flowdesk.messages"))).toBe(false);
+  });
+
+  it("records denial metadata and audit log when monthly cost ceiling is reached (#179)", async () => {
+    const { db, calls } = createCompletedAutoRunDb({
+      monthlyCostCeilingCents: 100,
+      monthlySpendMicrocents: 150_000_000n // 150 cents > 100 cents
+    });
+    const result = await processCompletedAutoRun(db, {
+      organizationId: mockOrgId,
+      runId: "run-auto-1",
+      correlationId: "test-corr-1"
+    });
+    expect(result.autoSent).toBe(false);
+    expect(result.reason).toBe("AUTO monthly AI cost ceiling reached (150/100 cents)");
+
+    // Verify bot_runs updated with status 'stale', AUTO_CONTEXT_STALE error code, and metadata
+    const botRunUpdate = calls.find(
+      (sql) => sql.includes("UPDATE flowdesk.bot_runs") && sql.includes("AUTO_CONTEXT_STALE")
+    );
+    expect(botRunUpdate).toBeDefined();
+
+    // Verify audit event recorded
+    const auditInsert = calls.find((sql) => sql.includes("INSERT INTO flowdesk.audit_logs"));
+    expect(auditInsert).toBeDefined();
+
+    // Verify locking query on bot_configs was called
+    const configLock = calls.find(
+      (sql) => sql.includes("FROM flowdesk.bot_configs") && sql.includes("FOR UPDATE")
+    );
+    expect(configLock).toBeDefined();
   });
 });

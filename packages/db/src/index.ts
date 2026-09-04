@@ -232,7 +232,12 @@ export {
   type RoutingLogRecord,
   type CreateRoutingLogParams
 } from "./routing.js";
-export { countRecentAutoReplies } from "./auto-send.js";
+export {
+  countRecentAutoReplies,
+  getMonthlyAiSpend,
+  MICROCENTS_PER_CENT,
+  type MonthlyAiSpend
+} from "./auto-send.js";
 export {
   resolveAutomationSafety,
   upsertAutomationSafetyControl,

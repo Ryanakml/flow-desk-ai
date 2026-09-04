@@ -3,7 +3,9 @@ import {
   countRecentAutoReplies,
   createMessage,
   createOutboundMessageWithOutbox,
+  getMonthlyAiSpend,
   getOutboundMessageByBotRun,
+  MICROCENTS_PER_CENT,
   recordAuditEvent,
   resolveAutomationSafety
 } from "@flowdesk/db";
@@ -39,6 +41,7 @@ interface AutoRunState {
   config_is_current: boolean | null;
   auto_enabled: boolean | null;
   rate_limit_per_hour: number | null;
+  monthly_cost_ceiling_cents: number | null;
   customer_consent_required: boolean | null;
   ai_disclosure_enabled: boolean | null;
 }
@@ -72,6 +75,7 @@ export async function processCompletedAutoRun(
             config.id AS config_id, config.mode AS config_mode,
             config.emergency_disabled, config.confidence_threshold,
             config.auto_enabled, config.rate_limit_per_hour,
+            config.monthly_cost_ceiling_cents,
             config.customer_consent_required, config.ai_disclosure_enabled,
             date_trunc('milliseconds', config.updated_at) =
               (run.config_snapshot->>'botConfigUpdatedAt')::timestamptz
@@ -89,7 +93,12 @@ export async function processCompletedAutoRun(
   const state = stateResult.rows[0];
   if (!state) return { autoSent: false, reason: "AUTO run context not found" };
 
-  const deny = async (reason: string, stale = false): Promise<CompletedAutoRunResult> => {
+  const deny = async (
+    reason: string,
+    stale = false,
+    extraMetadata?: Record<string, unknown>
+  ): Promise<CompletedAutoRunResult> => {
+    const extraJson = JSON.stringify(extraMetadata ?? {});
     await db.query(
       `UPDATE flowdesk.bot_runs
        SET status = CASE WHEN $3 THEN 'stale' ELSE status END,
@@ -98,9 +107,9 @@ export async function processCompletedAutoRun(
            metadata = metadata || jsonb_build_object(
              'autoDecision', 'denied', 'autoDecisionReason', $2,
              'autoDecisionAt', clock_timestamp()
-           ), updated_at = clock_timestamp()
+           ) || $5::jsonb, updated_at = clock_timestamp()
        WHERE organization_id = $1 AND id = $4`,
-      [input.organizationId, reason, stale, input.runId]
+      [input.organizationId, reason, stale, input.runId, extraJson]
     );
     await recordAuditEvent(db, {
       organizationId: input.organizationId,
@@ -109,7 +118,11 @@ export async function processCompletedAutoRun(
       targetId: input.runId,
       result: "denied",
       ...(input.correlationId ? { correlationId: input.correlationId } : {}),
-      metadata: { reason, conversationId: state.conversation_id }
+      metadata: {
+        reason,
+        conversationId: state.conversation_id,
+        ...(extraMetadata ?? {})
+      }
     });
     recordAutoSendOutcome({ status: "denied", reason });
     return { autoSent: false, reason };
@@ -149,6 +162,15 @@ export async function processCompletedAutoRun(
     return deny("AUTO configuration is disabled or changed");
   }
 
+  if (
+    (state.rate_limit_per_hour && state.rate_limit_per_hour > 0) ||
+    (state.monthly_cost_ceiling_cents && state.monthly_cost_ceiling_cents > 0)
+  ) {
+    await db.query(`SELECT id FROM flowdesk.bot_configs WHERE organization_id = $1 FOR UPDATE`, [
+      input.organizationId
+    ]);
+  }
+
   if (state.rate_limit_per_hour && state.rate_limit_per_hour > 0) {
     const hourlySentResult = await db.query<{ count: string }>(
       `SELECT COUNT(*)::text AS count
@@ -164,6 +186,22 @@ export async function processCompletedAutoRun(
       return deny(
         `AUTO hourly rate limit ceiling reached (${hourlySent}/${state.rate_limit_per_hour})`,
         true
+      );
+    }
+  }
+
+  if (state.monthly_cost_ceiling_cents && state.monthly_cost_ceiling_cents > 0) {
+    const { totalMicrocents, totalCents } = await getMonthlyAiSpend(db, input.organizationId);
+    const ceilingMicrocents = BigInt(state.monthly_cost_ceiling_cents) * MICROCENTS_PER_CENT;
+    if (totalMicrocents >= ceilingMicrocents) {
+      return deny(
+        `AUTO monthly AI cost ceiling reached (${totalCents}/${state.monthly_cost_ceiling_cents} cents)`,
+        true,
+        {
+          monthlySpendCents: totalCents,
+          monthlyCostCeilingCents: state.monthly_cost_ceiling_cents,
+          totalMicrocents: totalMicrocents.toString()
+        }
       );
     }
   }

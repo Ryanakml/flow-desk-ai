@@ -22,3 +22,26 @@ export async function countRecentAutoReplies(
   );
   return Number(result.rows[0]?.count ?? 0);
 }
+
+export const MICROCENTS_PER_CENT = 1_000_000n;
+
+export interface MonthlyAiSpend {
+  totalMicrocents: bigint;
+  totalCents: number;
+}
+
+export async function getMonthlyAiSpend(
+  db: DbClient,
+  organizationId: string
+): Promise<MonthlyAiSpend> {
+  const result = await db.query<{ total_microcents: string }>(
+    `SELECT COALESCE(SUM(cost_estimate_microcents), 0)::text AS total_microcents
+     FROM flowdesk.bot_runs
+     WHERE organization_id = $1
+       AND created_at >= date_trunc('month', clock_timestamp())`,
+    [organizationId]
+  );
+  const totalMicrocents = BigInt(result.rows[0]?.total_microcents ?? "0");
+  const totalCents = Number(totalMicrocents / MICROCENTS_PER_CENT);
+  return { totalMicrocents, totalCents };
+}
