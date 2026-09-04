@@ -1960,15 +1960,15 @@ describe("database foundation", () => {
       );
 
       const channelResA = await admin.query<{ id: string }>(
-        `INSERT INTO flowdesk.channels (organization_id, type, phone_number_id, name)
-         VALUES ($1, 'whatsapp', 'cost-phone-a-1', 'WhatsApp Cost A') RETURNING id`,
+        `INSERT INTO flowdesk.channels (organization_id, type, name, phone_number_id, waba_id, encrypted_credentials)
+         VALUES ($1, 'whatsapp', 'WhatsApp Cost A', 'cost-phone-a-1', 'waba-cost-a', 'encrypted-test-value') RETURNING id`,
         [orgIdA]
       );
       const channelIdA = channelResA.rows[0]!.id;
 
       const channelResB = await admin.query<{ id: string }>(
-        `INSERT INTO flowdesk.channels (organization_id, type, phone_number_id, name)
-         VALUES ($1, 'whatsapp', 'cost-phone-b-1', 'WhatsApp Cost B') RETURNING id`,
+        `INSERT INTO flowdesk.channels (organization_id, type, name, phone_number_id, waba_id, encrypted_credentials)
+         VALUES ($1, 'whatsapp', 'WhatsApp Cost B', 'cost-phone-b-1', 'waba-cost-b', 'encrypted-test-value') RETURNING id`,
         [orgIdB]
       );
       const channelIdB = channelResB.rows[0]!.id;
