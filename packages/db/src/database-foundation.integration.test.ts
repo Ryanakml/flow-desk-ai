@@ -2167,10 +2167,18 @@ describe("database foundation", () => {
       orgIdA,
       orgIdB
     ]);
+    await admin.query("DELETE FROM flowdesk.contacts WHERE organization_id IN ($1, $2)", [
+      orgIdA,
+      orgIdB
+    ]);
     await admin.query("DELETE FROM flowdesk.channels WHERE organization_id IN ($1, $2)", [
       orgIdA,
       orgIdB
     ]);
+    await admin.query(
+      "DELETE FROM flowdesk.realtime_versions WHERE organization_id IN ($1, $2)",
+      [orgIdA, orgIdB]
+    );
     await admin.query("DELETE FROM flowdesk.users WHERE id = $1", [userA]);
     await admin.query("DELETE FROM flowdesk.organizations WHERE id IN ($1, $2)", [orgIdA, orgIdB]);
 
@@ -2432,6 +2440,10 @@ describe("database foundation", () => {
         orgIdA,
         orgIdB
       ]);
+      await admin.query(
+        "DELETE FROM flowdesk.realtime_versions WHERE organization_id IN ($1, $2)",
+        [orgIdA, orgIdB]
+      );
       await admin.query("DELETE FROM flowdesk.users WHERE id = $1", [userA]);
       await admin.query("DELETE FROM flowdesk.organizations WHERE id IN ($1, $2)", [
         orgIdA,
