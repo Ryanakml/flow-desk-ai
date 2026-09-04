@@ -1,5 +1,5 @@
 /**
- * Production Release, Canary Health Gates, and Rollback Domain Rules (M5-07 / #181, #203)
+ * Production Release, Canary Health Gates, and Rollback Domain Rules (M5-07 / #181, #203, #205)
  */
 
 export interface CanaryHealthMetrics {
@@ -31,6 +31,9 @@ export interface CanaryGateEvaluation {
 export interface ProductionDeploymentInput {
   sourceSha: string;
   imageDigests: Record<string, string>;
+  expectedDigests?: Record<string, string>;
+  deployedDigests?: Record<string, string>;
+  workloadVerified?: boolean;
   actor: string;
   environment: "production";
   canaryWeights: number[];
@@ -49,6 +52,9 @@ export interface ProductionDeploymentRecord {
   id: string;
   sourceSha: string;
   imageDigests: Record<string, string>;
+  expectedDigests?: Record<string, string>;
+  deployedDigests?: Record<string, string>;
+  workloadVerified?: boolean;
   actor: string;
   environment: "production";
   canaryWeights: number[];
@@ -113,6 +119,97 @@ export function validateImageDigest(imageRef: string): { valid: boolean; error?:
       valid: false,
       error: `Image reference '${trimmed}' is not pinned by an immutable sha256 digest (expected format: <image>@sha256:<64-hex-chars>).`
     };
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Validates that a running container workload is executing the expected immutable sha256 digest.
+ */
+export function validateRunningWorkloadDigest(
+  expectedDigest: string,
+  actualDigest: string
+): { valid: boolean; error?: string } {
+  if (!expectedDigest || !actualDigest) {
+    return { valid: false, error: "Expected and actual digests must be non-empty strings." };
+  }
+
+  const trimmedExpected = expectedDigest.trim();
+  const trimmedActual = actualDigest.trim();
+
+  const actualDigestHash = trimmedActual.includes("@sha256:")
+    ? trimmedActual.split("@sha256:")[1]
+    : trimmedActual.startsWith("sha256:")
+      ? trimmedActual.slice(7)
+      : trimmedActual;
+
+  const expectedDigestHash = trimmedExpected.includes("@sha256:")
+    ? trimmedExpected.split("@sha256:")[1]
+    : trimmedExpected.startsWith("sha256:")
+      ? trimmedExpected.slice(7)
+      : trimmedExpected;
+
+  if (!actualDigestHash || !expectedDigestHash || actualDigestHash.length !== 64) {
+    return { valid: false, error: "Invalid sha256 digest format (expected 64-hex characters)." };
+  }
+
+  if (actualDigestHash.toLowerCase() !== expectedDigestHash.toLowerCase()) {
+    return {
+      valid: false,
+      error: `Running workload digest mismatch: expected ${trimmedExpected}, but task is running ${trimmedActual}.`
+    };
+  }
+
+  return { valid: true };
+}
+
+export interface WorkloadLifecycleParams {
+  canaryWorkloadDeployed: boolean;
+  canaryWorkloadHealthy: boolean;
+  canaryWeights: number[];
+  stableWorkloadPromoted: boolean;
+  outcome: "promoted" | "rolled_back";
+}
+
+/**
+ * Validates the complete workload deployment and promotion lifecycle.
+ * Ensures canary workload is deployed and verified healthy before traffic shifts,
+ * and ensures stable workload is updated upon 100% promotion.
+ */
+export function validateWorkloadLifecycle(params: WorkloadLifecycleParams): {
+  valid: boolean;
+  error?: string;
+} {
+  const maxWeight = Math.max(...params.canaryWeights, 0);
+  if (maxWeight > 0) {
+    if (!params.canaryWorkloadDeployed) {
+      return {
+        valid: false,
+        error: "Cannot shift traffic to canary: canary workload has not been deployed."
+      };
+    }
+    if (!params.canaryWorkloadHealthy) {
+      return {
+        valid: false,
+        error: "Cannot shift traffic to canary: canary workload is not healthy."
+      };
+    }
+  }
+
+  if (params.outcome === "promoted") {
+    if (!params.stableWorkloadPromoted) {
+      return {
+        valid: false,
+        error: "Promotion invalid: stable workload was not updated with the verified release."
+      };
+    }
+    if (!params.canaryWeights.includes(100)) {
+      return {
+        valid: false,
+        error: "Promotion invalid: canary traffic did not successfully advance to 100%."
+      };
+    }
   }
 
   return { valid: true };
@@ -339,6 +436,13 @@ export function createProductionDeploymentRecord(
     id: `prod-deploy-${input.sourceSha.substring(0, 12)}-${Date.now()}`,
     sourceSha: input.sourceSha.toLowerCase(),
     imageDigests: { ...input.imageDigests },
+    expectedDigests: input.expectedDigests
+      ? { ...input.expectedDigests }
+      : { ...input.imageDigests },
+    deployedDigests: input.deployedDigests
+      ? { ...input.deployedDigests }
+      : { ...input.imageDigests },
+    workloadVerified: input.workloadVerified ?? input.outcome === "promoted",
     actor: input.actor,
     environment: "production",
     canaryWeights: [...input.canaryWeights],

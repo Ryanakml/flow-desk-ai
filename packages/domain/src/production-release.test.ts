@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   validatePromotionImageTag,
   validateImageDigest,
+  validateRunningWorkloadDigest,
+  validateWorkloadLifecycle,
   validateProductionEnvironmentConfig,
   validateCanaryWeightTransition,
   evaluateCanaryHealthGate,
@@ -10,7 +12,7 @@ import {
   DEFAULT_CANARY_THRESHOLDS
 } from "./production-release.js";
 
-describe("Production Release, Canary Gates, and Rollback Domain (M5-07 / #181, #203)", () => {
+describe("Production Release, Canary Gates, and Rollback Domain (M5-07 / #181, #203, #205)", () => {
   describe("validatePromotionImageTag", () => {
     it("accepts valid 40-character git commit SHA", () => {
       const validSha = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
@@ -57,6 +59,86 @@ describe("Production Release, Canary Gates, and Rollback Domain (M5-07 / #181, #
 
     it("rejects invalid sha256 digest length", () => {
       expect(validateImageDigest("ghcr.io/ryanakml/flowdesk-api@sha256:short").valid).toBe(false);
+    });
+  });
+
+  describe("validateRunningWorkloadDigest", () => {
+    const validDigest =
+      "ghcr.io/ryanakml/flowdesk-api@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+    it("passes when running digest matches expected digest exactly", () => {
+      const result = validateRunningWorkloadDigest(validDigest, validDigest);
+      expect(result.valid).toBe(true);
+      expect(result.error).toBeUndefined();
+    });
+
+    it("passes when running task reports raw sha256 hash matching expected", () => {
+      const rawHash = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+      const result = validateRunningWorkloadDigest(validDigest, rawHash);
+      expect(result.valid).toBe(true);
+    });
+
+    it("rejects when running digest differs from expected digest", () => {
+      const differentDigest =
+        "ghcr.io/ryanakml/flowdesk-api@sha256:0000000000000000000000000000000000000000000000000000000000000000";
+      const result = validateRunningWorkloadDigest(validDigest, differentDigest);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain("mismatch");
+    });
+
+    it("rejects empty or malformed digest strings", () => {
+      expect(validateRunningWorkloadDigest("", validDigest).valid).toBe(false);
+      expect(validateRunningWorkloadDigest(validDigest, "invalid").valid).toBe(false);
+    });
+  });
+
+  describe("validateWorkloadLifecycle", () => {
+    it("prohibits shifting traffic to canary if canary workload was not deployed", () => {
+      const result = validateWorkloadLifecycle({
+        canaryWorkloadDeployed: false,
+        canaryWorkloadHealthy: false,
+        canaryWeights: [5],
+        stableWorkloadPromoted: false,
+        outcome: "rolled_back"
+      });
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain("canary workload has not been deployed");
+    });
+
+    it("prohibits shifting traffic to canary if canary workload is not healthy", () => {
+      const result = validateWorkloadLifecycle({
+        canaryWorkloadDeployed: true,
+        canaryWorkloadHealthy: false,
+        canaryWeights: [5],
+        stableWorkloadPromoted: false,
+        outcome: "rolled_back"
+      });
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain("canary workload is not healthy");
+    });
+
+    it("prohibits final promotion if stable workload was not updated with the release", () => {
+      const result = validateWorkloadLifecycle({
+        canaryWorkloadDeployed: true,
+        canaryWorkloadHealthy: true,
+        canaryWeights: [5, 25, 100],
+        stableWorkloadPromoted: false, // missing stable catchup
+        outcome: "promoted"
+      });
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain("stable workload was not updated");
+    });
+
+    it("approves valid end-to-end promotion lifecycle with stable catchup", () => {
+      const result = validateWorkloadLifecycle({
+        canaryWorkloadDeployed: true,
+        canaryWorkloadHealthy: true,
+        canaryWeights: [5, 25, 100],
+        stableWorkloadPromoted: true,
+        outcome: "promoted"
+      });
+      expect(result.valid).toBe(true);
+      expect(result.error).toBeUndefined();
     });
   });
 
@@ -266,14 +348,19 @@ describe("Production Release, Canary Gates, and Rollback Domain (M5-07 / #181, #
       const record = createProductionDeploymentRecord({
         sourceSha: sha,
         imageDigests: dummyDigests,
+        expectedDigests: dummyDigests,
+        deployedDigests: dummyDigests,
+        workloadVerified: true,
         actor: "release-engineer",
         environment: "production",
         canaryWeights: [5, 25, 100],
         migrationApplied: true,
         gates: [
           { name: "provenance_sbom", passed: true, timestamp: "2026-09-03T10:00:00Z" },
+          { name: "canary_workload_deployed", passed: true, timestamp: "2026-09-03T10:05:00Z" },
           { name: "canary_5pct", passed: true, timestamp: "2026-09-03T10:15:00Z" },
-          { name: "canary_25pct", passed: true, timestamp: "2026-09-03T10:45:00Z" }
+          { name: "canary_25pct", passed: true, timestamp: "2026-09-03T10:45:00Z" },
+          { name: "stable_workload_promoted", passed: true, timestamp: "2026-09-03T11:00:00Z" }
         ],
         outcome: "promoted"
       });
@@ -283,6 +370,9 @@ describe("Production Release, Canary Gates, and Rollback Domain (M5-07 / #181, #
       expect(record.actor).toBe("release-engineer");
       expect(record.canaryWeights).toEqual([5, 25, 100]);
       expect(record.outcome).toBe("promoted");
+      expect(record.workloadVerified).toBe(true);
+      expect(record.expectedDigests).toBeDefined();
+      expect(record.deployedDigests).toBeDefined();
       expect(record.deployedAt).toBeDefined();
     });
 

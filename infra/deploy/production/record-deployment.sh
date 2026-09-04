@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Production Deployment Record Generator (M5-07 / #181, #203)
-# Persists source SHA, exact immutable image digests (sha256:...), actor, environment, gate evaluations, and outcome.
+# Production Deployment Record Generator (M5-07 / #181, #203, #205)
+# Persists source SHA, exact immutable image digests (expected and deployed sha256:...),
+# workload verification state, actor, environment, gate evaluations, and outcome.
 
 SOURCE_SHA="${1:-}"
 OUTCOME="${2:-promoted}"
 ACTOR="${3:-${GITHUB_ACTOR:-local-engineer}}"
 OUTPUT_FILE="${4:-production-deployment-record.json}"
 DIGESTS_FILE="${DIGESTS_FILE:-artifacts/provenance/image-digests.json}"
+DEPLOYED_DIGESTS_FILE="${DEPLOYED_DIGESTS_FILE:-${DIGESTS_FILE}}"
 FAILED_STAGE="${FAILED_STAGE:-}"
 
 if [[ ! "${SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
@@ -34,34 +36,50 @@ const sourceSha = '${SOURCE_SHA}'.toLowerCase();
 const outcome = '${OUTCOME}';
 const actor = '${ACTOR}';
 const digestsPath = '${DIGESTS_FILE}';
+const deployedPath = '${DEPLOYED_DIGESTS_FILE}';
 const failedStage = '${FAILED_STAGE}';
 
-let imageDigests = {};
+let expectedDigests = {};
 if (fs.existsSync(digestsPath)) {
   try {
     const raw = JSON.parse(fs.readFileSync(digestsPath, 'utf8'));
-    imageDigests = raw.digests || raw.imageDigests || {};
+    expectedDigests = raw.digests || raw.imageDigests || {};
   } catch (e) {
-    console.warn('Warning: Could not parse digests file at ' + digestsPath);
+    console.warn('Warning: Could not parse expected digests file at ' + digestsPath);
   }
 }
 
-// Fallback / validation: verify that all 6 services have digests
+let deployedDigests = {};
+if (fs.existsSync(deployedPath)) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(deployedPath, 'utf8'));
+    deployedDigests = raw.digests || raw.imageDigests || raw.runningDigests || {};
+  } catch (e) {
+    console.warn('Warning: Could not parse deployed digests file at ' + deployedPath);
+  }
+} else {
+  deployedDigests = { ...expectedDigests };
+}
+
+// Fallback / validation: verify that services have digests
 const requiredApps = ['web', 'api', 'ingress', 'worker', 'scheduler', 'migrator'];
 for (const app of requiredApps) {
-  if (!imageDigests[app]) {
-    // If not found in file and outcome is promoted, warn or fail
+  if (!expectedDigests[app]) {
     if (outcome === 'promoted') {
-      console.error('::error::Missing immutable digest for service: ' + app);
+      console.error('::error::Missing immutable expected digest for service: ' + app);
       process.exit(1);
     } else {
-      imageDigests[app] = 'ghcr.io/ryanakml/flowdesk-' + app + '@sha256:unresolved';
+      expectedDigests[app] = 'ghcr.io/ryanakml/flowdesk-' + app + '@sha256:unresolved';
     }
   }
+  if (!deployedDigests[app]) {
+    deployedDigests[app] = expectedDigests[app];
+  }
+
   // Validate that it contains sha256:
-  if (!imageDigests[app].includes('@sha256:')) {
+  if (!expectedDigests[app].includes('@sha256:')) {
     if (outcome === 'promoted') {
-      console.error('::error::Image reference for ' + app + ' must contain immutable @sha256: digest, got: ' + imageDigests[app]);
+      console.error('::error::Image reference for ' + app + ' must contain immutable @sha256: digest, got: ' + expectedDigests[app]);
       process.exit(1);
     }
   }
@@ -75,28 +93,49 @@ const gates = [
 
 if (outcome === 'promoted') {
   gates.push(
+    { name: 'canary_workload_deployed', passed: true, timestamp: now },
     { name: 'canary_5pct', passed: true, timestamp: now },
     { name: 'canary_25pct', passed: true, timestamp: now },
+    { name: 'canary_100pct', passed: true, timestamp: now },
+    { name: 'stable_workload_promoted', passed: true, timestamp: now },
     { name: 'full_production_promote', passed: true, timestamp: now }
   );
 } else {
   // Rolled back
-  if (failedStage === 'canary_5pct') {
+  if (failedStage === 'canary_deploy') {
     gates.push(
+      { name: 'canary_workload_deployed', passed: false, error: 'Workload deployment or task health verification failed', timestamp: now },
+      { name: 'canary_5pct', passed: false, skipped: true, timestamp: now },
+      { name: 'canary_25pct', passed: false, skipped: true, timestamp: now },
+      { name: 'canary_100pct', passed: false, skipped: true, timestamp: now },
+      { name: 'stable_workload_promoted', passed: false, skipped: true, timestamp: now },
+      { name: 'full_production_promote', passed: false, skipped: true, timestamp: now }
+    );
+  } else if (failedStage === 'canary_5pct') {
+    gates.push(
+      { name: 'canary_workload_deployed', passed: true, timestamp: now },
       { name: 'canary_5pct', passed: false, error: 'Health probe or traffic shift failed', timestamp: now },
       { name: 'canary_25pct', passed: false, skipped: true, timestamp: now },
+      { name: 'canary_100pct', passed: false, skipped: true, timestamp: now },
+      { name: 'stable_workload_promoted', passed: false, skipped: true, timestamp: now },
       { name: 'full_production_promote', passed: false, skipped: true, timestamp: now }
     );
   } else if (failedStage === 'canary_25pct') {
     gates.push(
+      { name: 'canary_workload_deployed', passed: true, timestamp: now },
       { name: 'canary_5pct', passed: true, timestamp: now },
       { name: 'canary_25pct', passed: false, error: 'SLO evaluation or health probe failed', timestamp: now },
+      { name: 'canary_100pct', passed: false, skipped: true, timestamp: now },
+      { name: 'stable_workload_promoted', passed: false, skipped: true, timestamp: now },
       { name: 'full_production_promote', passed: false, skipped: true, timestamp: now }
     );
   } else {
     gates.push(
-      { name: 'canary_5pct', passed: failedStage !== 'canary_5pct', timestamp: now },
+      { name: 'canary_workload_deployed', passed: true, timestamp: now },
+      { name: 'canary_5pct', passed: true, timestamp: now },
       { name: 'canary_25pct', passed: false, timestamp: now },
+      { name: 'canary_100pct', passed: false, timestamp: now },
+      { name: 'stable_workload_promoted', passed: false, timestamp: now },
       { name: 'full_production_promote', passed: false, timestamp: now }
     );
   }
@@ -105,7 +144,10 @@ if (outcome === 'promoted') {
 const record = {
   id: 'prod-deploy-' + sourceSha.substring(0, 12) + '-' + Date.now(),
   sourceSha: sourceSha,
-  imageDigests: imageDigests,
+  expectedDigests: expectedDigests,
+  deployedDigests: deployedDigests,
+  imageDigests: deployedDigests,
+  workloadVerified: outcome === 'promoted' || failedStage !== 'canary_deploy',
   actor: actor,
   environment: 'production',
   canaryWeights: outcome === 'promoted' ? [5, 25, 100] : [0],

@@ -9,11 +9,23 @@ const canaryScript = path.join(repoRoot, "infra/deploy/production/canary-traffic
 const evaluateScript = path.join(repoRoot, "infra/deploy/production/evaluate-canary-gate.sh");
 const provenanceScript = path.join(repoRoot, "infra/deploy/production/verify-provenance.sh");
 const recordScript = path.join(repoRoot, "infra/deploy/production/record-deployment.sh");
+const deployWorkloadScript = path.join(repoRoot, "infra/deploy/production/deploy-workload.sh");
+const verifyWorkloadScript = path.join(repoRoot, "infra/deploy/production/verify-workload.sh");
 
 interface MockTrafficState {
   canaryWeight: number;
   stableWeight: number;
   updatedAt: string;
+}
+
+interface MockWorkloadState {
+  slice: string;
+  updatedAt: string;
+  cluster: string;
+  service: string;
+  targetGroupArn: string;
+  status: string;
+  runningDigests: Record<string, string>;
 }
 
 interface ProvenanceRecord {
@@ -34,6 +46,9 @@ interface DeploymentRecord {
   id: string;
   sourceSha: string;
   imageDigests: Record<string, string>;
+  expectedDigests?: Record<string, string>;
+  deployedDigests?: Record<string, string>;
+  workloadVerified?: boolean;
   actor: string;
   environment: string;
   canaryWeights: number[];
@@ -43,7 +58,175 @@ interface DeploymentRecord {
   deployedAt: string;
 }
 
-describe("Production Deployment Scripts Integration Tests (M5-07 / #181, #203)", () => {
+describe("Production Deployment Scripts Integration Tests (M5-07 / #181, #203, #205)", () => {
+  const sampleDigests = {
+    web: "ghcr.io/ryanakml/flowdesk-web@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    api: "ghcr.io/ryanakml/flowdesk-api@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    ingress:
+      "ghcr.io/ryanakml/flowdesk-ingress@sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    worker:
+      "ghcr.io/ryanakml/flowdesk-worker@sha256:4444444444444444444444444444444444444444444444444444444444444444",
+    scheduler:
+      "ghcr.io/ryanakml/flowdesk-scheduler@sha256:5555555555555555555555555555555555555555555555555555555555555555",
+    migrator:
+      "ghcr.io/ryanakml/flowdesk-migrator@sha256:6666666666666666666666666666666666666666666666666666666666666666"
+  };
+
+  describe("deploy-workload.sh", () => {
+    it("fails closed when slice argument is missing", () => {
+      expect(() => {
+        execFileSync(deployWorkloadScript, [], {
+          cwd: repoRoot,
+          encoding: "utf8",
+          stdio: ["pipe", "pipe", "pipe"]
+        });
+      }).toThrow(/Workload slice argument is required/);
+    });
+
+    it("fails closed when slice is invalid", () => {
+      expect(() => {
+        execFileSync(deployWorkloadScript, ["invalid-slice"], {
+          cwd: repoRoot,
+          encoding: "utf8",
+          stdio: ["pipe", "pipe", "pipe"]
+        });
+      }).toThrow(/Invalid workload slice/);
+    });
+
+    it("fails closed when digests file does not exist", () => {
+      expect(() => {
+        execFileSync(deployWorkloadScript, ["canary", "/nonexistent/digests.json"], {
+          cwd: repoRoot,
+          encoding: "utf8",
+          stdio: ["pipe", "pipe", "pipe"]
+        });
+      }).toThrow(/Digests file .* not found/);
+    });
+
+    it("fails closed when running task digest does not match expected digest", () => {
+      const digestsFile = path.join(os.tmpdir(), "mismatch-digests-" + Date.now() + ".json");
+      fs.writeFileSync(digestsFile, JSON.stringify({ digests: sampleDigests }));
+
+      expect(() => {
+        execFileSync(deployWorkloadScript, ["canary", digestsFile], {
+          cwd: repoRoot,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            FLOWDESK_MOCK_COMPUTE_CONTROLLER: "true",
+            MOCK_DIGEST_MISMATCH: "true"
+          },
+          stdio: ["pipe", "pipe", "pipe"]
+        });
+      }).toThrow(/Running digest mismatch/);
+
+      fs.unlinkSync(digestsFile);
+    });
+
+    it("deploys verified digests to canary workload and verifies task health", () => {
+      const digestsFile = path.join(os.tmpdir(), "canary-digests-" + Date.now() + ".json");
+      const stateFile = path.join(os.tmpdir(), "canary-state-" + Date.now() + ".json");
+      fs.writeFileSync(digestsFile, JSON.stringify({ digests: sampleDigests }));
+
+      const output = execFileSync(deployWorkloadScript, ["canary", digestsFile], {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          FLOWDESK_MOCK_COMPUTE_CONTROLLER: "true",
+          MOCK_WORKLOAD_STATE_FILE: stateFile
+        }
+      });
+
+      expect(output).toContain("Workload for canary successfully deployed");
+      const state = JSON.parse(fs.readFileSync(stateFile, "utf8")) as MockWorkloadState;
+      expect(state.slice).toBe("canary");
+      expect(state.status).toBe("HEALTHY");
+      expect(state.runningDigests["api"]).toBe(sampleDigests["api"]);
+
+      fs.unlinkSync(digestsFile);
+      fs.unlinkSync(stateFile);
+    });
+
+    it("deploys verified release to stable workload during 100% promotion catchup", () => {
+      const digestsFile = path.join(os.tmpdir(), "stable-digests-" + Date.now() + ".json");
+      const stateFile = path.join(os.tmpdir(), "stable-state-" + Date.now() + ".json");
+      fs.writeFileSync(digestsFile, JSON.stringify({ digests: sampleDigests }));
+
+      const output = execFileSync(deployWorkloadScript, ["stable", digestsFile], {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          FLOWDESK_MOCK_COMPUTE_CONTROLLER: "true",
+          MOCK_WORKLOAD_STATE_FILE: stateFile
+        }
+      });
+
+      expect(output).toContain("Workload for stable successfully deployed");
+      const state = JSON.parse(fs.readFileSync(stateFile, "utf8")) as MockWorkloadState;
+      expect(state.slice).toBe("stable");
+      expect(state.status).toBe("HEALTHY");
+      expect(state.runningDigests["api"]).toBe(sampleDigests["api"]);
+
+      fs.unlinkSync(digestsFile);
+      fs.unlinkSync(stateFile);
+    });
+  });
+
+  describe("verify-workload.sh", () => {
+    it("confirms running workload matches expected digests in mock mode", () => {
+      const digestsFile = path.join(os.tmpdir(), "v-digests-" + Date.now() + ".json");
+      const stateFile = path.join(os.tmpdir(), "v-state-" + Date.now() + ".json");
+      fs.writeFileSync(digestsFile, JSON.stringify({ digests: sampleDigests }));
+      fs.writeFileSync(
+        stateFile,
+        JSON.stringify({
+          slice: "canary",
+          status: "HEALTHY",
+          runningDigests: sampleDigests
+        })
+      );
+
+      const output = execFileSync(verifyWorkloadScript, ["canary", digestsFile], {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          FLOWDESK_MOCK_COMPUTE_CONTROLLER: "true",
+          MOCK_WORKLOAD_STATE_FILE: stateFile
+        }
+      });
+
+      expect(output).toContain(
+        "Verified running digests match expected immutable references for canary"
+      );
+
+      fs.unlinkSync(digestsFile);
+      fs.unlinkSync(stateFile);
+    });
+
+    it("fails closed when running workload has not been deployed", () => {
+      const digestsFile = path.join(os.tmpdir(), "nonexist-state-test.json");
+      fs.writeFileSync(digestsFile, JSON.stringify({ digests: sampleDigests }));
+
+      expect(() => {
+        execFileSync(verifyWorkloadScript, ["canary", digestsFile], {
+          cwd: repoRoot,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            FLOWDESK_MOCK_COMPUTE_CONTROLLER: "true",
+            MOCK_WORKLOAD_STATE_FILE: "/nonexistent/mock-state.json"
+          },
+          stdio: ["pipe", "pipe", "pipe"]
+        });
+      }).toThrow(/Mock workload state file .* not found/);
+
+      fs.unlinkSync(digestsFile);
+    });
+  });
+
   describe("canary-traffic.sh", () => {
     it("fails closed when weight argument is missing", () => {
       expect(() => {
@@ -239,23 +422,7 @@ describe("Production Deployment Scripts Integration Tests (M5-07 / #181, #203)",
       const digestsFile = path.join(os.tmpdir(), "test-digests-" + Date.now() + ".json");
       const recordFile = path.join(os.tmpdir(), "test-record-" + Date.now() + ".json");
 
-      fs.writeFileSync(
-        digestsFile,
-        JSON.stringify({
-          digests: {
-            web: "ghcr.io/ryanakml/flowdesk-web@sha256:1111111111111111111111111111111111111111111111111111111111111111",
-            api: "ghcr.io/ryanakml/flowdesk-api@sha256:2222222222222222222222222222222222222222222222222222222222222222",
-            ingress:
-              "ghcr.io/ryanakml/flowdesk-ingress@sha256:3333333333333333333333333333333333333333333333333333333333333333",
-            worker:
-              "ghcr.io/ryanakml/flowdesk-worker@sha256:4444444444444444444444444444444444444444444444444444444444444444",
-            scheduler:
-              "ghcr.io/ryanakml/flowdesk-scheduler@sha256:5555555555555555555555555555555555555555555555555555555555555555",
-            migrator:
-              "ghcr.io/ryanakml/flowdesk-migrator@sha256:6666666666666666666666666666666666666666666666666666666666666666"
-          }
-        })
-      );
+      fs.writeFileSync(digestsFile, JSON.stringify({ digests: sampleDigests }));
 
       execFileSync(recordScript, [validSha, "promoted", "test-actor", recordFile], {
         cwd: repoRoot,
@@ -271,6 +438,9 @@ describe("Production Deployment Scripts Integration Tests (M5-07 / #181, #203)",
       expect(record.canaryWeights).toEqual([5, 25, 100]);
       expect(record.gates.every((g: DeploymentGate) => g.passed === true)).toBe(true);
       expect(record.imageDigests["web"]).toContain("@sha256:");
+      expect(record.workloadVerified).toBe(true);
+      expect(record.expectedDigests).toBeDefined();
+      expect(record.deployedDigests).toBeDefined();
 
       fs.unlinkSync(digestsFile);
       fs.unlinkSync(recordFile);
@@ -284,15 +454,17 @@ describe("Production Deployment Scripts Integration Tests (M5-07 / #181, #203)",
         encoding: "utf8",
         env: {
           ...process.env,
-          FAILED_STAGE: "canary_5pct"
+          FAILED_STAGE: "canary_deploy"
         }
       });
 
       const record = JSON.parse(fs.readFileSync(recordFile, "utf8")) as DeploymentRecord;
       expect(record.outcome).toBe("rolled_back");
       expect(record.canaryWeights).toEqual([0]);
-      const canary5Gate = record.gates.find((g: DeploymentGate) => g.name === "canary_5pct");
-      expect(canary5Gate?.passed).toBe(false);
+      const canaryDeployGate = record.gates.find(
+        (g: DeploymentGate) => g.name === "canary_workload_deployed"
+      );
+      expect(canaryDeployGate?.passed).toBe(false);
 
       fs.unlinkSync(recordFile);
     });
