@@ -50,22 +50,21 @@ jobs:
             exit 1
           fi
 
-      - name: Verify Immutable Image Manifests in GHCR
+      - name: Verify Immutable Image Manifests & Extract Digests
         env:
           GHCR_TOKEN: ${{ github.token }}
         run: |
           SHA="${{ github.event.inputs.source_sha }}"
-          echo "Verifying published image manifests for SHA: ${SHA}..."
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
-          for app in web api ingress worker scheduler migrator; do
-            image="ghcr.io/ryanakml/flowdesk-${app}:${SHA}"
-            echo "Checking ${image}..."
-            docker manifest inspect "${image}" >/dev/null 2>&1 || {
-              echo "::error::Image ${image} not found in container registry or was not proven in staging."
-              exit 1
-            }
-          done
-          echo "All 6 immutable release images verified in registry."
+          chmod +x infra/deploy/production/verify-provenance.sh
+          ./infra/deploy/production/verify-provenance.sh "${SHA}" "artifacts/provenance/image-digests.json"
+
+      - name: Upload Verified Image Digests
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: flowdesk-image-digests-${{ github.event.inputs.source_sha }}
+          path: artifacts/provenance/image-digests.json
+          retention-days: 90
 
       - name: Validate Database Expand Compatibility
         run: |
@@ -89,30 +88,148 @@ jobs:
     needs: validate-provenance
     runs-on: ubuntu-24.04
     environment: production
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout Source
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
           ref: ${{ github.event.inputs.source_sha }}
 
-      - name: Deploy Canary Slice (5% Weight)
-        run: |
-          chmod +x infra/deploy/production/canary-traffic.sh
-          ./infra/deploy/production/canary-traffic.sh 5 "http://127.0.0.1:4000"
+      - name: Download Verified Image Digests
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: flowdesk-image-digests-${{ github.event.inputs.source_sha }}
+          path: artifacts/provenance/
 
-      - name: Automated Rollback on Canary Failure
-        if: failure()
+      - name: Configure AWS Credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d47d11f562b7db7 # v4.1.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME || vars.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
+          role-session-name: FlowDesk-Production-Canary-5pct
+
+      - name: Shift Traffic to Canary (5% Weight)
+        env:
+          PROD_LISTENER_ARN: ${{ secrets.PROD_LISTENER_ARN || vars.PROD_LISTENER_ARN }}
+          PROD_RULE_ARN: ${{ secrets.PROD_RULE_ARN || vars.PROD_RULE_ARN }}
+          PROD_STABLE_TG_ARN: ${{ secrets.PROD_STABLE_TG_ARN || vars.PROD_STABLE_TG_ARN }}
+          PROD_CANARY_TG_ARN: ${{ secrets.PROD_CANARY_TG_ARN || vars.PROD_CANARY_TG_ARN }}
+          AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
         run: |
-          echo "Canary 5% health probe or deployment failed. Executing immediate rollback..."
           chmod +x infra/deploy/production/canary-traffic.sh
-          ./infra/deploy/production/canary-traffic.sh 0 "http://127.0.0.1:4000"
+          ./infra/deploy/production/canary-traffic.sh 5
+
+      - name: Evaluate Canary Health & SLO Gate (5% Slice)
+        env:
+          CANARY_ENDPOINT_URL: ${{ vars.CANARY_ENDPOINT_URL || secrets.CANARY_ENDPOINT_URL }}
+          PROMETHEUS_URL: ${{ vars.PROMETHEUS_URL || secrets.PROMETHEUS_URL }}
+          PROD_CANARY_TG_ARN: ${{ secrets.PROD_CANARY_TG_ARN || vars.PROD_CANARY_TG_ARN }}
+          AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
+          EVALUATE_CLOUDWATCH_METRICS: "true"
+        run: |
+          chmod +x infra/deploy/production/evaluate-canary-gate.sh
+          ./infra/deploy/production/evaluate-canary-gate.sh 5
+
+      - name: Automated Rollback on Canary 5% Failure
+        if: failure()
+        env:
+          PROD_LISTENER_ARN: ${{ secrets.PROD_LISTENER_ARN || vars.PROD_LISTENER_ARN }}
+          PROD_RULE_ARN: ${{ secrets.PROD_RULE_ARN || vars.PROD_RULE_ARN }}
+          PROD_STABLE_TG_ARN: ${{ secrets.PROD_STABLE_TG_ARN || vars.PROD_STABLE_TG_ARN }}
+          PROD_CANARY_TG_ARN: ${{ secrets.PROD_CANARY_TG_ARN || vars.PROD_CANARY_TG_ARN }}
+          AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
+          FAILED_STAGE: "canary_5pct"
+          DIGESTS_FILE: "artifacts/provenance/image-digests.json"
+        run: |
+          echo "Canary 5% health probe or SLO gate failed. Executing immediate rollback to stable slice..."
+          chmod +x infra/deploy/production/canary-traffic.sh
+          ./infra/deploy/production/canary-traffic.sh 0
           chmod +x infra/deploy/production/record-deployment.sh
-          ./infra/deploy/production/record-deployment.sh "${{ github.event.inputs.source_sha }}" "rolled_back" "${{ github.actor }}"
+          ./infra/deploy/production/record-deployment.sh "${{ github.event.inputs.source_sha }}" "rolled_back" "${{ github.actor }}" "production-deployment-record.json"
+
+      - name: Upload Rollback Deployment Record
+        if: failure()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: production-deployment-${{ github.event.inputs.source_sha }}-rollback-5pct
+          path: production-deployment-record.json
+          retention-days: 90
 
   canary-deployment-25pct:
     name: Canary Slice (25% Traffic & SLO Gate)
     needs: canary-deployment-5pct
+    runs-on: ubuntu-24.04
+    environment: production
+    timeout-minutes: 25
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          ref: ${{ github.event.inputs.source_sha }}
+
+      - name: Download Verified Image Digests
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: flowdesk-image-digests-${{ github.event.inputs.source_sha }}
+          path: artifacts/provenance/
+
+      - name: Configure AWS Credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d47d11f562b7db7 # v4.1.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME || vars.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
+          role-session-name: FlowDesk-Production-Canary-25pct
+
+      - name: Advance Canary Slice (25% Weight)
+        env:
+          PROD_LISTENER_ARN: ${{ secrets.PROD_LISTENER_ARN || vars.PROD_LISTENER_ARN }}
+          PROD_RULE_ARN: ${{ secrets.PROD_RULE_ARN || vars.PROD_RULE_ARN }}
+          PROD_STABLE_TG_ARN: ${{ secrets.PROD_STABLE_TG_ARN || vars.PROD_STABLE_TG_ARN }}
+          PROD_CANARY_TG_ARN: ${{ secrets.PROD_CANARY_TG_ARN || vars.PROD_CANARY_TG_ARN }}
+          AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
+        run: |
+          chmod +x infra/deploy/production/canary-traffic.sh
+          ./infra/deploy/production/canary-traffic.sh 25
+
+      - name: Evaluate Canary Health & SLO Gate (25% Slice)
+        env:
+          CANARY_ENDPOINT_URL: ${{ vars.CANARY_ENDPOINT_URL || secrets.CANARY_ENDPOINT_URL }}
+          PROMETHEUS_URL: ${{ vars.PROMETHEUS_URL || secrets.PROMETHEUS_URL }}
+          PROD_CANARY_TG_ARN: ${{ secrets.PROD_CANARY_TG_ARN || vars.PROD_CANARY_TG_ARN }}
+          AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
+          EVALUATE_CLOUDWATCH_METRICS: "true"
+        run: |
+          chmod +x infra/deploy/production/evaluate-canary-gate.sh
+          ./infra/deploy/production/evaluate-canary-gate.sh 25
+
+      - name: Automated Rollback on Canary 25% Failure
+        if: failure()
+        env:
+          PROD_LISTENER_ARN: ${{ secrets.PROD_LISTENER_ARN || vars.PROD_LISTENER_ARN }}
+          PROD_RULE_ARN: ${{ secrets.PROD_RULE_ARN || vars.PROD_RULE_ARN }}
+          PROD_STABLE_TG_ARN: ${{ secrets.PROD_STABLE_TG_ARN || vars.PROD_STABLE_TG_ARN }}
+          PROD_CANARY_TG_ARN: ${{ secrets.PROD_CANARY_TG_ARN || vars.PROD_CANARY_TG_ARN }}
+          AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
+          FAILED_STAGE: "canary_25pct"
+          DIGESTS_FILE: "artifacts/provenance/image-digests.json"
+        run: |
+          echo "Canary 25% SLO or health probe failed. Executing immediate rollback to stable slice..."
+          chmod +x infra/deploy/production/canary-traffic.sh
+          ./infra/deploy/production/canary-traffic.sh 0
+          chmod +x infra/deploy/production/record-deployment.sh
+          ./infra/deploy/production/record-deployment.sh "${{ github.event.inputs.source_sha }}" "rolled_back" "${{ github.actor }}" "production-deployment-record.json"
+
+      - name: Upload Rollback Deployment Record
+        if: failure()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: production-deployment-${{ github.event.inputs.source_sha }}-rollback-25pct
+          path: production-deployment-record.json
+          retention-days: 90
+
+  full-production-promote:
+    name: Full Production Promotion (100% Traffic)
+    needs: canary-deployment-25pct
     runs-on: ubuntu-24.04
     environment: production
     timeout-minutes: 20
@@ -122,38 +239,33 @@ jobs:
         with:
           ref: ${{ github.event.inputs.source_sha }}
 
-      - name: Advance Canary Slice (25% Weight)
-        run: |
-          chmod +x infra/deploy/production/canary-traffic.sh
-          ./infra/deploy/production/canary-traffic.sh 25 "http://127.0.0.1:4000"
-
-      - name: Automated Rollback on Canary 25% Failure
-        if: failure()
-        run: |
-          echo "Canary 25% SLO or health probe failed. Executing immediate rollback..."
-          chmod +x infra/deploy/production/canary-traffic.sh
-          ./infra/deploy/production/canary-traffic.sh 0 "http://127.0.0.1:4000"
-          chmod +x infra/deploy/production/record-deployment.sh
-          ./infra/deploy/production/record-deployment.sh "${{ github.event.inputs.source_sha }}" "rolled_back" "${{ github.actor }}"
-
-  full-production-promote:
-    name: Full Production Promotion (100% Traffic)
-    needs: canary-deployment-25pct
-    runs-on: ubuntu-24.04
-    environment: production
-    timeout-minutes: 15
-    steps:
-      - name: Checkout Source
-        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+      - name: Download Verified Image Digests
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
-          ref: ${{ github.event.inputs.source_sha }}
+          name: flowdesk-image-digests-${{ github.event.inputs.source_sha }}
+          path: artifacts/provenance/
+
+      - name: Configure AWS Credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@ececac1a45f3b08a01d2dd070d47d11f562b7db7 # v4.1.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME || vars.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
+          role-session-name: FlowDesk-Production-Promote-100pct
 
       - name: Promote Traffic to 100%
+        env:
+          PROD_LISTENER_ARN: ${{ secrets.PROD_LISTENER_ARN || vars.PROD_LISTENER_ARN }}
+          PROD_RULE_ARN: ${{ secrets.PROD_RULE_ARN || vars.PROD_RULE_ARN }}
+          PROD_STABLE_TG_ARN: ${{ secrets.PROD_STABLE_TG_ARN || vars.PROD_STABLE_TG_ARN }}
+          PROD_CANARY_TG_ARN: ${{ secrets.PROD_CANARY_TG_ARN || vars.PROD_CANARY_TG_ARN }}
+          AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
         run: |
           chmod +x infra/deploy/production/canary-traffic.sh
-          ./infra/deploy/production/canary-traffic.sh 100 "http://127.0.0.1:4000"
+          ./infra/deploy/production/canary-traffic.sh 100
 
       - name: Generate Production Deployment Record
+        env:
+          DIGESTS_FILE: "artifacts/provenance/image-digests.json"
         run: |
           chmod +x infra/deploy/production/record-deployment.sh
           ./infra/deploy/production/record-deployment.sh "${{ github.event.inputs.source_sha }}" "promoted" "${{ github.actor }}" "production-deployment-record.json"

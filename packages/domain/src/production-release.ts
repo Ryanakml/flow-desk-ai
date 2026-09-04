@@ -1,5 +1,5 @@
 /**
- * Production Release, Canary Health Gates, and Rollback Domain Rules (M5-07 / #181)
+ * Production Release, Canary Health Gates, and Rollback Domain Rules (M5-07 / #181, #203)
  */
 
 export interface CanaryHealthMetrics {
@@ -35,7 +35,13 @@ export interface ProductionDeploymentInput {
   environment: "production";
   canaryWeights: number[];
   migrationApplied: boolean;
-  gates: Array<{ name: string; passed: boolean; timestamp: string }>;
+  gates: Array<{
+    name: string;
+    passed: boolean;
+    timestamp: string;
+    skipped?: boolean;
+    error?: string;
+  }>;
   outcome: "promoted" | "rolled_back";
 }
 
@@ -47,7 +53,13 @@ export interface ProductionDeploymentRecord {
   environment: "production";
   canaryWeights: number[];
   migrationApplied: boolean;
-  gates: Array<{ name: string; passed: boolean; timestamp: string }>;
+  gates: Array<{
+    name: string;
+    passed: boolean;
+    timestamp: string;
+    skipped?: boolean;
+    error?: string;
+  }>;
   outcome: "promoted" | "rolled_back";
   deployedAt: string;
 }
@@ -83,6 +95,80 @@ export function validatePromotionImageTag(tag: string): { valid: boolean; error?
   }
 
   return { valid: true };
+}
+
+/**
+ * Validates that a container image reference is pinned by an immutable sha256 digest.
+ * Format must end with @sha256:<64-hex-characters>.
+ */
+export function validateImageDigest(imageRef: string): { valid: boolean; error?: string } {
+  if (!imageRef || typeof imageRef !== "string") {
+    return { valid: false, error: "Image reference must be a non-empty string." };
+  }
+
+  const trimmed = imageRef.trim();
+  const digestMatch = trimmed.match(/@sha256:([0-9a-f]{64})$/i);
+  if (!digestMatch) {
+    return {
+      valid: false,
+      error: `Image reference '${trimmed}' is not pinned by an immutable sha256 digest (expected format: <image>@sha256:<64-hex-chars>).`
+    };
+  }
+
+  return { valid: true };
+}
+
+export interface ProductionEnvironmentConfig {
+  listenerArn?: string;
+  ruleArn?: string;
+  stableTgArn?: string;
+  canaryTgArn?: string;
+  canaryEndpointUrl?: string;
+  isMock?: boolean;
+}
+
+/**
+ * Enforces fail-closed validation for production environment configuration.
+ * Rejects missing infrastructure ARNs, placeholder values, or localhost endpoints in real production.
+ */
+export function validateProductionEnvironmentConfig(config: ProductionEnvironmentConfig): {
+  valid: boolean;
+  errors: string[];
+} {
+  const errors: string[] = [];
+
+  if (config.isMock) {
+    return { valid: true, errors: [] };
+  }
+
+  if (!config.listenerArn && !config.ruleArn) {
+    errors.push(
+      "Missing required production listener or rule ARN (PROD_LISTENER_ARN or PROD_RULE_ARN)."
+    );
+  }
+
+  if (!config.stableTgArn) {
+    errors.push("Missing required production stable target group ARN (PROD_STABLE_TG_ARN).");
+  }
+
+  if (!config.canaryTgArn) {
+    errors.push("Missing required production canary target group ARN (PROD_CANARY_TG_ARN).");
+  }
+
+  if (config.canaryEndpointUrl !== undefined) {
+    if (!config.canaryEndpointUrl) {
+      errors.push("CANARY_ENDPOINT_URL is empty.");
+    } else if (/^https?:\/\/(127\.0\.0\.1|localhost)(:[0-9]+)?/i.test(config.canaryEndpointUrl)) {
+      errors.push(
+        `CANARY_ENDPOINT_URL cannot point to localhost in production: ${config.canaryEndpointUrl}`
+      );
+    }
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors
+  };
 }
 
 /**
@@ -237,6 +323,16 @@ export function createProductionDeploymentRecord(
   const validation = validatePromotionImageTag(input.sourceSha);
   if (!validation.valid) {
     throw new Error(`Cannot record production deployment: ${validation.error}`);
+  }
+
+  // Validate that image digests are pinned if outcome is promoted
+  if (input.outcome === "promoted") {
+    for (const [service, ref] of Object.entries(input.imageDigests)) {
+      const digestVal = validateImageDigest(ref);
+      if (!digestVal.valid) {
+        throw new Error(`Invalid immutable image digest for ${service}: ${digestVal.error}`);
+      }
+    }
   }
 
   return {
