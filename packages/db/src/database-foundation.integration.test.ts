@@ -1950,16 +1950,14 @@ describe("database foundation", () => {
     const orgIdB = "22222222-2222-4222-8222-222222222179";
 
     try {
-      await admin.query("INSERT INTO flowdesk.organizations (id, name, slug) VALUES ($1, $2, $3)", [
-        orgIdA,
-        "Org Cost Test A",
-        "org-cost-test-a"
-      ]);
-      await admin.query("INSERT INTO flowdesk.organizations (id, name, slug) VALUES ($1, $2, $3)", [
-        orgIdB,
-        "Org Cost Test B",
-        "org-cost-test-b"
-      ]);
+      await admin.query(
+        "INSERT INTO flowdesk.organizations (id, slug, display_name) VALUES ($1, $2, $3)",
+        [orgIdA, "org-cost-test-a", "Org Cost Test A"]
+      );
+      await admin.query(
+        "INSERT INTO flowdesk.organizations (id, slug, display_name) VALUES ($1, $2, $3)",
+        [orgIdB, "org-cost-test-b", "Org Cost Test B"]
+      );
 
       const channelResA = await admin.query<{ id: string }>(
         `INSERT INTO flowdesk.channels (organization_id, type, phone_number_id, name)
