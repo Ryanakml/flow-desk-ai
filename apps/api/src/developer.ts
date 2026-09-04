@@ -8,16 +8,19 @@ import {
   listWebhookSubscriptions,
   createWebhookSubscription,
   deleteWebhookSubscription,
+  getWebhookSubscriptionById,
+  listWebhookDeliveries,
   recordAuditEvent,
   runInTenantTransaction
 } from "@flowdesk/db";
-import { generateApiKey } from "@flowdesk/security";
+import { generateApiKey, encryptWebhookSecret, validateWebhookUrl } from "@flowdesk/security";
 
 import { createRequireAuthMiddleware } from "./auth.js";
 import { createRequireOrgPermissionMiddleware } from "./organizations.js";
 
 export interface DeveloperRouterOptions {
   db: DbClient;
+  encryptionKey?: string;
 }
 
 function getParam(params: Record<string, string | string[] | undefined>, key: string): string {
@@ -229,7 +232,20 @@ export function createDeveloperRouter(options: DeveloperRouterOptions): Router {
         const subs = await runInTenantTransaction(options.db, { organizationId: orgId }, (db) =>
           listWebhookSubscriptions(db, orgId)
         );
-        return response.status(200).json(subs);
+        return response.status(200).json(
+          subs.map((s) => ({
+            id: s.id,
+            organizationId: s.organizationId,
+            name: s.name,
+            url: s.url,
+            secret: "whsec_****************",
+            events: s.events,
+            isActive: s.isActive,
+            verificationStatus: s.verificationStatus,
+            createdAt: s.createdAt,
+            updatedAt: s.updatedAt
+          }))
+        );
       } catch (err) {
         return sendProblem(
           response,
@@ -264,17 +280,35 @@ export function createDeveloperRouter(options: DeveloperRouterOptions): Router {
           ? eventsVal.filter((e): e is string => typeof e === "string")
           : ["*"];
 
-        if (!name || !url || !url.startsWith("http")) {
+        if (!name || !url) {
           return sendProblem(
             response,
             400,
             "BAD_REQUEST",
             "Invalid Webhook Subscription input",
-            "Missing or invalid required fields: name, url (must start with http)"
+            "Missing required fields: name, url"
           );
         }
 
-        const secret = `whsec_${randomBytes(16).toString("hex")}`;
+        try {
+          await validateWebhookUrl(url);
+        } catch (ssrfErr) {
+          return sendProblem(
+            response,
+            400,
+            "BAD_REQUEST",
+            "Invalid Webhook URL",
+            ssrfErr instanceof Error ? ssrfErr.message : "SSRF validation failed for target URL"
+          );
+        }
+
+        const rawSecret = `whsec_${randomBytes(16).toString("hex")}`;
+        const encryptionKey =
+          options.encryptionKey ??
+          process.env["ENCRYPTION_KEY"] ??
+          "flowdesk-local-dev-encryption-key-32b";
+        const encryptedSecret = encryptWebhookSecret(rawSecret, encryptionKey);
+
         const sub = await runInTenantTransaction(
           options.db,
           { organizationId: orgId },
@@ -283,8 +317,9 @@ export function createDeveloperRouter(options: DeveloperRouterOptions): Router {
               organizationId: orgId,
               name,
               url,
-              secret,
-              events
+              secret: encryptedSecret,
+              events,
+              verificationStatus: "unverified"
             });
 
             await recordAuditEvent(db, {
@@ -301,13 +336,124 @@ export function createDeveloperRouter(options: DeveloperRouterOptions): Router {
           }
         );
 
-        return response.status(201).json(sub);
+        return response.status(201).json({
+          ...sub,
+          secret: rawSecret
+        });
       } catch (err) {
         return sendProblem(
           response,
           500,
           "INTERNAL_ERROR",
           "Failed to create webhook subscription",
+          err instanceof Error ? err.message : "Internal error"
+        );
+      }
+    }
+  );
+
+  // POST /api/v1/organizations/:orgId/developer/webhooks/:webhookId/test
+  router.post(
+    "/webhooks/:webhookId/test",
+    requireAuth,
+    requireWritePermission,
+    async (request: Request, response: Response) => {
+      try {
+        const orgId = getParam(request.params, "orgId");
+        const webhookId = getParam(request.params, "webhookId");
+
+        const result = await runInTenantTransaction(
+          options.db,
+          { organizationId: orgId },
+          async (db) => {
+            const sub = await getWebhookSubscriptionById(db, webhookId, orgId);
+            if (!sub) return null;
+
+            const testEventId = `evt_test_${randomBytes(8).toString("hex")}`;
+            const testPayload = {
+              event: "endpoint.test",
+              timestamp: new Date().toISOString(),
+              organizationId: orgId,
+              subscriptionId: webhookId,
+              message: "FlowDesk developer webhook test ping"
+            };
+
+            await db.query(
+              `INSERT INTO flowdesk.outbox_events
+               (organization_id, aggregate_type, aggregate_id, event_type, schema_version, payload)
+               VALUES ($1, 'webhook_subscription', $2, 'developer.webhook.dispatch', 1, $3::jsonb)`,
+              [
+                orgId,
+                webhookId,
+                JSON.stringify({
+                  subscriptionId: webhookId,
+                  eventId: testEventId,
+                  eventType: "endpoint.test",
+                  payload: testPayload
+                })
+              ]
+            );
+
+            await recordAuditEvent(db, {
+              organizationId: orgId,
+              actorUserId: request.user?.id ?? "unknown",
+              action: "webhook_subscription.tested",
+              targetType: "webhook_subscription",
+              targetId: webhookId,
+              result: "allowed",
+              metadata: { eventId: testEventId }
+            });
+
+            return { enqueued: true, eventId: testEventId };
+          }
+        );
+
+        if (!result) {
+          return sendProblem(
+            response,
+            404,
+            "NOT_FOUND",
+            "Webhook subscription not found",
+            "Subscription does not exist"
+          );
+        }
+
+        return response.status(200).json(result);
+      } catch (err) {
+        return sendProblem(
+          response,
+          500,
+          "INTERNAL_ERROR",
+          "Failed to dispatch test webhook",
+          err instanceof Error ? err.message : "Internal error"
+        );
+      }
+    }
+  );
+
+  // GET /api/v1/organizations/:orgId/developer/webhooks/:webhookId/deliveries
+  router.get(
+    "/webhooks/:webhookId/deliveries",
+    requireAuth,
+    requireWritePermission,
+    async (request: Request, response: Response) => {
+      try {
+        const orgId = getParam(request.params, "orgId");
+        const webhookId = getParam(request.params, "webhookId");
+
+        const deliveries = await runInTenantTransaction(
+          options.db,
+          { organizationId: orgId },
+          (db) => listWebhookDeliveries(db, orgId, webhookId)
+        );
+
+        return response.status(200).json(deliveries);
+      } catch (err) {
+        return sendProblem(
+          response,
+          500,
+          "INTERNAL_ERROR",
+          "Failed to list webhook deliveries",
           err instanceof Error ? err.message : "Internal error"
         );
       }

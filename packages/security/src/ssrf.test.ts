@@ -3,6 +3,7 @@ import {
   isPrivateIpAddress,
   isBlockedHostname,
   validateUrlForIngestion,
+  validateWebhookUrl,
   fetchWithAntiSsrf,
   SsrfProtectionError
 } from "./ssrf.js";
@@ -140,6 +141,51 @@ describe("Anti-SSRF Security Pipeline", () => {
           customFetcher: mockFetcher
         })
       ).rejects.toThrow(SsrfProtectionError);
+    });
+  });
+
+  describe("validateWebhookUrl", () => {
+    it("allows valid public HTTPS URLs", async () => {
+      const parsed = await validateWebhookUrl("https://flowdesk.dev/webhook-receiver");
+      expect(parsed.hostname).toBe("flowdesk.dev");
+      expect(parsed.protocol).toBe("https:");
+    });
+
+    it("rejects non-HTTP protocols", async () => {
+      await expect(validateWebhookUrl("ftp://example.com/webhook")).rejects.toThrow(
+        SsrfProtectionError
+      );
+    });
+
+    it("enforces HTTPS outside test/dev override", async () => {
+      await expect(
+        validateWebhookUrl("http://example.com/webhook", {
+          allowHttpForLocal: false,
+          allowLoopbackForTest: false
+        })
+      ).rejects.toThrow(/HTTPS protocol/);
+    });
+
+    it("blocks private IPs and AWS metadata", async () => {
+      await expect(
+        validateWebhookUrl("https://169.254.169.254/webhook", {
+          allowLoopbackForTest: false
+        })
+      ).rejects.toThrow(/SSRF protection policy/);
+
+      await expect(
+        validateWebhookUrl("https://10.0.0.1/webhook", {
+          allowLoopbackForTest: false
+        })
+      ).rejects.toThrow(/SSRF protection policy/);
+    });
+
+    it("allows loopback when allowLoopbackForTest is true", async () => {
+      const parsed = await validateWebhookUrl("http://127.0.0.1:9999/webhook", {
+        allowLoopbackForTest: true,
+        allowHttpForLocal: true
+      });
+      expect(parsed.hostname).toBe("127.0.0.1");
     });
   });
 });

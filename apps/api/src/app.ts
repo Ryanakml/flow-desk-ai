@@ -28,6 +28,7 @@ import { createChannelsRouter } from "./channels.js";
 import { createDeveloperRouter } from "./developer.js";
 import { createAnalyticsRouter } from "./analytics.js";
 import { createKnowledgeRouter } from "./knowledge.js";
+import { createExternalApiRouter } from "./external.js";
 import type { ObjectStore } from "@flowdesk/providers";
 export { createAuthRouter, createRequireAuthMiddleware, type AuthenticatedUser } from "./auth.js";
 export {
@@ -42,6 +43,7 @@ export { createRoutingRouter } from "./routing.js";
 export { createChannelsRouter } from "./channels.js";
 export { createDeveloperRouter } from "./developer.js";
 export { createKnowledgeRouter } from "./knowledge.js";
+export { createExternalApiRouter } from "./external.js";
 
 export interface ApiAppAuthOptions {
   db: DbClient;
@@ -263,12 +265,19 @@ export function createApiApp(options: ApiAppOptions) {
     app.use(
       "/api/v1/organizations/:orgId/developer",
       createDeveloperRouter({
-        db: options.auth.db
+        db: options.auth.db,
+        ...(options.auth.encryptionKey ? { encryptionKey: options.auth.encryptionKey } : {})
       })
     );
     app.use(
       "/api/v1/organizations/:orgId/analytics",
       createAnalyticsRouter({
+        db: options.auth.db
+      })
+    );
+    app.use(
+      "/api/v1/external",
+      createExternalApiRouter({
         db: options.auth.db
       })
     );

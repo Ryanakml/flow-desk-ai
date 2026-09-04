@@ -29,6 +29,7 @@ export {
   updateMembershipRole,
   revokeMembership,
   listUserOrganizations,
+  listActiveOrganizationIds,
   LastOwnerProtectionError,
   type BootstrapOrganizationInput,
   type BootstrapOrganizationResult,
@@ -276,12 +277,24 @@ export {
   listWebhookSubscriptions,
   createWebhookSubscription,
   deleteWebhookSubscription,
+  getWebhookSubscriptionById,
+  updateWebhookSubscriptionVerification,
+  fanoutDeveloperWebhookEvents,
+  createWebhookDelivery,
+  listWebhookDeliveries,
+  updateWebhookDeliveryOutcome,
   type WebhookSubscriptionRecord,
-  type CreateWebhookSubscriptionParams
+  type CreateWebhookSubscriptionParams,
+  type WebhookVerificationStatus,
+  type FanoutDeveloperWebhookParams,
+  type WebhookDeliveryRecord,
+  type WebhookDeliveryStatus,
+  type CreateWebhookDeliveryParams
 } from "./webhook-subscriptions.js";
 export {
   getAnalyticsOverview,
   getVolumeTimeSeries,
+  aggregateHourlyMetricsForOrg,
   type AnalyticsOverviewMetrics,
   type VolumeTimeSeriesPoint
 } from "./analytics.js";

@@ -23,7 +23,13 @@ export {
   type RateLimitResult,
   type RateLimiter
 } from "./rate-limit.js";
-export { encryptSecret, decryptSecret, type EncryptedEnvelope } from "./encryption.js";
+export {
+  encryptSecret,
+  decryptSecret,
+  encryptWebhookSecret,
+  decryptWebhookSecret,
+  type EncryptedEnvelope
+} from "./encryption.js";
 export {
   encryptWhatsAppChannelCredentials,
   decryptWhatsAppChannelCredentials,
@@ -31,7 +37,13 @@ export {
   type WhatsAppChannelCredentials,
   type WhatsAppCredentialErrorCode
 } from "./whatsapp-credentials.js";
-export { computeMetaSignature, verifyMetaSignature, computeSha256 } from "./signature.js";
+export {
+  computeMetaSignature,
+  verifyMetaSignature,
+  computeSha256,
+  computeWebhookSignature,
+  verifyWebhookSignature
+} from "./signature.js";
 export {
   generateApiKey,
   hashApiKey,
@@ -44,9 +56,11 @@ export {
   isPrivateIpAddress,
   isBlockedHostname,
   validateUrlForIngestion,
+  validateWebhookUrl,
   fetchWithAntiSsrf,
   type AntiSsrfFetchOptions,
-  type AntiSsrfFetchResult
+  type AntiSsrfFetchResult,
+  type ValidateWebhookUrlOptions
 } from "./ssrf.js";
 export {
   setGlobalKillswitch,

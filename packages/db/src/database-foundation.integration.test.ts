@@ -27,7 +27,10 @@ import {
   searchDocumentChunks,
   upsertBotConfig
 } from "./knowledge.js";
-import { getAnalyticsOverview } from "./analytics.js";
+import { getAnalyticsOverview, aggregateHourlyMetricsForOrg } from "./analytics.js";
+import { findApiKeyByHash } from "./api-keys.js";
+import { createWebhookSubscription } from "./webhook-subscriptions.js";
+import { listActiveOrganizationIds } from "./organizations.js";
 import {
   createPolicyDraft,
   updatePolicyDraft,
@@ -136,7 +139,8 @@ describe("database foundation", () => {
       "0031_m5_auto_release_gates_rls.sql",
       "0032_m5_routing_logs_policy_rule_id.sql",
       "0033_m5_automation_safety_global_resolution.sql",
-      "0034_m5_bot_runs_monthly_cost_index.sql"
+      "0034_m5_bot_runs_monthly_cost_index.sql",
+      "0035_m6_developer_webhooks_and_analytics.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -347,18 +351,20 @@ describe("database foundation", () => {
        FROM pg_proc AS procedure
        JOIN pg_namespace AS namespace ON namespace.oid = procedure.pronamespace
        JOIN pg_roles AS owner ON owner.oid = procedure.proowner
-       WHERE namespace.nspname = 'flowdesk'
-         AND procedure.proname IN (
-           'claim_attachment_scan_events', 'claim_bot_draft_runs', 'claim_knowledge_ingestion_jobs', 'claim_outbox_events', 'list_attachment_retention_candidates',
-           'list_user_organizations', 'messaging_operational_snapshot', 'record_whatsapp_webhook'
-         )
-       ORDER BY procedure.proname`
+        WHERE namespace.nspname = 'flowdesk'
+          AND procedure.proname IN (
+            'authenticate_api_key', 'claim_attachment_scan_events', 'claim_bot_draft_runs', 'claim_knowledge_ingestion_jobs', 'claim_outbox_events', 'list_active_organization_ids', 'list_attachment_retention_candidates',
+            'list_user_organizations', 'messaging_operational_snapshot', 'record_whatsapp_webhook'
+          )
+        ORDER BY procedure.proname`
     );
     expect(functions.rows).toEqual([
+      { proname: "authenticate_api_key", owner: "flowdesk_system" },
       { proname: "claim_attachment_scan_events", owner: "flowdesk_system" },
       { proname: "claim_bot_draft_runs", owner: "flowdesk_system" },
       { proname: "claim_knowledge_ingestion_jobs", owner: "flowdesk_system" },
       { proname: "claim_outbox_events", owner: "flowdesk_system" },
+      { proname: "list_active_organization_ids", owner: "flowdesk_system" },
       { proname: "list_attachment_retention_candidates", owner: "flowdesk_system" },
       { proname: "list_user_organizations", owner: "flowdesk_system" },
       { proname: "messaging_operational_snapshot", owner: "flowdesk_system" },
@@ -376,6 +382,8 @@ describe("database foundation", () => {
        WHERE table_schema = 'flowdesk' AND column_name = 'organization_id' AND is_nullable = 'NO'`
     );
     expect(tables.rows.map((row) => row.table_name)).toEqual([
+      "analytics_aggregates_hourly",
+      "analytics_watermarks",
       "api_keys",
       "attachment_upload_sessions",
       "attachments",
@@ -422,6 +430,7 @@ describe("database foundation", () => {
       "team_memberships",
       "teams",
       "users",
+      "webhook_deliveries",
       "webhook_events",
       "webhook_subscriptions",
       "whatsapp_business_accounts",
@@ -432,6 +441,8 @@ describe("database foundation", () => {
       "whatsapp_templates"
     ]);
     expect(tenantColumns.rows.map((row) => row.table_name).sort()).toEqual([
+      "analytics_aggregates_hourly",
+      "analytics_watermarks",
       "api_keys",
       "attachment_upload_sessions",
       "attachments",
@@ -472,6 +483,7 @@ describe("database foundation", () => {
       "tags",
       "team_memberships",
       "teams",
+      "webhook_deliveries",
       "webhook_subscriptions",
       "whatsapp_business_accounts",
       "whatsapp_embedded_signup_attempts",
@@ -2111,6 +2123,292 @@ describe("database foundation", () => {
         orgIdA,
         orgIdB
       ]);
+      await testPool.end();
+    }
+  });
+
+  it("enforces M6 developer API keys under real RLS, webhook outbox dispatch, and isolated analytics rollups (#209)", async () => {
+    const orgIdA = "00000000-0000-7000-8000-000000000601";
+    const orgIdB = "00000000-0000-7000-8000-000000000602";
+    const channelIdA = "00000000-0000-7000-8000-000000000603";
+    const userA = "00000000-0000-7000-8000-000000000604";
+
+    const testPool = new Pool({ connectionString });
+    const testWebhookSecret = (seed = "test") => `whsec_${seed.padEnd(32, "x")}`;
+
+    const cleanupM6Fixtures = async () => {
+      await admin.query(
+        "DELETE FROM flowdesk.webhook_deliveries WHERE organization_id IN ($1, $2)",
+        [orgIdA, orgIdB]
+      );
+      await admin.query("DELETE FROM flowdesk.outbox_events WHERE organization_id IN ($1, $2)", [
+        orgIdA,
+        orgIdB
+      ]);
+      await admin.query(
+        "DELETE FROM flowdesk.webhook_subscriptions WHERE organization_id IN ($1, $2)",
+        [orgIdA, orgIdB]
+      );
+      await admin.query("DELETE FROM flowdesk.api_keys WHERE organization_id IN ($1, $2)", [
+        orgIdA,
+        orgIdB
+      ]);
+      await admin.query(
+        "DELETE FROM flowdesk.analytics_aggregates_hourly WHERE organization_id IN ($1, $2)",
+        [orgIdA, orgIdB]
+      );
+      await admin.query(
+        "DELETE FROM flowdesk.analytics_watermarks WHERE organization_id IN ($1, $2)",
+        [orgIdA, orgIdB]
+      );
+      await admin.query("DELETE FROM flowdesk.messages WHERE organization_id IN ($1, $2)", [
+        orgIdA,
+        orgIdB
+      ]);
+      await admin.query("DELETE FROM flowdesk.conversations WHERE organization_id IN ($1, $2)", [
+        orgIdA,
+        orgIdB
+      ]);
+      await admin.query("DELETE FROM flowdesk.contacts WHERE organization_id IN ($1, $2)", [
+        orgIdA,
+        orgIdB
+      ]);
+      await admin.query("DELETE FROM flowdesk.channels WHERE organization_id IN ($1, $2)", [
+        orgIdA,
+        orgIdB
+      ]);
+      await admin.query(
+        "DELETE FROM flowdesk.realtime_versions WHERE organization_id IN ($1, $2)",
+        [orgIdA, orgIdB]
+      );
+      await admin.query("DELETE FROM flowdesk.users WHERE id = $1", [userA]);
+      await admin.query("DELETE FROM flowdesk.organizations WHERE id IN ($1, $2)", [
+        orgIdA,
+        orgIdB
+      ]);
+    };
+
+    await cleanupM6Fixtures();
+
+    try {
+      await admin.query(
+        `INSERT INTO flowdesk.organizations (id, slug, display_name) VALUES
+         ($1, 'm6-int-org-a', 'M6 Integration Org A'),
+         ($2, 'm6-int-org-b', 'M6 Integration Org B')`,
+        [orgIdA, orgIdB]
+      );
+      await admin.query(
+        `INSERT INTO flowdesk.users (id, email, display_name) VALUES ($1, 'm6-user-a@example.com', 'M6 User A')`,
+        [userA]
+      );
+      await admin.query(
+        `INSERT INTO flowdesk.channels (id, organization_id, type, name, status, phone_number_id, waba_id, encrypted_credentials)
+         VALUES ($1, $2, 'whatsapp', 'Test WA Channel A', 'active', 'phone-m6-001', 'waba-m6-001', 'enc-cred')`,
+        [channelIdA, orgIdA]
+      );
+
+      // 1. API Key Auth Under Real RLS (Review Finding 1)
+      const validHash = "a".repeat(64);
+      const revokedHash = "b".repeat(64);
+      const expiredHash = "c".repeat(64);
+
+      await admin.query(
+        `INSERT INTO flowdesk.api_keys (organization_id, name, key_prefix, key_hash, scopes, created_by_user_id)
+         VALUES ($1, 'Valid Key Org A', 'fd_live_', $2, '["conversation:read", "message:write"]'::jsonb, $3)`,
+        [orgIdA, validHash, userA]
+      );
+      await admin.query(
+        `INSERT INTO flowdesk.api_keys (organization_id, name, key_prefix, key_hash, scopes, revoked_at)
+         VALUES ($1, 'Revoked Key Org A', 'fd_live_', $2, '["*"]'::jsonb, clock_timestamp())`,
+        [orgIdA, revokedHash]
+      );
+      await admin.query(
+        `INSERT INTO flowdesk.api_keys (organization_id, name, key_prefix, key_hash, scopes, expires_at)
+         VALUES ($1, 'Expired Key Org A', 'fd_live_', $2, '["*"]'::jsonb, clock_timestamp() - interval '1 day')`,
+        [orgIdA, expiredHash]
+      );
+
+      // Authenticate via findApiKeyByHash under flowdesk_runtime (NOBYPASSRLS, without tenant context)
+      const runtimeClient = await testPool.connect();
+      try {
+        await runtimeClient.query("SET ROLE flowdesk_runtime");
+        const authenticatedValid = await findApiKeyByHash(runtimeClient, validHash);
+        expect(authenticatedValid).not.toBeNull();
+        expect(authenticatedValid?.organizationId).toBe(orgIdA);
+        expect(authenticatedValid?.scopes).toEqual(["conversation:read", "message:write"]);
+
+        const authenticatedRevoked = await findApiKeyByHash(runtimeClient, revokedHash);
+        expect(authenticatedRevoked).toBeNull();
+
+        const authenticatedExpired = await findApiKeyByHash(runtimeClient, expiredHash);
+        expect(authenticatedExpired).toBeNull();
+
+        const authenticatedRandom = await findApiKeyByHash(runtimeClient, "d".repeat(64));
+        expect(authenticatedRandom).toBeNull();
+
+        // Direct query on api_keys without tenant context returns empty (FORCE RLS denies)
+        const directRuntimeQuery = await runtimeClient.query("SELECT * FROM flowdesk.api_keys");
+        expect(directRuntimeQuery.rows.length).toBe(0);
+      } finally {
+        await runtimeClient.query("RESET ROLE").catch(() => undefined);
+        runtimeClient.release();
+      }
+
+      // Tenant B transaction cannot see Tenant A's api_keys
+      const tenantBKeys = await withTenantTransaction(
+        testPool,
+        { organizationId: orgIdB },
+        async (tx) => {
+          return (await tx.query<{ id: string }>("SELECT * FROM flowdesk.api_keys")).rows;
+        }
+      );
+      expect(tenantBKeys.length).toBe(0);
+
+      // 2. Scheduler Org Discovery (Review Finding 2)
+      const activeOrgs = await listActiveOrganizationIds(testPool);
+      expect(activeOrgs).toContain(orgIdA);
+      expect(activeOrgs).toContain(orgIdB);
+
+      // 3. Webhook Outbox Fanout On Domain Events (Review Finding 4, 5, 6)
+      const subVerifiedA = await withTenantTransaction(
+        testPool,
+        { organizationId: orgIdA },
+        async (tx) => {
+          return createWebhookSubscription(tx, {
+            organizationId: orgIdA,
+            name: "Verified Webhook Org A",
+            url: "https://example.com/webhook",
+            secret: testWebhookSecret("verified_a"),
+            events: ["*"],
+            verificationStatus: "verified"
+          });
+        }
+      );
+      await withTenantTransaction(testPool, { organizationId: orgIdA }, async (tx) => {
+        return createWebhookSubscription(tx, {
+          organizationId: orgIdA,
+          name: "Unverified Webhook Org A",
+          url: "https://example.com/unverified",
+          secret: testWebhookSecret("unverified_a"),
+          events: ["*"],
+          verificationStatus: "unverified"
+        });
+      });
+      await withTenantTransaction(testPool, { organizationId: orgIdB }, async (tx) => {
+        return createWebhookSubscription(tx, {
+          organizationId: orgIdB,
+          name: "Verified Webhook Org B",
+          url: "https://example.com/org-b",
+          secret: testWebhookSecret("verified_b"),
+          events: ["*"],
+          verificationStatus: "verified"
+        });
+      });
+
+      // Domain Event 1: conversation.created
+      const convA = await withTenantTransaction(
+        testPool,
+        { organizationId: orgIdA },
+        async (tx) => {
+          return findOrCreateConversation(tx, {
+            organizationId: orgIdA,
+            channelId: channelIdA,
+            customerPhone: "+15551234567",
+            customerName: "Alice"
+          });
+        }
+      );
+
+      // Check outbox events: only subVerifiedA received developer.webhook.dispatch!
+      const outboxRowsConv = await admin.query<{
+        aggregate_id: string;
+        payload: Record<string, unknown>;
+      }>(
+        `SELECT aggregate_id, payload FROM flowdesk.outbox_events
+         WHERE organization_id = $1 AND event_type = 'developer.webhook.dispatch' AND payload->>'eventType' = 'conversation.created'`,
+        [orgIdA]
+      );
+      expect(outboxRowsConv.rows.length).toBe(1);
+      expect(outboxRowsConv.rows[0]?.aggregate_id).toBe(subVerifiedA.id);
+      expect(outboxRowsConv.rows[0]?.payload["url"]).toBeUndefined();
+      expect(outboxRowsConv.rows[0]?.payload["secret"]).toBeUndefined();
+      expect(outboxRowsConv.rows[0]?.payload["subscriptionId"]).toBe(subVerifiedA.id);
+
+      // Org B must have 0 outbox events for conversation.created
+      const outboxRowsOrgB = await admin.query(
+        `SELECT id FROM flowdesk.outbox_events WHERE organization_id = $1`,
+        [orgIdB]
+      );
+      expect(outboxRowsOrgB.rows.length).toBe(0);
+
+      // Domain Event 2: message.sent
+      await withTenantTransaction(testPool, { organizationId: orgIdA }, async (tx) => {
+        return createOutboundMessageWithOutbox(tx, {
+          organizationId: orgIdA,
+          conversationId: convA.id,
+          senderType: "agent",
+          senderUserId: userA,
+          content: "Hello Alice from agent"
+        });
+      });
+
+      const outboxRowsMsgSent = await admin.query<{
+        aggregate_id: string;
+        payload: Record<string, unknown>;
+      }>(
+        `SELECT aggregate_id, payload FROM flowdesk.outbox_events
+         WHERE organization_id = $1 AND event_type = 'developer.webhook.dispatch' AND payload->>'eventType' = 'message.sent'`,
+        [orgIdA]
+      );
+      expect(outboxRowsMsgSent.rows.length).toBe(1);
+      expect(outboxRowsMsgSent.rows[0]?.aggregate_id).toBe(subVerifiedA.id);
+      expect(outboxRowsMsgSent.rows[0]?.payload["url"]).toBeUndefined();
+      expect(outboxRowsMsgSent.rows[0]?.payload["secret"]).toBeUndefined();
+
+      // 4. Analytics Hourly Rollup & Tenant Isolation (Review Finding 3)
+      await withTenantTransaction(testPool, { organizationId: orgIdA }, async (tx) => {
+        await createMessage(tx, {
+          organizationId: orgIdA,
+          conversationId: convA.id,
+          channelId: channelIdA,
+          direction: "inbound",
+          senderType: "customer",
+          content: "Customer reply"
+        });
+      });
+
+      // Run analytics aggregation for Org A
+      const countA = await withTenantTransaction(
+        testPool,
+        { organizationId: orgIdA },
+        async (tx) => {
+          return aggregateHourlyMetricsForOrg(tx, orgIdA);
+        }
+      );
+      expect(countA).toBeGreaterThanOrEqual(1);
+
+      // Verify Org A aggregates exist
+      const aggRowsA = await admin.query(
+        "SELECT * FROM flowdesk.analytics_aggregates_hourly WHERE organization_id = $1",
+        [orgIdA]
+      );
+      expect(aggRowsA.rows.length).toBeGreaterThanOrEqual(1);
+
+      // Verify Org B aggregates are EMPTY (zero cross-tenant leakage!)
+      const aggRowsB = await admin.query(
+        "SELECT * FROM flowdesk.analytics_aggregates_hourly WHERE organization_id = $1",
+        [orgIdB]
+      );
+      expect(aggRowsB.rows.length).toBe(0);
+
+      // Verify watermark is updated
+      const watermarkA = await admin.query(
+        "SELECT * FROM flowdesk.analytics_watermarks WHERE organization_id = $1",
+        [orgIdA]
+      );
+      expect(watermarkA.rows.length).toBe(1);
+    } finally {
+      await cleanupM6Fixtures();
       await testPool.end();
     }
   });
