@@ -39,6 +39,7 @@ import {
   recordRoutingLogWithTrace
 } from "./automation-policy.js";
 import { createRoutingRule, listRoutingRules } from "./routing.js";
+import { resolveAutomationSafety } from "./automation-safety.js";
 import { findOrCreateConversation, createMessage } from "./conversations.js";
 import { createChannel } from "./channels.js";
 import type { DbClient } from "./auth.js";
@@ -127,7 +128,8 @@ describe("database foundation", () => {
       "0029_m5_automation_policy_engine.sql",
       "0030_m5_auto_release_gate.sql",
       "0031_m5_auto_release_gates_rls.sql",
-      "0032_m5_routing_logs_policy_rule_id.sql"
+      "0032_m5_routing_logs_policy_rule_id.sql",
+      "0033_m5_automation_safety_global_resolution.sql"
     ]);
     expect(extensions.rows.map((row) => row.extname)).toEqual(["pgcrypto", "vector"]);
   });
@@ -1780,6 +1782,155 @@ describe("database foundation", () => {
         expect(verifyMsg.rows[0]?.content).toBe("Inbound survives routing failure");
       });
     } finally {
+      await testPool.end();
+    }
+  });
+
+  it("enforces durable global automation safety stop without granting runtime direct SELECT (#177)", async () => {
+    const orgIdA = "00000000-0000-7000-8000-000000000177";
+    const orgIdB = "00000000-0000-7000-8000-000000000178";
+    const testPool = new Pool({ connectionString });
+
+    try {
+      // Clean up previous test state
+      await admin.query(
+        "DELETE FROM flowdesk.automation_safety_controls WHERE organization_id IN ($1, $2) OR scope = 'global'",
+        [orgIdA, orgIdB]
+      );
+      await admin.query("DELETE FROM flowdesk.organizations WHERE id IN ($1, $2)", [
+        orgIdA,
+        orgIdB
+      ]);
+
+      // Seed tenants
+      await admin.query(
+        "INSERT INTO flowdesk.organizations (id, slug, display_name) VALUES ($1, 'safety-a', 'Safety Org A')",
+        [orgIdA]
+      );
+      await admin.query(
+        "INSERT INTO flowdesk.organizations (id, slug, display_name) VALUES ($1, 'safety-b', 'Safety Org B')",
+        [orgIdB]
+      );
+
+      // Insert global stop via admin (durable platform-level control)
+      await admin.query(
+        `INSERT INTO flowdesk.automation_safety_controls (scope, disabled, reason)
+         VALUES ('global', true, 'M5 staging acceptance global halt')`
+      );
+
+      // 1. Runtime tenant cannot directly SELECT the global row (RLS enforced)
+      await withTenantTransaction(testPool, { organizationId: orgIdA }, async (client) => {
+        const directSelect = await client.query(
+          "SELECT * FROM flowdesk.automation_safety_controls WHERE scope = 'global'"
+        );
+        expect(directSelect.rows).toHaveLength(0);
+      });
+
+      // 2. resolve_automation_safety() can still see an active global stop
+      const safetyA = await withTenantTransaction(
+        testPool,
+        { organizationId: orgIdA },
+        async (client) => {
+          return resolveAutomationSafety(client, { organizationId: orgIdA });
+        }
+      );
+      expect(safetyA).not.toBeNull();
+      expect(safetyA?.scope).toBe("global");
+      expect(safetyA?.reason).toBe("M5 staging acceptance global halt");
+
+      // 3. Global stop takes precedence over narrower scopes (e.g. tenant-specific stop)
+      await admin.query(
+        `INSERT INTO flowdesk.automation_safety_controls (organization_id, scope, disabled, reason)
+         VALUES ($1, 'tenant', true, 'Tenant A local stop')`,
+        [orgIdA]
+      );
+      const precedenceCheck = await withTenantTransaction(
+        testPool,
+        { organizationId: orgIdA },
+        async (client) => {
+          return resolveAutomationSafety(client, { organizationId: orgIdA });
+        }
+      );
+      expect(precedenceCheck?.scope).toBe("global");
+      expect(precedenceCheck?.reason).toBe("M5 staging acceptance global halt");
+
+      // 4. Disabled or expired global rows are ignored
+      // Update global stop to disabled = false (halt lifted)
+      await admin.query(
+        "UPDATE flowdesk.automation_safety_controls SET disabled = false WHERE scope = 'global'"
+      );
+      const liftedCheck = await withTenantTransaction(
+        testPool,
+        { organizationId: orgIdA },
+        async (client) => {
+          return resolveAutomationSafety(client, { organizationId: orgIdA });
+        }
+      );
+      // Now tenant stop should be resolved because global is disabled
+      expect(liftedCheck?.scope).toBe("tenant");
+      expect(liftedCheck?.reason).toBe("Tenant A local stop");
+
+      // Test expired global stop
+      await admin.query(
+        "UPDATE flowdesk.automation_safety_controls SET disabled = true, expires_at = now() - interval '1 hour' WHERE scope = 'global'"
+      );
+      const expiredCheck = await withTenantTransaction(
+        testPool,
+        { organizationId: orgIdA },
+        async (client) => {
+          return resolveAutomationSafety(client, { organizationId: orgIdA });
+        }
+      );
+      // Expired global row is ignored, tenant stop is returned
+      expect(expiredCheck?.scope).toBe("tenant");
+
+      // When tenant stop is also removed, returns null
+      await admin.query(
+        "DELETE FROM flowdesk.automation_safety_controls WHERE organization_id = $1",
+        [orgIdA]
+      );
+      const nullCheck = await withTenantTransaction(
+        testPool,
+        { organizationId: orgIdA },
+        async (client) => {
+          return resolveAutomationSafety(client, { organizationId: orgIdA });
+        }
+      );
+      expect(nullCheck).toBeNull();
+
+      // 5. Cross-tenant isolation remains intact: Tenant B controls are not visible to Tenant A
+      await admin.query(
+        `INSERT INTO flowdesk.automation_safety_controls (organization_id, scope, disabled, reason)
+         VALUES ($1, 'tenant', true, 'Tenant B secret stop')`,
+        [orgIdB]
+      );
+      const crossTenantCheckA = await withTenantTransaction(
+        testPool,
+        { organizationId: orgIdA },
+        async (client) => {
+          return resolveAutomationSafety(client, { organizationId: orgIdA });
+        }
+      );
+      expect(crossTenantCheckA).toBeNull();
+
+      const crossTenantCheckB = await withTenantTransaction(
+        testPool,
+        { organizationId: orgIdB },
+        async (client) => {
+          return resolveAutomationSafety(client, { organizationId: orgIdB });
+        }
+      );
+      expect(crossTenantCheckB?.scope).toBe("tenant");
+      expect(crossTenantCheckB?.reason).toBe("Tenant B secret stop");
+    } finally {
+      await admin.query(
+        "DELETE FROM flowdesk.automation_safety_controls WHERE organization_id IN ($1, $2) OR scope = 'global'",
+        [orgIdA, orgIdB]
+      );
+      await admin.query("DELETE FROM flowdesk.organizations WHERE id IN ($1, $2)", [
+        orgIdA,
+        orgIdB
+      ]);
       await testPool.end();
     }
   });
