@@ -2262,7 +2262,7 @@ describe("database foundation", () => {
             organizationId: orgIdA,
             name: "Verified Webhook Org A",
             url: "https://example.com/webhook",
-            secret: "whsec_encrypted_envelope_json",
+            secret: "whsec_encrypted_envelope_json_test_12345",
             events: ["*"],
             verificationStatus: "verified"
           });
@@ -2273,7 +2273,7 @@ describe("database foundation", () => {
           organizationId: orgIdA,
           name: "Unverified Webhook Org A",
           url: "https://example.com/unverified",
-          secret: "whsec_unverified",
+          secret: "whsec_unverified_secret_test_12345",
           events: ["*"],
           verificationStatus: "unverified"
         });
@@ -2283,7 +2283,7 @@ describe("database foundation", () => {
           organizationId: orgIdB,
           name: "Verified Webhook Org B",
           url: "https://example.com/org-b",
-          secret: "whsec_org_b",
+          secret: "whsec_org_b_secret_test_12345",
           events: ["*"],
           verificationStatus: "verified"
         });
