@@ -203,9 +203,7 @@ describe("DeveloperSettingsView component (M6-02)", () => {
     });
     fireEvent.click(screen.getByText("Register Webhook"));
 
-    await waitFor(() =>
-      expect(screen.getByText("Save Your Webhook Signing Secret")).toBeTruthy()
-    );
+    await waitFor(() => expect(screen.getByText("Save Your Webhook Signing Secret")).toBeTruthy());
     expect(screen.getByText(rawSecret)).toBeTruthy();
 
     fireEvent.click(screen.getByText("Close ✕"));
@@ -244,15 +242,10 @@ describe("DeveloperSettingsView component (M6-02)", () => {
           verified = true;
           return Promise.resolve(jsonResponse({ enqueued: true, eventId: "evt_test_1" }));
         }
-        if (
-          url.endsWith(`/api/v1/organizations/${orgId}/developer/webhooks/wh-1/deliveries`)
-        ) {
+        if (url.endsWith(`/api/v1/organizations/${orgId}/developer/webhooks/wh-1/deliveries`)) {
           return Promise.resolve(jsonResponse(verified ? [delivery] : []));
         }
-        if (
-          url.endsWith(`/api/v1/organizations/${orgId}/developer/webhooks`) &&
-          !init?.method
-        ) {
+        if (url.endsWith(`/api/v1/organizations/${orgId}/developer/webhooks`) && !init?.method) {
           return Promise.resolve(
             jsonResponse([
               {
