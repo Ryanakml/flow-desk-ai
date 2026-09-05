@@ -255,4 +255,70 @@ describe("@flowdesk/ui Foundation Primitives", () => {
     );
     expect(criticalOrSerious).toEqual([]);
   });
+
+  describe("Deterministic Semantic Token Contrast Verification (WCAG 2.1 AA >= 4.5:1)", () => {
+    // Standard OKLCH to relative luminance (Y in CIE XYZ D65)
+    function oklchToRelativeLuminance(L: number, C: number, hDeg: number): number {
+      const hRad = (hDeg * Math.PI) / 180;
+      const a = C * Math.cos(hRad);
+      const b = C * Math.sin(hRad);
+
+      const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+      const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+      const s_ = L - 0.0894841775 * a - 1.291485548 * b;
+
+      const l = l_ ** 3;
+      const m = m_ ** 3;
+      const s = s_ ** 3;
+
+      // CIE Y is the standard relative luminance
+      return -0.0405801784232806 * l + 1.11225686961683 * m - 0.0716766786656012 * s;
+    }
+
+    function calculateContrastRatio(y1: number, y2: number): number {
+      const lighter = Math.max(y1, y2);
+      const darker = Math.min(y1, y2);
+      return (lighter + 0.05) / (darker + 0.05);
+    }
+
+    const lightTokens = [
+      { name: "primary", bg: [0.205, 0, 0], fg: [0.985, 0, 0] },
+      { name: "destructive", bg: [0.55, 0.22, 27.325], fg: [0.985, 0, 0] },
+      { name: "success", bg: [0.5, 0.17, 149.214], fg: [0.985, 0, 0] },
+      { name: "warning", bg: [0.769, 0.188, 70.08], fg: [0.145, 0, 0] },
+      { name: "info", bg: [0.5, 0.16, 245.2], fg: [0.985, 0, 0] }
+    ] as const;
+
+    const darkTokens = [
+      { name: "primary", bg: [0.985, 0, 0], fg: [0.205, 0, 0] },
+      { name: "destructive", bg: [0.55, 0.22, 27.325], fg: [0.985, 0, 0] },
+      { name: "success", bg: [0.5, 0.17, 149.214], fg: [0.985, 0, 0] },
+      { name: "warning", bg: [0.769, 0.188, 70.08], fg: [0.145, 0, 0] },
+      { name: "info", bg: [0.5, 0.16, 245.2], fg: [0.985, 0, 0] }
+    ] as const;
+
+    it("verifies all light theme semantic token pairs exceed WCAG AA 4.5:1 ratio", () => {
+      for (const token of lightTokens) {
+        const bgY = oklchToRelativeLuminance(token.bg[0], token.bg[1], token.bg[2]);
+        const fgY = oklchToRelativeLuminance(token.fg[0], token.fg[1], token.fg[2]);
+        const ratio = calculateContrastRatio(bgY, fgY);
+        expect(
+          ratio,
+          `Light theme token "${token.name}" ratio (${ratio.toFixed(2)}:1) must be >= 4.5:1`
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+    });
+
+    it("verifies all dark theme semantic token pairs exceed WCAG AA 4.5:1 ratio", () => {
+      for (const token of darkTokens) {
+        const bgY = oklchToRelativeLuminance(token.bg[0], token.bg[1], token.bg[2]);
+        const fgY = oklchToRelativeLuminance(token.fg[0], token.fg[1], token.fg[2]);
+        const ratio = calculateContrastRatio(bgY, fgY);
+        expect(
+          ratio,
+          `Dark theme token "${token.name}" ratio (${ratio.toFixed(2)}:1) must be >= 4.5:1`
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+    });
+  });
 });

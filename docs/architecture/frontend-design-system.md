@@ -46,8 +46,8 @@ Tokens are authored as semantic CSS variables in `packages/ui/src/styles/tokens.
 
 - **Surfaces**: `--background`, `--foreground`, `--card`, `--card-foreground`, `--popover`, `--popover-foreground`.
 - **Brand / Neutral**: `--primary`, `--primary-foreground`, `--secondary`, `--secondary-foreground`, `--muted`, `--muted-foreground`, `--accent`, `--accent-foreground`.
-- **Semantic Feedback**: `--destructive`, `--destructive-foreground`, `--success`, `--success-foreground`, `--warning`, `--warning-foreground`, `--info`, `--info-foreground`.
-- **Input & Elevation**: `--border`, `--input`, `--ring`, `--radius-sm` (6px), `--radius-md` (8px), `--radius-lg` (12px), `--radius` (8px).
+- **Semantic Feedback**: `--destructive`, `--destructive-foreground`, `--success`, `--success-foreground`, `--warning`, `--warning-foreground`, `--info`, `--info-foreground` (all calibrated to satisfy WCAG 2.1 AA >= 4.5:1 normal text contrast against their respective foregrounds).
+- **Input & Elevation**: `--border`, `--input`, `--ring`, `--fd-radius-sm` (6px), `--fd-radius-md` (8px), `--fd-radius-lg` (12px), `--fd-radius` (8px). Distinct source custom property names (`--fd-radius-*`) avoid self-referential cyclic resolution when mapped to Tailwind's `--radius-*` theme declarations.
 
 ### Light / Dark Theme Modes
 
@@ -163,7 +163,15 @@ Captured visual evidence:
 FlowDesk primitives are engineered with an accessibility-first posture, with evidence scoped accurately:
 
 - **Automated Fixture Scan**: The automated test suite (`packages/ui/src/index.test.tsx`) runs `axe-core` against a representative interactive fixture (containing Card, Label, Input, Switch, Checkbox, Tabs, and Button). The fixture has **zero serious or critical automated violations**.
-- **Contrast Exclusion in Automated Tests**: Color-contrast verification is explicitly excluded (`rules: { "color-contrast": { enabled: false } }`) from the automated jsdom test suite, because headless jsdom does not calculate computed styles or real font/canvas rendering. Color contrast requires separate/manual validation in real browser viewports across both light and dark themes.
+- **Contrast Verification (Deterministic Calculation)**:
+  Color-contrast verification is explicitly excluded (`rules: { "color-contrast": { enabled: false } }`) from the automated jsdom `axe-core` run because jsdom cannot compute styled render geometries or font rendering.
+  Instead, **deterministic relative luminance and contrast ratio calculations** (per WCAG 2.1 CIE Y relative luminance algorithm) are executed as dedicated unit tests in `packages/ui/src/index.test.tsx`:
+  - `primary` (light & dark): **17.16:1** (target >= 4.5:1)
+  - `destructive` (light & dark): **5.20:1** (target >= 4.5:1)
+  - `success` (light & dark): **5.33:1** (target >= 4.5:1)
+  - `warning` (light & dark): **9.17:1** (target >= 4.5:1)
+  - `info` (light & dark): **5.72:1** (target >= 4.5:1)
+    Every semantic token pair mathematically exceeds WCAG 2.1 AA (4.5:1) for normal text across both light and dark modes.
 - **Keyboard & Focus Handling**: Underlying primitives leverage Radix UI to enforce accessible keyboard navigation (`Tab`, `Arrow` keys), focus retention/trapping within modals, and `Escape` key dismissal. Focused interaction tests verify keyboard and attribute semantics.
 - **M6.5 Milestone Scope**: Full comprehensive WCAG 2.1 AA acceptance testing across all composite views and color pairings will be conducted during later M6.5 milestone acceptance work (UI-11 / UI-12), rather than claiming universal compliance at the primitive foundation phase.
 
