@@ -61,6 +61,17 @@ describe("Modern Frontend Router & Navigation Architecture", () => {
   beforeEach(() => {
     queryClient.clear();
     vi.stubGlobal("scrollTo", vi.fn());
+    vi.stubGlobal(
+      "ResizeObserver",
+      vi.fn().mockImplementation(() => ({
+        observe: vi.fn(),
+        unobserve: vi.fn(),
+        disconnect: vi.fn()
+      }))
+    );
+    window.HTMLElement.prototype.scrollIntoView = vi.fn();
+    window.Element.prototype.scrollIntoView = vi.fn();
+    window.history.replaceState({}, "", "/");
   });
 
   afterEach(() => {
@@ -378,5 +389,113 @@ describe("Modern Frontend Router & Navigation Architecture", () => {
 
     expect(await screen.findByText("Invite Team Member")).toBeTruthy();
     expect(screen.getByLabelText("Email Address")).toBeTruthy();
+  });
+
+  describe("Enterprise AppShell, Navigation & Workspace UX (UI-03)", () => {
+    it("renders the enterprise desktop shell with brand, navigation groups, and user navigation", async () => {
+      setupAuthMocks("owner");
+      render(<App />);
+      await router.navigate({ to: "/inbox" });
+
+      // App shell structure
+      await waitFor(() => {
+        expect(screen.getByTestId("app-shell")).toBeDefined();
+        expect(screen.getByTestId("app-sidebar")).toBeDefined();
+        expect(screen.getByTestId("app-header")).toBeDefined();
+      });
+
+      // Check organization identity
+      expect(screen.getByTestId("active-org-badge")).toBeDefined();
+      expect(screen.getByText("Acme Corp")).toBeDefined();
+
+      // Check user navigation trigger and badge
+      expect(screen.getByTestId("user-nav-trigger")).toBeDefined();
+      expect(screen.getByText("Test User")).toBeDefined();
+      expect(screen.getByText("owner@flowdesk.dev")).toBeDefined();
+
+      // Check navigation groups & links
+      expect(screen.getByTestId("nav-link-/inbox")).toBeDefined();
+      expect(screen.getByTestId("nav-link-/analytics")).toBeDefined();
+      expect(screen.getByTestId("nav-link-/knowledge")).toBeDefined();
+      expect(screen.getByTestId("nav-link-/channels")).toBeDefined();
+      expect(screen.getByTestId("nav-link-/developer/api-keys")).toBeDefined();
+      expect(screen.getByTestId("nav-link-/developer/webhooks")).toBeDefined();
+      expect(screen.getByTestId("nav-link-/team")).toBeDefined();
+      // Owner has audit:view permission
+      expect(screen.getByTestId("nav-link-/audit")).toBeDefined();
+      expect(screen.getByTestId("nav-link-/settings/workspace")).toBeDefined();
+
+      // Check active route attribute on current page
+      expect(screen.getByTestId("nav-link-/inbox").getAttribute("data-active")).toBe("true");
+    });
+
+    it("filters out audit navigation when user lacks audit:view permission", async () => {
+      setupAuthMocks("agent");
+      render(<App />);
+      await router.navigate({ to: "/inbox" });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("app-shell")).toBeDefined();
+        expect(screen.getByTestId("nav-link-/inbox")).toBeDefined();
+      });
+
+      // Sidebar should NOT have audit link
+      expect(screen.queryByTestId("nav-link-/audit")).toBeNull();
+
+      // But should have accessible routes
+      expect(screen.getByTestId("nav-link-/analytics")).toBeDefined();
+    });
+
+    it("supports toggling sidebar collapse state", async () => {
+      setupAuthMocks("owner");
+      render(<App />);
+      await router.navigate({ to: "/inbox" });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("sidebar-collapse-button")).toBeDefined();
+      });
+
+      const collapseBtn = screen.getByTestId("sidebar-collapse-button");
+      collapseBtn.click();
+
+      // Sidebar should now have collapsed width class w-16
+      await waitFor(() => {
+        expect(screen.getByTestId("app-sidebar").className).toContain("w-16");
+      });
+
+      // Click again to uncollapse
+      collapseBtn.click();
+      await waitFor(() => {
+        expect(screen.getByTestId("app-sidebar").className).toContain("w-64");
+      });
+    });
+
+    it("renders user information and role pill correctly in UserNav", async () => {
+      setupAuthMocks("owner");
+      render(<App />);
+      await router.navigate({ to: "/inbox" });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("user-nav-trigger")).toBeDefined();
+        expect(screen.getByTestId("user-role-badge")).toBeDefined();
+      });
+
+      expect(screen.getByTestId("user-role-badge").textContent?.toLowerCase()).toContain("owner");
+      expect(screen.getByText("Test User")).toBeDefined();
+    });
+
+    it("renders responsive mobile hamburger button in header", async () => {
+      setupAuthMocks("owner");
+      render(<App />);
+      await router.navigate({ to: "/inbox" });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("mobile-hamburger-button")).toBeDefined();
+      });
+
+      expect(screen.getByTestId("mobile-hamburger-button").getAttribute("aria-label")).toBe(
+        "Open navigation menu"
+      );
+    });
   });
 });
