@@ -1,0 +1,17 @@
+{
+  "$schema": "https://ui.shadcn.com/schema.json",
+  "style": "default",
+  "rsc": false,
+  "tsx": true,
+  "tailwind": {
+    "config": "",
+    "css": "apps/web/src/theme.css",
+    "baseColor": "neutral",
+    "cssVariables": true
+  },
+  "aliases": {
+    "components": "@flowdesk/ui",
+    "utils": "@flowdesk/ui/lib/utils",
+    "ui": "@flowdesk/ui"
+  }
+}
