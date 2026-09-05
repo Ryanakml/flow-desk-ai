@@ -51,12 +51,12 @@ export function AppShell({ children }: AppShellProps) {
 
         {/* Global Toast Banners */}
         {errorMsg && (
-          <div className="toast-banner toast-error m-3 shrink-0" role="alert">
+          <div className="m-3 flex shrink-0 items-center justify-between rounded-md border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive" role="alert">
             <span>{errorMsg}</span>
             <button
               type="button"
               onClick={() => showToast("", false)}
-              className="btn btn-sm"
+              className="hover:bg-destructive/20 ml-4 rounded-sm p-1 transition-colors"
               aria-label="Dismiss error"
             >
               ✕
@@ -64,12 +64,12 @@ export function AppShell({ children }: AppShellProps) {
           </div>
         )}
         {successMsg && (
-          <div className="toast-banner toast-success m-3 shrink-0" role="status">
+          <div className="m-3 flex shrink-0 items-center justify-between rounded-md border border-success/50 bg-success/10 px-4 py-3 text-sm text-success" role="status">
             <span>{successMsg}</span>
             <button
               type="button"
               onClick={() => showToast("", false)}
-              className="btn btn-sm"
+              className="hover:bg-success/20 ml-4 rounded-sm p-1 transition-colors"
               aria-label="Dismiss message"
             >
               ✕

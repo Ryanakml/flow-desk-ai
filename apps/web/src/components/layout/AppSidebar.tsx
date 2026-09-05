@@ -4,7 +4,6 @@ import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { useAuth } from "../../features/auth/context.js";
 import {
   navigationGroups,
-  workspaceSettingsItem,
   isRouteActive,
   type NavItem
 } from "./navigation.js";
@@ -68,11 +67,11 @@ export function AppSidebar({
       <Link
         to={item.href}
         onClick={() => onNavigate?.()}
-        className={`group flex items-center gap-3 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+        className={`group flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring ${
           active
-            ? "bg-accent text-accent-foreground font-semibold"
-            : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-        } ${collapsed ? "justify-center px-0 w-9 h-9" : "w-full"}`}
+            ? "bg-accent/60 text-accent-foreground font-semibold"
+            : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+        } ${collapsed ? "justify-center px-0 w-10 h-10" : "w-full"}`}
         data-active={active ? "true" : undefined}
         aria-current={active ? "page" : undefined}
         data-testid={`nav-link-${item.href}`}
@@ -88,7 +87,7 @@ export function AppSidebar({
       return (
         <Tooltip key={item.href} delayDuration={0}>
           <TooltipTrigger asChild>{linkContent}</TooltipTrigger>
-          <TooltipContent side="right" className="font-medium text-xs">
+          <TooltipContent side="right" className="font-medium text-sm">
             {item.title}
           </TooltipContent>
         </Tooltip>
@@ -102,30 +101,30 @@ export function AppSidebar({
     <TooltipProvider>
       <aside
         aria-label="Sidebar"
-        className={`flex flex-col h-full border-r border-border/80 bg-card select-none transition-all duration-200 ${
+        className={`flex flex-col h-full border-r border-border/60 bg-background select-none transition-all duration-200 ${
           collapsed ? "w-16" : "w-64"
         } ${className}`}
         data-testid="app-sidebar"
       >
         {/* Sidebar Header: Brand & Collapse Toggle */}
-        <div className="flex items-center justify-between p-3 border-b border-border/60">
+        <div className="flex items-center justify-between p-3">
           <Link
             to="/inbox"
             onClick={() => onNavigate?.()}
-            className="flex items-center gap-2 font-bold text-foreground tracking-tight hover:opacity-90 transition-opacity"
+            className="flex items-center gap-2 font-bold text-foreground tracking-tight hover:opacity-90 transition-opacity pl-1"
             data-testid="brand-logo"
           >
             <span className="flex items-center justify-center p-1 rounded-md bg-muted/40">
               <FlowDeskIcon size={20} />
             </span>
-            {!collapsed && <span className="text-sm font-semibold">FlowDesk</span>}
+            {!collapsed && <span className="text-[15px] font-semibold">FlowDesk</span>}
           </Link>
           {onToggleCollapse && (
             <Button
               variant="ghost"
               size="sm"
               onClick={onToggleCollapse}
-              className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+              className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
               aria-label="Toggle sidebar collapse"
               data-testid="sidebar-collapse-button"
             >
@@ -139,12 +138,12 @@ export function AppSidebar({
         </div>
 
         {/* Workspace / Organization Switcher */}
-        <div className="p-3 border-b border-border/40">
+        <div className="px-3 pb-2 pt-1">
           <OrgSwitcher collapsed={collapsed} />
         </div>
 
         {/* Navigation Groups Container */}
-        <div className="flex-1 overflow-y-auto px-2 py-3 space-y-4">
+        <div className="flex-1 overflow-y-auto px-3 py-4 space-y-6">
           {navigationGroups.map((group) => {
             const visibleItems = group.items.filter((item) => {
               if (item.permission) {
@@ -156,9 +155,9 @@ export function AppSidebar({
             if (visibleItems.length === 0) return null;
 
             return (
-              <div key={group.heading} className="space-y-1">
+              <div key={group.heading} className="space-y-1.5">
                 {!collapsed && (
-                  <h3 className="px-2.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+                  <h3 className="px-3 text-xs font-medium text-muted-foreground/70">
                     {group.heading}
                   </h3>
                 )}
@@ -168,14 +167,10 @@ export function AppSidebar({
               </div>
             );
           })}
-
-          <div className="pt-2 border-t border-border/40">
-            {renderNavItem(workspaceSettingsItem)}
-          </div>
         </div>
 
         {/* Sidebar Footer: User Profile & Account Actions */}
-        <div className="p-2 border-t border-border/60 mt-auto bg-card">
+        <div className="p-3 mt-auto">
           <UserNav collapsed={collapsed} />
         </div>
       </aside>

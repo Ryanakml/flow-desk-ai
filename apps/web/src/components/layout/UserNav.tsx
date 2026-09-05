@@ -12,7 +12,8 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-  Button
+  Button,
+  Badge
 } from "@flowdesk/ui";
 
 interface UserNavProps {
@@ -55,13 +56,14 @@ export function UserNav({ collapsed = false }: UserNavProps) {
                 <span className="truncate text-xs font-semibold text-foreground">
                   {sessionUser.displayName}
                 </span>
-                <span
-                  className={`role-pill ${currentRole} text-[10px] uppercase font-mono px-1.5 py-0.5 rounded border border-border/60`}
+                <Badge
+                  variant="outline"
+                  className="text-[10px] uppercase font-mono px-1.5 py-0"
                   id="user-role-badge"
                   data-testid="user-role-badge"
                 >
                   {currentRole.replace("_", " ")}
-                </span>
+                </Badge>
               </div>
               {sessionUser.email && (
                 <span className="truncate text-[11px] text-muted-foreground">

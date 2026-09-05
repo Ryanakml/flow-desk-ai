@@ -458,12 +458,10 @@ describe("Modern Frontend Router & Navigation Architecture", () => {
       const collapseBtn = screen.getByTestId("sidebar-collapse-button");
       collapseBtn.click();
 
-      // Sidebar should now have collapsed width class w-16
       await waitFor(() => {
         expect(screen.getByTestId("app-sidebar").className).toContain("w-16");
       });
 
-      // Click again to uncollapse
       collapseBtn.click();
       await waitFor(() => {
         expect(screen.getByTestId("app-sidebar").className).toContain("w-64");
@@ -484,8 +482,127 @@ describe("Modern Frontend Router & Navigation Architecture", () => {
       expect(screen.getByText("Test User")).toBeDefined();
     });
 
-    it("renders responsive mobile hamburger button in header", async () => {
+    it("handles UserNav sign out behavior", async () => {
       setupAuthMocks("owner");
+      const user = userEvent.setup();
+      render(<App />);
+      await router.navigate({ to: "/inbox" });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("user-nav-trigger")).toBeDefined();
+      });
+
+      // Open UserNav dropdown
+      await user.click(screen.getByTestId("user-nav-trigger"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("logout-btn")).toBeDefined();
+      });
+
+      // Click sign out
+      await user.click(screen.getByTestId("logout-btn"));
+
+      // Verify sign out side effect
+      // If we mock logout logic, we'd verify the mock was called.
+      // Since it redirects to login or clears session, we can check for unauthenticated view.
+      await waitFor(() => {
+        expect(screen.getByText("Sign in with SSO / OIDC")).toBeDefined();
+      });
+    });
+
+    it("handles OrgSwitcher interaction", async () => {
+      const { fetcher } = setupAuthMocks("owner");
+      
+      // We need to return multiple organizations for the switcher test
+      fetcher.mockImplementation((input) => {
+        const url = requestUrl(input);
+        if (url === "/api/v1/organizations") {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                organizations: [
+                  {
+                    id: organizationId,
+                    slug: "acme-corp",
+                    name: "Acme Corp",
+                    role: "owner",
+                    membershipId
+                  },
+                  {
+                    id: "b0000000-0000-4000-8000-000000000002",
+                    slug: "org-b",
+                    name: "Organization B",
+                    role: "agent",
+                    membershipId: "b-mem"
+                  }
+                ]
+              }),
+              { status: 200 }
+            )
+          );
+        }
+        return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
+      });
+      
+      const user = userEvent.setup();
+      render(<App />);
+      await router.navigate({ to: "/inbox" });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("org-switcher-trigger")).toBeDefined();
+      });
+
+      // Open the switcher
+      await user.click(screen.getByTestId("org-switcher-trigger"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Organization B")).toBeDefined();
+      });
+
+      // Click the other org
+      await user.click(screen.getByText("Organization B"));
+      
+      // Assuming clicking it calls setSelectedOrgId, we expect a reload or redirect.
+      // Our simple test just ensures the interaction doesn't crash and closes the menu.
+      await waitFor(() => {
+        expect(screen.queryByText("Organization B")).toBeNull(); // Menu closed
+      });
+    });
+
+    it("opens and interacts with Command Menu via Cmd+K", async () => {
+      setupAuthMocks("owner");
+      const user = userEvent.setup();
+      render(<App />);
+      await router.navigate({ to: "/inbox" });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("app-shell")).toBeDefined();
+      });
+
+      // Cmd+K to open
+      await user.keyboard("{Meta>}k{/Meta}");
+
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText("Type a command or search...")).toBeDefined();
+        // Should show Developer links
+        expect(screen.getByText("API Keys")).toBeDefined();
+      });
+
+      // Select API Keys
+      await user.type(screen.getByPlaceholderText("Type a command or search..."), "api");
+      
+      // Find API keys in the DOM that might be filtered
+      const apiKeysItem = screen.getByText("API Keys");
+      await user.click(apiKeysItem);
+
+      await waitFor(() => {
+        expect(router.state.location.pathname).toBe("/developer/api-keys");
+      });
+    });
+
+    it("handles Mobile Nav (Sheet) open and close", async () => {
+      setupAuthMocks("owner");
+      const user = userEvent.setup();
       render(<App />);
       await router.navigate({ to: "/inbox" });
 
@@ -493,9 +610,69 @@ describe("Modern Frontend Router & Navigation Architecture", () => {
         expect(screen.getByTestId("mobile-hamburger-button")).toBeDefined();
       });
 
-      expect(screen.getByTestId("mobile-hamburger-button").getAttribute("aria-label")).toBe(
-        "Open navigation menu"
-      );
+      // Open Sheet
+      await user.click(screen.getByTestId("mobile-hamburger-button"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("mobile-sheet-content")).toBeDefined();
+      });
+
+      // The mobile sheet has an Inbox link
+      const sheetContent = screen.getByTestId("mobile-sheet-content");
+      const inboxLink = sheetContent.querySelector('[data-testid="nav-link-/inbox"]');
+      expect(inboxLink).toBeDefined();
+
+      if (inboxLink) {
+        await user.click(inboxLink);
+      }
+
+      // Clicking link should close the sheet
+      await waitFor(() => {
+        expect(screen.queryByTestId("mobile-sheet-content")).toBeNull();
+      });
+    });
+
+    it("persists theme preference across toggles", async () => {
+      setupAuthMocks("owner");
+      const user = userEvent.setup();
+      // Clear localStorage before testing
+      window.localStorage.removeItem("flowdesk-theme");
+      
+      render(<App />);
+      await router.navigate({ to: "/inbox" });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("theme-toggle-button")).toBeDefined();
+      });
+
+      const button = screen.getByTestId("theme-toggle-button");
+      
+      // Default should be system or light
+      // Open dropdown
+      await user.click(button);
+      await waitFor(() => {
+        expect(screen.getByText("Dark")).toBeDefined();
+      });
+
+      // Click Dark
+      await user.click(screen.getByText("Dark"));
+      
+      await waitFor(() => {
+        expect(document.documentElement.classList.contains("dark")).toBe(true);
+        expect(window.localStorage.getItem("flowdesk-theme")).toBe("dark");
+      });
+
+      // Toggle back to Light
+      await user.click(button);
+      await waitFor(() => {
+        expect(screen.getByText("Light")).toBeDefined();
+      });
+      await user.click(screen.getByText("Light"));
+
+      await waitFor(() => {
+        expect(document.documentElement.classList.contains("dark")).toBe(false);
+        expect(window.localStorage.getItem("flowdesk-theme")).toBe("light");
+      });
     });
   });
 });
