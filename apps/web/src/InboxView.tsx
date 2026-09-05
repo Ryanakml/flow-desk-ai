@@ -5,7 +5,8 @@ import type {
   InboxWorkspaceResourcesResponse,
   Message,
   TemplatePreviewResponse,
-  GenerateBotDraftResponse
+  GenerateBotDraftResponse,
+  RealtimeHint
 } from "@flowdesk/contracts";
 import { type RoleKey, hasPermission } from "@flowdesk/domain";
 import {
@@ -38,7 +39,11 @@ export interface InboxViewProps {
   fetcher?: typeof fetch;
   initialConversations?: Conversation[] | undefined;
   initialActiveConversation?: Conversation | undefined;
+  activeConversationId?: string | null | undefined;
+  onSelectConversation?: ((id: string) => void) | undefined;
   initialMessages?: Message[] | undefined;
+  onRealtimeHint?: ((hint: RealtimeHint) => void) | undefined;
+  onRealtimeReconcile?: (() => void) | undefined;
 }
 
 type StatusFilter = "all" | "new" | "open" | "pending" | "resolved" | "closed";
@@ -52,7 +57,11 @@ export function InboxView({
   fetcher = fetch,
   initialConversations,
   initialActiveConversation,
-  initialMessages
+  activeConversationId,
+  onSelectConversation,
+  initialMessages,
+  onRealtimeHint,
+  onRealtimeReconcile
 }: InboxViewProps) {
   // Inbox state
   const [conversations, setConversations] = useState<Conversation[]>(initialConversations ?? []);
@@ -60,7 +69,7 @@ export function InboxView({
     initialConversations === undefined
   );
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(
-    initialActiveConversation?.id ?? initialConversations?.[0]?.id ?? null
+    activeConversationId ?? initialActiveConversation?.id ?? initialConversations?.[0]?.id ?? null
   );
 
   // Filters
@@ -147,18 +156,27 @@ export function InboxView({
         setConversations(res.items);
 
         if (res.items.length > 0) {
-          if (!preserveSelection || !selectedConversationId) {
+          const targetId = activeConversationId ?? selectedConversationId;
+          if (!preserveSelection && !activeConversationId) {
             setSelectedConversationId(res.items[0]!.id);
-          } else {
-            const exists = res.items.some((c) => c.id === selectedConversationId);
-            if (!exists) {
+          } else if (targetId) {
+            const exists = res.items.some((c) => c.id === targetId);
+            if (exists) {
+              setSelectedConversationId(targetId);
+            } else if (!activeConversationId) {
               setSelectedConversationId(res.items[0]!.id);
+            } else {
+              setSelectedConversationId(targetId);
             }
+          } else {
+            setSelectedConversationId(res.items[0]!.id);
           }
         } else {
-          setSelectedConversationId(null);
-          setActiveConversation(null);
-          setMessages([]);
+          setSelectedConversationId(activeConversationId ?? null);
+          if (!activeConversationId) {
+            setActiveConversation(null);
+            setMessages([]);
+          }
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : "Failed to load conversations";
@@ -167,8 +185,22 @@ export function InboxView({
         setLoadingConversations(false);
       }
     },
-    [organizationId, statusFilter, assigneeFilter, queueFilter, selectedConversationId, fetcher]
+    [
+      organizationId,
+      statusFilter,
+      assigneeFilter,
+      queueFilter,
+      selectedConversationId,
+      activeConversationId,
+      fetcher
+    ]
   );
+
+  useEffect(() => {
+    if (activeConversationId !== undefined) {
+      setSelectedConversationId(activeConversationId);
+    }
+  }, [activeConversationId]);
 
   // Fetch thread detail when selected conversation changes
   const loadThread = useCallback(
@@ -262,6 +294,7 @@ export function InboxView({
       void loadConversations(true);
       if (selectedConversationId) void loadThread(selectedConversationId);
       if (selectedConversationId) void loadCopilotDraft(selectedConversationId);
+      onRealtimeReconcile?.();
     },
     onHint: (hint) => {
       if (hint.resourceType === "conversation" || hint.resourceType === "organization") {
@@ -271,6 +304,7 @@ export function InboxView({
       if (hint.resourceType === "message" || hint.resourceId === selectedConversationId) {
         if (selectedConversationId) void loadThread(selectedConversationId);
       }
+      onRealtimeHint?.(hint);
     },
     onAccessRevoked: (reason) => {
       setActionError(`Realtime access revoked (${reason.code})`);
@@ -328,7 +362,9 @@ export function InboxView({
 
   // Auto-scroll timeline to bottom
   useEffect(() => {
-    timelineEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (typeof timelineEndRef.current?.scrollIntoView === "function") {
+      timelineEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
   }, [messages]);
 
   // Search filtering
@@ -1050,7 +1086,10 @@ export function InboxView({
                   aria-selected={isSelected}
                   data-testid={`conv-item-${conv.id}`}
                   className={`inbox-conv-item ${isSelected ? "selected" : ""}`}
-                  onClick={() => setSelectedConversationId(conv.id)}
+                  onClick={() => {
+                    setSelectedConversationId(conv.id);
+                    onSelectConversation?.(conv.id);
+                  }}
                   tabIndex={
                     isSelected || (!selectedConversationId && conv === filteredConversations[0])
                       ? 0
@@ -1063,6 +1102,7 @@ export function InboxView({
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
                       setSelectedConversationId(conv.id);
+                      onSelectConversation?.(conv.id);
                     }
                     const index = filteredConversations.indexOf(conv);
                     const target =

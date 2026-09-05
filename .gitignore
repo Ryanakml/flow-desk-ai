@@ -19,3 +19,4 @@ infra/terraform/**/crash.log
 tempt.md
 artifacts/
 *.spdx.json
+.tanstack/
