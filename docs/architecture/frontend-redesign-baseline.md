@@ -23,7 +23,7 @@ However, the existing user interface in `apps/web` retains prototype architectur
 
 This baseline document defines what **cannot change** during Milestone M6.5:
 
-1. **Zero Backend Changes**: 100% of API endpoints, route definitions, controller logic, and HTTP status codes in `apps/api` and `apps/worker` remain untouched.
+1. **Zero Backend Changes**: 100% of API endpoints, route definitions, controller logic, and HTTP status codes in `apps/api` (Express 5) and `apps/worker` (PostgreSQL outbox claim loops and timers) remain untouched.
 2. **Zero Schema/RLS Changes**: No PostgreSQL database migrations, schema alterations, or Row-Level Security policy adjustments.
 3. **Zero Authentication/Session Changes**: Cookie-based session resolution (`getSession`), Auth0/OIDC upstream logout redirects, and CSRF semantics remain authoritative.
 4. **Zero RBAC Regression**: All 15 permissions in `packages/domain/src/permissions.ts` and standard role mappings remain strictly enforced. Frontend disabled states reflect permissions, but backend authorization remains the absolute gatekeeper.
@@ -37,7 +37,7 @@ This baseline document defines what **cannot change** during Milestone M6.5:
 ```
 flowdesk/
 ├── apps/
-│   ├── api/             # Fastify REST API & contracts
+│   ├── api/             # Express 5 REST API & contracts (^5.1.0)
 │   ├── web/             # React 19 + Vite SPA (Primary redesign target)
 │   │   ├── src/
 │   │   │   ├── App.tsx                    # 1,081 LOC, ~37KB - Monolithic root controller
@@ -46,13 +46,13 @@ flowdesk/
 │   │   │   ├── KnowledgeView.tsx          # 533 LOC, ~18KB - RAG sources, bot mode, policy simulator
 │   │   │   ├── ChannelsView.tsx           # 463 LOC, ~15KB - WhatsApp Cloud API & Meta onboarding
 │   │   │   ├── DeveloperSettingsView.tsx  # 688 LOC, ~27KB - Scoped API keys & webhooks
-│   │   │   ├── api.ts                     # 879 LOC, ~26KB - Typed HTTP fetch client
-│   │   │   ├── automation-api.ts          # 118 LOC, ~3.6KB - M5 automation policy client
+│   │   │   ├── api.ts                     # 879 LOC, ~26KB - Typed HTTP fetch client (50 API helpers)
+│   │   │   ├── automation-api.ts          # 118 LOC, ~3.6KB - M5 automation policy client (6 API helpers)
 │   │   │   ├── realtime.ts                # 136 LOC, ~4KB - Socket.IO projection sync client
 │   │   │   ├── styles.css                 # 1,779 LOC, ~35KB - Monolithic global CSS
 │   │   │   └── main.tsx                   # SPA bootstrap entrypoint
 │   │   └── package.json                   # React 19, Vite, Socket.IO, Vitest, axe-core
-│   └── worker/          # BullMQ background workers (webhooks, WhatsApp, AI drafts)
+│   └── worker/          # PostgreSQL outbox pollers & timers (webhooks, WhatsApp, AI drafts)
 ├── packages/
 │   ├── config/          # Shared runtime configuration
 │   ├── contracts/       # Zod schemas & TypeScript API contracts
@@ -72,26 +72,33 @@ FlowDesk currently exposes **8 primary functional surfaces**, plus an unauthenti
 - **File & Size**: `apps/web/src/InboxView.tsx` (1,780 lines, ~68KB).
 - **Purpose**: High-throughput customer operations cockpit for live WhatsApp messaging.
 - **Current Layout**: Fixed 3-column CSS flexbox:
-  - _Left_: Conversation list with filter tabs (All, Mine, Unassigned), search input, queue selector.
-  - _Center_: Conversation header, message timeline, AI draft card, message composer, template selector.
+  - _Left_: Conversation list with filter tabs (All, Mine, Unassigned), search input, queue selector, saved filters dropdown.
+  - _Center_: Conversation header, message timeline, AI draft card, message composer, template selector, media upload trigger.
   - _Right_: Customer attributes, conversation details, RAG citations list.
-- **State Management**: Complex local state (`selectedConversationId`, `conversations`, `messages`, `activeDraft`, `templateVariables`).
+- **State Management**: Complex local state (`selectedConversationId`, `conversations`, `messages`, `activeDraft`, `templateVariables`, `savedFilters`).
 - **APIs Invoked**:
   - `GET /api/v1/organizations/:orgId/conversations` (`listConversations`)
-  - `GET /api/v1/organizations/:orgId/conversations/:id` (`getConversation`)
-  - `POST /api/v1/organizations/:orgId/conversations/:id/messages` (`createOutboundMessage`)
-  - `POST /api/v1/organizations/:orgId/conversations/:id/operations` (`performConversationOperation` - assign, resolve)
-  - `POST /api/v1/organizations/:orgId/conversations/:id/drafts/:runId/actions` (`submitBotDraftActionApi` - approve, edit, discard)
-  - `GET /api/v1/organizations/:orgId/inbox/resources` (`getInboxWorkspaceResources`)
-  - `POST /api/v1/organizations/:orgId/templates/preview` (`previewTemplate`)
-  - `POST /api/v1/organizations/:orgId/uploads/sessions` (`createUploadSession`)
-  - `GET /api/v1/organizations/:orgId/attachments/:id` (`getAttachmentDetail`)
+  - `GET /api/v1/organizations/:orgId/conversations/:conversationId` (`getConversation`)
+  - `POST /api/v1/organizations/:orgId/conversations/:conversationId/messages` (`createOutboundMessage`)
+  - `POST /api/v1/organizations/:orgId/conversations/:conversationId/actions` (`performConversationOperation` - assign, resolve, snooze)
+  - `GET /api/v1/organizations/:orgId/conversations/workspace-resources` (`getInboxWorkspaceResources` - queues, saved filters, templates)
+  - `POST /api/v1/organizations/:orgId/conversations/saved-filters` (`saveInboxFilter`)
+  - `DELETE /api/v1/organizations/:orgId/conversations/saved-filters/:filterId` (`deleteInboxFilter`)
+  - `GET /api/v1/organizations/:orgId/conversations/:conversationId/templates` (`listConversationTemplates`)
+  - `POST /api/v1/organizations/:orgId/conversations/:conversationId/template-preview` (`previewTemplate`)
+  - `POST /api/v1/organizations/:orgId/bot/draft/:conversationId` (`generateBotDraft`)
+  - `GET /api/v1/organizations/:orgId/bot/draft/:conversationId/latest` (`getLatestBotDraft`)
+  - `POST /api/v1/organizations/:orgId/bot/draft-runs/:runId/action` (`applyBotDraftAction` - approve, edit, reject)
+  - `POST /api/v1/organizations/:orgId/attachments/upload-session` (`createAttachmentUploadSession`)
+  - `PUT :uploadUrl` (`uploadAttachmentBytes`)
+  - `POST /api/v1/organizations/:orgId/attachments/:id/complete` (`completeAttachmentUpload`)
+  - `GET /api/v1/organizations/:orgId/attachments/:id` (`getAttachment`)
 - **Realtime Integration**: Emits `room.join` (`{ type: "conversation", id }`); receives `projection.changed` hints and executes `onReconcile`.
 - **Permissions Gated**:
   - `conversation:assign` (assign/reassign conversation)
   - `conversation:resolve` (resolve conversation)
   - `message:send` (send outbound message or template)
-- **Supported Capabilities**: Real AI drafts with `ConfidenceMeter`, expandable RAG citations (`chunkId`, `documentTitle`, `snippet`, `score`), WhatsApp pre-approved templates with variable substitution, media attachment uploads.
+- **Supported Capabilities**: Real AI drafts with `ConfidenceMeter`, expandable RAG citations (`chunkId`, `documentTitle`, `snippet`, `score`), WhatsApp pre-approved templates with variable substitution, presigned media attachment uploads (`upload-session` -> PUT bytes -> `complete`).
 - **Non-Existent / Unsupported**: Typing indicators (Socket.IO does not emit them), live per-conversation SLA countdowns (only aggregate SLA in Analytics).
 
 ### Surface 2: Real-Time Analytics & SLA (`AnalyticsView.tsx`)
@@ -101,15 +108,15 @@ FlowDesk currently exposes **8 primary functional surfaces**, plus an unauthenti
 - **Current Layout**: Header with time-range dropdown and export button; static text cards for metrics; unstyled list for daily volume series.
 - **State Management**: `useState` for `data`, `loading`, `error`, `exporting`, `timeRange`.
 - **APIs Invoked**:
-  - `GET /api/v1/organizations/:orgId/analytics/overview?days=:days` (`getAnalyticsMetricsApi`)
-  - `GET /api/v1/organizations/:orgId/analytics/export` (`exportAnalyticsReportApi`)
+  - `GET /api/v1/organizations/:orgId/analytics/metrics?days=:days` (`getAnalyticsMetricsApi`)
+  - `POST /api/v1/organizations/:orgId/analytics/export` (`exportAnalyticsReportApi`)
 - **Realtime Integration**: None (on-demand query with cancel token).
 - **Permissions Gated**: `analytics:view` (held by `owner`, `admin`, `supervisor`, `analyst`).
 - **Supported Time Ranges**: Strictly `7`, `14`, and `30` days.
 - **Supported Metrics**:
   - `overview`: `totalConversations`, `openConversations`, `assignedConversations`, `resolvedConversations`, `totalMessages`, `inboundMessages`, `outboundMessages`, `botMessages`, `humanMessages`, `botAutomationRate`, `slaMetPercentage`, `avgFirstResponseTimeSeconds`, `avgResolutionTimeSeconds`.
   - `volumeSeries`: array of `{ date, inbound, outbound, bot }`.
-- **Compliance Export**: Downloads 30-day compliance report CSV and durably writes an `analytics.exported` audit event in the database.
+- **Compliance Export**: Initiates `POST /analytics/export` to generate and download 30-day compliance report CSV and durably records an `analytics.exported` audit event in the database.
 - **Non-Existent / Unsupported**: Period-over-period percentage comparisons (e.g. `+12%`), SLA trend lines over time, custom CSV date pickers.
 
 ### Surface 3: AI Knowledge & Automation (`KnowledgeView.tsx`)
@@ -128,11 +135,13 @@ FlowDesk currently exposes **8 primary functional surfaces**, plus an unauthenti
   - `POST /api/v1/organizations/:orgId/knowledge/sources` (`createKnowledgeSourceApi` - `type: "text" | "url"`)
   - `GET /api/v1/organizations/:orgId/bot/config` (`getBotConfig`)
   - `PUT /api/v1/organizations/:orgId/bot/config` (`updateBotConfig`)
+  - `POST /api/v1/organizations/:orgId/routing/policies/draft` (`createAutomationPolicyDraft`)
+  - `GET /api/v1/organizations/:orgId/routing/policies` (`fetchAutomationPolicies`)
+  - `POST /api/v1/organizations/:orgId/routing/policies/:policyId/publish` (`publishAutomationPolicy`)
+  - `POST /api/v1/organizations/:orgId/routing/policies/:policyId/rollback` (`rollbackAutomationPolicy`)
+  - `POST /api/v1/organizations/:orgId/routing/policies/simulate` (`simulateAutomationPolicy`)
   - `POST /api/v1/organizations/:orgId/automation/emergency-stop` (`setAutomationEmergencyStop`)
-  - `GET /api/v1/organizations/:orgId/automation/policies` (`fetchAutomationPolicies`)
-  - `POST /api/v1/organizations/:orgId/automation/policies/:id/publish` (`publishAutomationPolicy`)
-  - `POST /api/v1/organizations/:orgId/automation/policies/simulate` (`simulateAutomationPolicy`)
-- **Permissions Gated**: `automation:publish` (required for adding sources, altering bot mode, toggling emergency stop, publishing policies, and running simulation).
+- **Permissions Gated**: `automation:publish` (required for adding sources, altering bot mode, toggling emergency stop, drafting/publishing policies, and running simulation).
 - **Supported Capabilities**: Text/URL knowledge indexing with status (`indexed`, `processing`, `failed`), bot mode selection, emergency stop killswitch, policy evaluation context (intent, tags, business hours, customer consent).
 - **Non-Existent / Unsupported**: PDF/TXT file drag-and-drop upload, delete knowledge source endpoint, temperature/creativity sliders, model selection dropdowns.
 
@@ -152,12 +161,13 @@ FlowDesk currently exposes **8 primary functional surfaces**, plus an unauthenti
 - **APIs Invoked**:
   - `GET /api/v1/organizations/:orgId/channels` (`listChannelsApi`)
   - `POST /api/v1/organizations/:orgId/channels` (`connectWhatsAppWithTokenApi` - BYO token)
+  - `PATCH /api/v1/organizations/:orgId/channels/:channelId/credentials` (`rotateChannelCredentialsApi`)
   - `POST /api/v1/organizations/:orgId/channels/whatsapp/embedded-signup/start` (`startWhatsAppEmbeddedSignupApi`)
   - `POST /api/v1/organizations/:orgId/channels/whatsapp/embedded-signup/complete` (`completeWhatsAppEmbeddedSignupApi`)
   - `POST /api/v1/organizations/:orgId/channels/:id/verify` (`verifyChannelApi`)
   - `DELETE /api/v1/organizations/:orgId/channels/:id` (`deleteChannelApi`)
-- **Permissions Gated**: `automation:publish` (required for connecting, verifying, or deleting channels).
-- **Credential Security**: Stored tokens are never returned by the backend. Rotating credentials requires entering a new access token.
+- **Permissions Gated**: `automation:publish` and `channel:manage` (required for connecting, rotating credentials, verifying, or deleting channels).
+- **Credential Security**: Stored tokens are never returned by the backend. Rotating credentials requires entering a new access token via `PATCH /channels/:channelId/credentials`.
 - **Non-Existent / Unsupported**: Meta quality rating, display-name health indicators, webhook verification fields in channel records.
 
 ### Surface 6: Developer API Keys & Webhooks (`DeveloperSettingsView.tsx`)
@@ -190,12 +200,13 @@ FlowDesk currently exposes **8 primary functional surfaces**, plus an unauthenti
 - **APIs Invoked**:
   - `GET /api/v1/organizations/:orgId/members` (`listMembers`)
   - `POST /api/v1/organizations/:orgId/invitations` (`inviteMember`)
-  - `PUT /api/v1/organizations/:orgId/members/:id/role` (`updateMemberRole`)
-  - `DELETE /api/v1/organizations/:orgId/members/:id` (`revokeMember`)
+  - `DELETE /api/v1/organizations/:orgId/invitations/:inviteId` (`revokeInvitation`)
+  - `PATCH /api/v1/organizations/:orgId/members/:memberId` (`updateMemberRole`)
+  - `DELETE /api/v1/organizations/:orgId/members/:memberId` (`revokeMember`)
 - **Permissions Gated**:
   - `membership:invite` (trigger invitation modal)
   - `membership:modify` (change member role dropdown)
-  - `membership:revoke` (remove team member)
+  - `membership:revoke` (remove team member or revoke invitation)
 - **Standard Roles**: `owner`, `admin`, `supervisor`, `agent`, `analyst`, `billing_admin`.
 
 ### Surface 8: Security Audit Logs (`App.tsx` tab "audit")
@@ -216,95 +227,119 @@ FlowDesk currently exposes **8 primary functional surfaces**, plus an unauthenti
   - `GET /api/v1/auth/session` (`getSession`)
   - `POST /api/v1/auth/logout` (`logout`)
   - `GET /api/v1/organizations` (`listUserOrganizations`)
-  - `POST /api/v1/organizations/bootstrap` (`bootstrapOrganization`)
+  - `POST /api/v1/organizations` (`bootstrapOrganization`)
   - `POST /api/v1/invitations/accept` (`acceptInvitation`)
 
 ---
 
 ## 4. Comprehensive API Dependency Matrix
 
-| Surface          | Endpoint                                                               | Method   | Client Helper                       | Zod / Schema Contract                          |
-| :--------------- | :--------------------------------------------------------------------- | :------- | :---------------------------------- | :--------------------------------------------- |
-| **Auth / Shell** | `/api/v1/system/build`                                                 | `GET`    | `getBuildInfo`                      | `BuildInfoSchema`                              |
-| **Auth / Shell** | `/api/v1/auth/session`                                                 | `GET`    | `getSession`                        | `SessionStateSchema`                           |
-| **Auth / Shell** | `/api/v1/auth/logout`                                                  | `POST`   | `logout`                            | Raw JSON (`{ status, logoutUrl }`)             |
-| **Auth / Shell** | `/api/v1/organizations`                                                | `GET`    | `listUserOrganizations`             | `ListUserOrganizationsResponseSchema`          |
-| **Auth / Shell** | `/api/v1/organizations/bootstrap`                                      | `POST`   | `bootstrapOrganization`             | `BootstrapOrganizationResponseSchema`          |
-| **Auth / Shell** | `/api/v1/invitations/accept`                                           | `POST`   | `acceptInvitation`                  | `AcceptInvitationResponseSchema`               |
-| **Inbox**        | `/api/v1/organizations/:id/conversations`                              | `GET`    | `listConversations`                 | `ListConversationsResponseSchema`              |
-| **Inbox**        | `/api/v1/organizations/:id/conversations/:id`                          | `GET`    | `getConversation`                   | `ConversationDetailResponseSchema`             |
-| **Inbox**        | `/api/v1/organizations/:id/conversations/:id/messages`                 | `POST`   | `createOutboundMessage`             | `MessageSchema`                                |
-| **Inbox**        | `/api/v1/organizations/:id/conversations/:id/operations`               | `POST`   | `performConversationOperation`      | `ConversationSchema`                           |
-| **Inbox**        | `/api/v1/organizations/:id/conversations/:id/drafts/:runId/actions`    | `POST`   | `submitBotDraftActionApi`           | `GenerateBotDraftResponseSchema`               |
-| **Inbox**        | `/api/v1/organizations/:id/inbox/resources`                            | `GET`    | `getInboxWorkspaceResources`        | `InboxWorkspaceResourcesResponseSchema`        |
-| **Inbox**        | `/api/v1/organizations/:id/templates/preview`                          | `POST`   | `previewTemplate`                   | `TemplatePreviewResponseSchema`                |
-| **Inbox**        | `/api/v1/organizations/:id/uploads/sessions`                           | `POST`   | `createUploadSession`               | `CreateUploadSessionResponseSchema`            |
-| **Inbox**        | `/api/v1/organizations/:id/attachments/:id`                            | `GET`    | `getAttachmentDetail`               | `AttachmentDetailResponseSchema`               |
-| **Analytics**    | `/api/v1/organizations/:id/analytics/overview`                         | `GET`    | `getAnalyticsMetricsApi`            | `AnalyticsMetricsResponseSchema`               |
-| **Analytics**    | `/api/v1/organizations/:id/analytics/export`                           | `GET`    | `exportAnalyticsReportApi`          | Blob (CSV)                                     |
-| **Knowledge**    | `/api/v1/organizations/:id/knowledge/sources`                          | `GET`    | `listKnowledgeSourcesApi`           | `ListKnowledgeSourcesResponseSchema`           |
-| **Knowledge**    | `/api/v1/organizations/:id/knowledge/sources`                          | `POST`   | `createKnowledgeSourceApi`          | `CreateKnowledgeSourceResponseSchema`          |
-| **Knowledge**    | `/api/v1/organizations/:id/bot/config`                                 | `GET`    | `getBotConfig`                      | `BotConfigSchema`                              |
-| **Knowledge**    | `/api/v1/organizations/:id/bot/config`                                 | `PUT`    | `updateBotConfig`                   | `BotConfigSchema`                              |
-| **Knowledge**    | `/api/v1/organizations/:id/automation/emergency-stop`                  | `POST`   | `setAutomationEmergencyStop`        | Raw JSON (`{ enabled }`)                       |
-| **Knowledge**    | `/api/v1/organizations/:id/automation/policies`                        | `GET`    | `fetchAutomationPolicies`           | `z.array(AutomationPolicySchema)`              |
-| **Knowledge**    | `/api/v1/organizations/:id/automation/policies/:id/publish`            | `POST`   | `publishAutomationPolicy`           | `AutomationPolicySchema`                       |
-| **Knowledge**    | `/api/v1/organizations/:id/automation/policies/simulate`               | `POST`   | `simulateAutomationPolicy`          | `SimulatePolicyResponseSchema`                 |
-| **Channels**     | `/api/v1/organizations/:id/channels`                                   | `GET`    | `listChannelsApi`                   | `ChannelClientRecord[]`                        |
-| **Channels**     | `/api/v1/organizations/:id/channels`                                   | `POST`   | `connectWhatsAppWithTokenApi`       | `CompleteWhatsAppEmbeddedSignupResponseSchema` |
-| **Channels**     | `/api/v1/organizations/:id/channels/whatsapp/embedded-signup/start`    | `POST`   | `startWhatsAppEmbeddedSignupApi`    | `StartWhatsAppEmbeddedSignupResponseSchema`    |
-| **Channels**     | `/api/v1/organizations/:id/channels/whatsapp/embedded-signup/complete` | `POST`   | `completeWhatsAppEmbeddedSignupApi` | `CompleteWhatsAppEmbeddedSignupResponseSchema` |
-| **Channels**     | `/api/v1/organizations/:id/channels/:id/verify`                        | `POST`   | `verifyChannelApi`                  | `ChannelClientRecord`                          |
-| **Channels**     | `/api/v1/organizations/:id/channels/:id`                               | `DELETE` | `deleteChannelApi`                  | Raw JSON                                       |
-| **Developer**    | `/api/v1/organizations/:id/developer/api-keys`                         | `GET`    | `listApiKeysApi`                    | `DeveloperApiKeyRecord[]`                      |
-| **Developer**    | `/api/v1/organizations/:id/developer/api-keys`                         | `POST`   | `createApiKeyApi`                   | `DeveloperApiKeyRecord & { rawKey }`           |
-| **Developer**    | `/api/v1/organizations/:id/developer/api-keys/:id`                     | `DELETE` | `revokeApiKeyApi`                   | Raw JSON                                       |
-| **Developer**    | `/api/v1/organizations/:id/developer/webhooks`                         | `GET`    | `listWebhooksApi`                   | `WebhookSubscriptionClientRecord[]`            |
-| **Developer**    | `/api/v1/organizations/:id/developer/webhooks`                         | `POST`   | `createWebhookApi`                  | `WebhookSubscriptionClientRecord & { secret }` |
-| **Developer**    | `/api/v1/organizations/:id/developer/webhooks/:id`                     | `DELETE` | `deleteWebhookApi`                  | Raw JSON                                       |
-| **Developer**    | `/api/v1/organizations/:id/developer/webhooks/:id/test`                | `POST`   | `testWebhookApi`                    | Raw JSON (`{ eventId, queued }`)               |
-| **Developer**    | `/api/v1/organizations/:id/developer/webhooks/:id/deliveries`          | `GET`    | `listWebhookDeliveriesApi`          | `WebhookDeliveryClientRecord[]`                |
-| **Team**         | `/api/v1/organizations/:id/members`                                    | `GET`    | `listMembers`                       | `ListMembersResponseSchema`                    |
-| **Team**         | `/api/v1/organizations/:id/invitations`                                | `POST`   | `inviteMember`                      | `CreateInvitationResponseSchema`               |
-| **Team**         | `/api/v1/organizations/:id/members/:id/role`                           | `PUT`    | `updateMemberRole`                  | Raw JSON                                       |
-| **Team**         | `/api/v1/organizations/:id/members/:id`                                | `DELETE` | `revokeMember`                      | Raw JSON                                       |
-| **Audit**        | `/api/v1/organizations/:id/audit-logs`                                 | `GET`    | `listAuditLogs`                     | `ListAuditLogsResponseSchema`                  |
+This matrix documents all 56 API client helper functions across `apps/web/src/api.ts` and `apps/web/src/automation-api.ts`, matching exact Express 5 backend route definitions.
+
+| Surface          | Exact HTTP Route                                                              | Method   | Client Helper                       | Zod / Payload Contract                         |
+| :--------------- | :---------------------------------------------------------------------------- | :------- | :---------------------------------- | :--------------------------------------------- |
+| **Auth / Shell** | `/api/v1/system/build`                                                        | `GET`    | `getBuildInfo`                      | `BuildInfoSchema`                              |
+| **Auth / Shell** | `/api/v1/auth/session`                                                        | `GET`    | `getSession`                        | `SessionStateSchema`                           |
+| **Auth / Shell** | `/api/v1/auth/logout`                                                         | `POST`   | `logout`                            | Raw JSON (`{ status, logoutUrl }`)             |
+| **Auth / Shell** | `/api/v1/organizations`                                                       | `GET`    | `listUserOrganizations`             | `ListUserOrganizationsResponseSchema`          |
+| **Auth / Shell** | `/api/v1/organizations`                                                       | `POST`   | `bootstrapOrganization`             | `BootstrapOrganizationResponseSchema`          |
+| **Auth / Shell** | `/api/v1/invitations/accept`                                                  | `POST`   | `acceptInvitation`                  | `AcceptInvitationResponseSchema`               |
+| **Inbox**        | `/api/v1/organizations/:orgId/conversations`                                  | `GET`    | `listConversations`                 | `ListConversationsResponseSchema`              |
+| **Inbox**        | `/api/v1/organizations/:orgId/conversations/:conversationId`                  | `GET`    | `getConversation`                   | `ConversationDetailResponseSchema`             |
+| **Inbox**        | `/api/v1/organizations/:orgId/conversations/:conversationId/messages`         | `POST`   | `createOutboundMessage`             | `MessageSchema`                                |
+| **Inbox**        | `/api/v1/organizations/:orgId/conversations/:conversationId/actions`          | `POST`   | `performConversationOperation`      | `ConversationSchema`                           |
+| **Inbox**        | `/api/v1/organizations/:orgId/conversations/workspace-resources`              | `GET`    | `getInboxWorkspaceResources`        | `InboxWorkspaceResourcesResponseSchema`        |
+| **Inbox**        | `/api/v1/organizations/:orgId/conversations/saved-filters`                    | `POST`   | `saveInboxFilter`                   | `SavedFilterSchema`                            |
+| **Inbox**        | `/api/v1/organizations/:orgId/conversations/saved-filters/:filterId`          | `DELETE` | `deleteInboxFilter`                 | Raw JSON (`{ success: true }`)                 |
+| **Inbox**        | `/api/v1/organizations/:orgId/conversations/:conversationId/templates`        | `GET`    | `listConversationTemplates`         | `ConversationTemplatesResponseSchema`          |
+| **Inbox**        | `/api/v1/organizations/:orgId/conversations/:conversationId/template-preview` | `POST`   | `previewTemplate`                   | `TemplatePreviewResponseSchema`                |
+| **Inbox**        | `/api/v1/organizations/:orgId/bot/draft/:conversationId`                      | `POST`   | `generateBotDraft`                  | `GenerateBotDraftResponseSchema`               |
+| **Inbox**        | `/api/v1/organizations/:orgId/bot/draft/:conversationId/latest`               | `GET`    | `getLatestBotDraft`                 | `GenerateBotDraftResponseSchema`               |
+| **Inbox**        | `/api/v1/organizations/:orgId/bot/draft-runs/:runId/action`                   | `POST`   | `applyBotDraftAction`               | `GenerateBotDraftResponseSchema`               |
+| **Inbox**        | `/api/v1/organizations/:orgId/attachments/upload-session`                     | `POST`   | `createAttachmentUploadSession`     | `CreateAttachmentUploadSessionResponseSchema`  |
+| **Inbox**        | `:uploadUrl`                                                                  | `PUT`    | `uploadAttachmentBytes`             | Binary Body (Presigned upload)                 |
+| **Inbox**        | `/api/v1/organizations/:orgId/attachments/:id/complete`                       | `POST`   | `completeAttachmentUpload`          | `CompleteAttachmentUploadResponseSchema`       |
+| **Inbox**        | `/api/v1/organizations/:orgId/attachments/:id`                                | `GET`    | `getAttachment`                     | `AttachmentDetailResponseSchema`               |
+| **Analytics**    | `/api/v1/organizations/:orgId/analytics/metrics?days=:days`                   | `GET`    | `getAnalyticsMetricsApi`            | `AnalyticsMetricsResponseSchema`               |
+| **Analytics**    | `/api/v1/organizations/:orgId/analytics/export`                               | `POST`   | `exportAnalyticsReportApi`          | Blob (CSV file download)                       |
+| **Knowledge**    | `/api/v1/organizations/:orgId/knowledge/sources`                              | `GET`    | `listKnowledgeSourcesApi`           | `ListKnowledgeSourcesResponseSchema`           |
+| **Knowledge**    | `/api/v1/organizations/:orgId/knowledge/sources`                              | `POST`   | `createKnowledgeSourceApi`          | `CreateKnowledgeSourceResponseSchema`          |
+| **Knowledge**    | `/api/v1/organizations/:orgId/bot/config`                                     | `GET`    | `getBotConfig`                      | `BotConfigSchema`                              |
+| **Knowledge**    | `/api/v1/organizations/:orgId/bot/config`                                     | `PUT`    | `updateBotConfig`                   | `BotConfigSchema`                              |
+| **Knowledge**    | `/api/v1/organizations/:orgId/routing/policies/draft`                         | `POST`   | `createAutomationPolicyDraft`       | `AutomationPolicySchema`                       |
+| **Knowledge**    | `/api/v1/organizations/:orgId/routing/policies`                               | `GET`    | `fetchAutomationPolicies`           | `z.array(AutomationPolicySchema)`              |
+| **Knowledge**    | `/api/v1/organizations/:orgId/routing/policies/:policyId/publish`             | `POST`   | `publishAutomationPolicy`           | `AutomationPolicySchema`                       |
+| **Knowledge**    | `/api/v1/organizations/:orgId/routing/policies/:policyId/rollback`            | `POST`   | `rollbackAutomationPolicy`          | `AutomationPolicySchema`                       |
+| **Knowledge**    | `/api/v1/organizations/:orgId/routing/policies/simulate`                      | `POST`   | `simulateAutomationPolicy`          | `SimulatePolicyResponseSchema`                 |
+| **Knowledge**    | `/api/v1/organizations/:orgId/automation/emergency-stop`                      | `POST`   | `setAutomationEmergencyStop`        | Raw JSON (`{ enabled }`)                       |
+| **Channels**     | `/api/v1/organizations/:orgId/channels`                                       | `GET`    | `listChannelsApi`                   | `ChannelClientRecord[]`                        |
+| **Channels**     | `/api/v1/organizations/:orgId/channels`                                       | `POST`   | `connectWhatsAppWithTokenApi`       | `CompleteWhatsAppEmbeddedSignupResponseSchema` |
+| **Channels**     | `/api/v1/organizations/:orgId/channels/:channelId/credentials`                | `PATCH`  | `rotateChannelCredentialsApi`       | `ChannelClientRecord`                          |
+| **Channels**     | `/api/v1/organizations/:orgId/channels/whatsapp/embedded-signup/start`        | `POST`   | `startWhatsAppEmbeddedSignupApi`    | `StartWhatsAppEmbeddedSignupResponseSchema`    |
+| **Channels**     | `/api/v1/organizations/:orgId/channels/whatsapp/embedded-signup/complete`     | `POST`   | `completeWhatsAppEmbeddedSignupApi` | `CompleteWhatsAppEmbeddedSignupResponseSchema` |
+| **Channels**     | `/api/v1/organizations/:orgId/channels/:id/verify`                            | `POST`   | `verifyChannelApi`                  | `ChannelClientRecord`                          |
+| **Channels**     | `/api/v1/organizations/:orgId/channels/:id`                                   | `DELETE` | `deleteChannelApi`                  | Raw JSON                                       |
+| **Developer**    | `/api/v1/organizations/:orgId/developer/api-keys`                             | `GET`    | `listApiKeysApi`                    | `DeveloperApiKeyRecord[]`                      |
+| **Developer**    | `/api/v1/organizations/:orgId/developer/api-keys`                             | `POST`   | `createApiKeyApi`                   | `DeveloperApiKeyRecord & { rawKey }`           |
+| **Developer**    | `/api/v1/organizations/:orgId/developer/api-keys/:id`                         | `DELETE` | `revokeApiKeyApi`                   | Raw JSON                                       |
+| **Developer**    | `/api/v1/organizations/:orgId/developer/webhooks`                             | `GET`    | `listWebhooksApi`                   | `WebhookSubscriptionClientRecord[]`            |
+| **Developer**    | `/api/v1/organizations/:orgId/developer/webhooks`                             | `POST`   | `createWebhookApi`                  | `WebhookSubscriptionClientRecord & { secret }` |
+| **Developer**    | `/api/v1/organizations/:orgId/developer/webhooks/:id`                         | `DELETE` | `deleteWebhookApi`                  | Raw JSON                                       |
+| **Developer**    | `/api/v1/organizations/:orgId/developer/webhooks/:id/test`                    | `POST`   | `testWebhookApi`                    | Raw JSON (`{ eventId, queued }`)               |
+| **Developer**    | `/api/v1/organizations/:orgId/developer/webhooks/:id/deliveries`              | `GET`    | `listWebhookDeliveriesApi`          | `WebhookDeliveryClientRecord[]`                |
+| **Team**         | `/api/v1/organizations/:orgId/members`                                        | `GET`    | `listMembers`                       | `ListMembersResponseSchema`                    |
+| **Team**         | `/api/v1/organizations/:orgId/invitations`                                    | `POST`   | `inviteMember`                      | `CreateInvitationResponseSchema`               |
+| **Team**         | `/api/v1/organizations/:orgId/invitations/:inviteId`                          | `DELETE` | `revokeInvitation`                  | Raw JSON                                       |
+| **Team**         | `/api/v1/organizations/:orgId/members/:memberId`                              | `PATCH`  | `updateMemberRole`                  | Raw JSON                                       |
+| **Team**         | `/api/v1/organizations/:orgId/members/:memberId`                              | `DELETE` | `revokeMember`                      | Raw JSON                                       |
+| **Audit**        | `/api/v1/organizations/:orgId/audit-logs`                                     | `GET`    | `listAuditLogs`                     | `ListAuditLogsResponseSchema`                  |
 
 ---
 
 ## 5. Realtime Transport & Projection Synchronization
 
-FlowDesk's realtime layer in `apps/web/src/realtime.ts` does **not** rely on arbitrary socket events (e.g. `message:created`, `conversation:updated`). Instead, it implements a **versioned projection hint system**:
+FlowDesk's realtime layer in `apps/web/src/realtime.ts` does **not** emit arbitrary entity-level events (e.g. `message:created` or `conversation:updated`). Instead, it implements a **versioned projection hint synchronization protocol** over Socket.IO:
 
-### Socket Lifecycle & Handshake
+### Current Authoritative Implementation (`realtime.ts`)
 
-1. **Connection**: Connects to `/realtime` via WebSocket/polling with credentials:
+1. **Connection**: Connects to the `/realtime` namespace using WebSocket transport with auth credentials:
    ```typescript
    auth: {
-     (organizationId, lastVersion);
+     organizationId: string,
+     lastVersion: number
    }
    ```
-2. **Readiness (`realtime.ready`)**: Server emits current authoritative version:
+2. **Readiness Event (`realtime.ready`)**: The server emits the organization's current authoritative version:
    ```typescript
-   { currentVersion: number, reconcileRequired: boolean }
+   {
+     currentVersion: number,
+     reconcileRequired: boolean
+   }
    ```
-   If `reconcileRequired` is `true`, client immediately invokes `options.onReconcile()`.
-3. **Projection Events (`projection.changed`)**: Server broadcasts version hints:
+   If `reconcileRequired` is `true`, the client immediately executes `options.onReconcile()` to refresh its local state from REST endpoints.
+3. **Projection Events (`projection.changed`)**: The server broadcasts projection change hints:
    ```typescript
-   { version: number, entityType: string, entityId: string, timestamp: string }
+   {
+     version: number,
+     entityType?: string,
+     entityId?: string,
+     timestamp?: string
+   }
    ```
-   If `hint.version > lastVersion + 1`, a sequence gap occurred; client triggers full reconciliation (`onReconcile()`). Otherwise, updates `lastVersion` and notifies `onHint()`.
-4. **Room Subscriptions**: Client emits `room.join` (`{ type: "conversation", id: activeConversationId }`) when viewing a specific conversation.
-5. **Security Gating (`access.revoked`)**: Server emits revocation notifications (`{ code, roomType }`), causing client to disconnect or redirect.
+   - If `hint.version > lastVersion + 1`, a sequence gap has occurred; the client marks a gap and executes `onReconcile()` to pull authoritative state.
+   - If contiguous, `lastVersion` increments to `hint.version` and `onHint(hint)` fires.
+4. **Room Subscriptions**: The client emits `room.join` (`{ type: "conversation", id: activeConversationId }`) when viewing a specific conversation.
+5. **Revocation Notice (`access.revoked`)**: The server notifies when organization or room access is revoked (`{ code, roomType }`), triggering graceful disconnection.
 
-### TanStack Query Integration Architecture
+### Proposed TanStack Query Cache Invalidation Design (Target for UI-02)
 
-In the modernized architecture (UI-02), realtime events must drive declarative cache invalidation rather than imperative component mutations:
+During UI-02, the imperative `onReconcile` pattern will be integrated with TanStack Query's declarative cache invalidation:
 
-- `onReconcile()` → Invokes `queryClient.invalidateQueries({ queryKey: conversationsKeys.all(orgId) })`.
-- `onHint(hint)` → Evaluates `hint.entityType`:
-  - `conversation` → invalidates `conversationsKeys.detail(orgId, hint.entityId)`.
-  - `draft` → invalidates `conversationsKeys.draft(orgId, hint.entityId)`.
+- `onReconcile()` → Dispatches `queryClient.invalidateQueries({ queryKey: ["conversations", orgId] })`.
+- `onHint(hint)` → Evaluates incoming `hint.entityType` (design proposal):
+  - When `hint.entityType === "conversation"` → Dispatches `queryClient.invalidateQueries({ queryKey: ["conversation", orgId, hint.entityId] })`.
+  - When `hint.entityType === "draft"` → Dispatches `queryClient.invalidateQueries({ queryKey: ["bot-draft", orgId, hint.entityId] })`.
+  - When unspecified or generic → Dispatches `queryClient.invalidateQueries({ queryKey: ["conversations", orgId] })`.
 
 ---
 
@@ -402,7 +437,7 @@ The redesign transforms these custom tokens into standard semantic CSS variables
 
 ## 9. Visual Baseline & Responsive Viewports
 
-Visual baseline capture and testing must target three standard viewports:
+Visual baseline capture and testing targets three standard viewports:
 
 | Tier        | Dimensions     | Layout Behavior                                                                                                                                                                    |
 | :---------- | :------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -410,9 +445,47 @@ Visual baseline capture and testing must target three standard viewports:
 | **Tablet**  | **1024 × 768** | Collapsed sidebar (slide-out Sheet); 2-pane Inbox (Queue + Message stream; Right context panel in sliding Sheet); 2-column metric cards.                                           |
 | **Mobile**  | **375 × 812**  | Hamburger header with drawer navigation; 1-pane Inbox (Queue view drills down into `/inbox/:conversationId`); single-column stacked forms/cards; horizontal scrolling data tables. |
 
+### Visual Baseline Packet Index
+
+All 24 baseline screenshots have been captured from the running React 19 application using synthetic staging fixtures (no customer PII or real credentials) and packaged into `docs/architecture/frontend-redesign-baseline/`:
+
+| Surface                      | Surface Key    | Desktop (1440×900)                                                                                                                                                         | Tablet (1024×768)                                                                                                                                                        | Mobile (375×812)                                                                                                                                                         |
+| :--------------------------- | :------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **1. Conversations / Inbox** | `01-inbox`     | [Desktop](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/01-inbox-desktop.png)     | [Tablet](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/01-inbox-tablet.png)     | [Mobile](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/01-inbox-mobile.png)     |
+| **2. Analytics & SLA**       | `02-analytics` | [Desktop](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/02-analytics-desktop.png) | [Tablet](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/02-analytics-tablet.png) | [Mobile](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/02-analytics-mobile.png) |
+| **3. AI Knowledge**          | `03-knowledge` | [Desktop](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/03-knowledge-desktop.png) | [Tablet](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/03-knowledge-tablet.png) | [Mobile](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/03-knowledge-mobile.png) |
+| **4. Workspace Shell**       | `04-workspace` | [Desktop](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/04-workspace-desktop.png) | [Tablet](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/04-workspace-tablet.png) | [Mobile](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/04-workspace-mobile.png) |
+| **5. WhatsApp Channels**     | `05-channels`  | [Desktop](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/05-channels-desktop.png)  | [Tablet](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/05-channels-tablet.png)  | [Mobile](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/05-channels-mobile.png)  |
+| **6. Developer Settings**    | `06-developer` | [Desktop](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/06-developer-desktop.png) | [Tablet](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/06-developer-tablet.png) | [Mobile](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/06-developer-mobile.png) |
+| **7. Team Settings**         | `07-team`      | [Desktop](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/07-team-desktop.png)      | [Tablet](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/07-team-tablet.png)      | [Mobile](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/07-team-mobile.png)      |
+| **8. Security Audit**        | `08-audit`     | [Desktop](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/08-audit-desktop.png)     | [Tablet](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/08-audit-tablet.png)     | [Mobile](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/08-audit-mobile.png)     |
+
 ---
 
-## 10. Test Coverage & Verification Baseline
+## 10. Accessibility & Compliance Baseline
+
+### Current Automated Findings (`axe-core`)
+
+The existing codebase includes automated accessibility suites executed with `axe-core` under Vitest / JSDOM (`InboxView.browser.test.tsx`):
+
+- **Automated Rule Posture**:
+  - `axe.run(container, { resultTypes: ["violations"], rules: { "color-contrast": { enabled: false } } })`
+  - **Results**: **0 serious or critical violations** on tested components.
+- **Known Limitations & JSDOM Disclaimers**:
+  - Color contrast checks are disabled during JSDOM test runs because JSDOM does not compute layout geometry, pseudo-elements, or rendered CSS variable color inheritance.
+  - Form validation error announcements currently rely on inline `<span>` text without `aria-live="polite"` or `aria-describedby` linking.
+  - Dialogs and modals in `App.tsx` and `DeveloperSettingsView.tsx` lack strict keyboard focus-traps and ESC-key dismiss listeners.
+
+### Target Accessibility Requirements for UI-10
+
+1. **WCAG 2.1 AA Compliance**: Contrast ratios of at least 4.5:1 for normal body text and 3:1 for large text/icons against semantic surfaces (`bg-background` and `bg-card`).
+2. **Accessible Dialog Primitives**: Radix UI / shadcn dialogs with automatic focus trapping, restore-focus-on-close, and `aria-modal="true"`.
+3. **Screen Reader Live Regions**: Realtime messages and toast notifications announce dynamically via `aria-live="polite"`.
+4. **Keyboard Operability**: Full keyboard traversal across conversation lists (`ArrowDown`/`ArrowUp`), command palettes, tabs, and action menus without focus-trapping bugs.
+
+---
+
+## 11. Test Coverage & Verification Baseline
 
 ### Baseline Test Execution Results (Pre-Redesign)
 
@@ -440,7 +513,7 @@ No existing behavioral test may be deleted during the redesign. Tests targeting 
 
 ---
 
-## 11. Code Donor & Architectural Reference Guidelines
+## 12. Code Donor & Architectural Reference Guidelines
 
 ### Primary Architectural Donor: `satnaing/shadcn-admin`
 
@@ -466,7 +539,7 @@ FlowDesk's domain types, API contracts, PostgreSQL models, RBAC rules, and Socke
 
 ---
 
-## 12. Page-by-Page Regression Checklist
+## 13. Page-by-Page Regression Checklist
 
 Before completing any surface redesign (UI-04 through UI-09) and before closing the milestone (UI-12), the following regression items must be verified:
 
@@ -487,7 +560,7 @@ Before completing any surface redesign (UI-04 through UI-09) and before closing 
 - [ ] AI Draft card renders suggested text, `ConfidenceMeter`, and expandable RAG citations.
 - [ ] AI Draft review actions ("Approve & Send", "Edit", "Discard" with rejection reason) function.
 - [ ] Pre-approved WhatsApp templates preview with variables and send correctly.
-- [ ] Media attachments upload and download via signed sessions.
+- [ ] Media attachments upload and download via signed sessions (`upload-session` -> `complete`).
 - [ ] Agent assignment and conversation resolution update backend state.
 
 ### Real-Time Analytics & SLA
@@ -513,6 +586,7 @@ Before completing any surface redesign (UI-04 through UI-09) and before closing 
 - [ ] Channel verification action triggers `verifyChannelApi` and updates badge.
 - [ ] Meta Embedded Signup flow loads Facebook SDK and exchanges tokens.
 - [ ] BYO credentials modal connects channel with masked token input.
+- [ ] Channel credential rotation updates access token via `rotateChannelCredentialsApi`.
 - [ ] Disconnecting a channel requires guarded confirmation dialog.
 
 ### Developer Integrations
@@ -529,7 +603,8 @@ Before completing any surface redesign (UI-04 through UI-09) and before closing 
 
 - [ ] Team members table displays avatars, emails, and role pills.
 - [ ] Inviting a member validates email and assigns standard role.
-- [ ] Inline role change updates member role immediately.
+- [ ] Revoking an invitation deletes pending invitation.
+- [ ] Inline role change updates member role immediately via `PATCH /members/:memberId`.
 - [ ] Removing a member triggers accessible confirmation dialog.
 - [ ] Audit log table displays security events with timestamps and actors.
 - [ ] Cursor pagination traverses audit event history cleanly.
