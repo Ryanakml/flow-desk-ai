@@ -642,10 +642,10 @@ describe("Modern Frontend Router & Navigation Architecture", () => {
       await router.navigate({ to: "/inbox" });
 
       await waitFor(() => {
-        expect(screen.getByTestId("theme-toggle-button")).toBeDefined();
+        expect(screen.getByRole("button", { name: "Toggle theme" })).toBeDefined();
       });
 
-      const button = screen.getByTestId("theme-toggle-button");
+      const button = screen.getByRole("button", { name: "Toggle theme" });
 
       // Default should be system or light
       // Open dropdown
