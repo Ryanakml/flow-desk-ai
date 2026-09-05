@@ -51,7 +51,10 @@ export function AppShell({ children }: AppShellProps) {
 
         {/* Global Toast Banners */}
         {errorMsg && (
-          <div className="m-3 flex shrink-0 items-center justify-between rounded-md border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive" role="alert">
+          <div
+            className="m-3 flex shrink-0 items-center justify-between rounded-md border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+            role="alert"
+          >
             <span>{errorMsg}</span>
             <button
               type="button"
@@ -64,7 +67,10 @@ export function AppShell({ children }: AppShellProps) {
           </div>
         )}
         {successMsg && (
-          <div className="m-3 flex shrink-0 items-center justify-between rounded-md border border-success/50 bg-success/10 px-4 py-3 text-sm text-success" role="status">
+          <div
+            className="m-3 flex shrink-0 items-center justify-between rounded-md border border-success/50 bg-success/10 px-4 py-3 text-sm text-success"
+            role="status"
+          >
             <span>{successMsg}</span>
             <button
               type="button"

@@ -5,6 +5,7 @@ This document describes the enterprise application shell implemented in `apps/we
 ## Architecture
 
 The AppShell utilizes a responsive CSS grid layout consisting of three main components:
+
 1. **AppSidebar**: A fixed-width navigation bar on the left (desktop >= 1024px). Can be toggled between expanded (256px) and collapsed (64px) states.
 2. **Header**: A top sticky bar containing contextual breadcrumbs, a global command palette trigger (Cmd+K), a theme toggle, and a mobile hamburger menu trigger.
 3. **Main Content**: A scrollable area where TanStack Router renders the active route component.

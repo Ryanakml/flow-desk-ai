@@ -512,7 +512,7 @@ describe("Modern Frontend Router & Navigation Architecture", () => {
 
     it("handles OrgSwitcher interaction", async () => {
       const { fetcher } = setupAuthMocks("owner");
-      
+
       // We need to return multiple organizations for the switcher test
       fetcher.mockImplementation((input) => {
         const url = requestUrl(input);
@@ -543,7 +543,7 @@ describe("Modern Frontend Router & Navigation Architecture", () => {
         }
         return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
       });
-      
+
       const user = userEvent.setup();
       render(<App />);
       await router.navigate({ to: "/inbox" });
@@ -561,7 +561,7 @@ describe("Modern Frontend Router & Navigation Architecture", () => {
 
       // Click the other org
       await user.click(screen.getByText("Organization B"));
-      
+
       // Assuming clicking it calls setSelectedOrgId, we expect a reload or redirect.
       // Our simple test just ensures the interaction doesn't crash and closes the menu.
       await waitFor(() => {
@@ -590,7 +590,7 @@ describe("Modern Frontend Router & Navigation Architecture", () => {
 
       // Select API Keys
       await user.type(screen.getByPlaceholderText("Type a command or search..."), "api");
-      
+
       // Find API keys in the DOM that might be filtered
       const apiKeysItem = screen.getByText("API Keys");
       await user.click(apiKeysItem);
@@ -637,7 +637,7 @@ describe("Modern Frontend Router & Navigation Architecture", () => {
       const user = userEvent.setup();
       // Clear localStorage before testing
       window.localStorage.removeItem("flowdesk-theme");
-      
+
       render(<App />);
       await router.navigate({ to: "/inbox" });
 
@@ -646,7 +646,7 @@ describe("Modern Frontend Router & Navigation Architecture", () => {
       });
 
       const button = screen.getByTestId("theme-toggle-button");
-      
+
       // Default should be system or light
       // Open dropdown
       await user.click(button);
@@ -656,7 +656,7 @@ describe("Modern Frontend Router & Navigation Architecture", () => {
 
       // Click Dark
       await user.click(screen.getByText("Dark"));
-      
+
       await waitFor(() => {
         expect(document.documentElement.classList.contains("dark")).toBe(true);
         expect(window.localStorage.getItem("flowdesk-theme")).toBe("dark");
