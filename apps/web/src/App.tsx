@@ -26,7 +26,6 @@ import { DeveloperSettingsView } from "./DeveloperSettingsView.js";
 import { AnalyticsView } from "./AnalyticsView.js";
 import { KnowledgeView } from "./KnowledgeView.js";
 import "./styles.css";
-import { DesignSystemShowcase } from "./DesignSystemShowcase.js";
 
 function FlowDeskIcon({ size = 20 }: { size?: number }) {
   return (
@@ -71,13 +70,6 @@ type Tab =
   | "audit";
 
 export function App() {
-  // Dev-only / test showcase check
-  if (
-    typeof window !== "undefined" &&
-    new URLSearchParams(window.location.search).get("showcase") === "true"
-  ) {
-    return <DesignSystemShowcase />;
-  }
   const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);

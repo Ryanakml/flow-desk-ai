@@ -144,7 +144,12 @@ Input primitives strictly adhere to the security rules defined in the M6.5 Migra
 
 ## 8. Visual Evidence & Showcase Harness
 
-A non-production development showcase harness is provided at `apps/web/src/DesignSystemShowcase.tsx` and accessible via `/?showcase=true`.
+A non-production development showcase harness is provided at `apps/web/src/DesignSystemShowcase.tsx`.
+To guarantee production safety:
+
+- In `apps/web/src/main.tsx`, the showcase is gated by `import.meta.env.DEV && new URLSearchParams(window.location.search).get("showcase") === "true"`.
+- In production builds (`import.meta.env.DEV === false`), `App.tsx` is **always** rendered unconditionally, and `?showcase=true` has zero effect.
+- `App.tsx` contains no showcase-specific branching or conditional returns before hooks.
 
 Captured visual evidence:
 
@@ -153,13 +158,24 @@ Captured visual evidence:
 
 ---
 
-## 9. How to Add a New Shared Primitive
+## 9. Accessibility Verification & Evidence
+
+FlowDesk primitives are engineered with an accessibility-first posture, with evidence scoped accurately:
+
+- **Automated Fixture Scan**: The automated test suite (`packages/ui/src/index.test.tsx`) runs `axe-core` against a representative interactive fixture (containing Card, Label, Input, Switch, Checkbox, Tabs, and Button). The fixture has **zero serious or critical automated violations**.
+- **Contrast Exclusion in Automated Tests**: Color-contrast verification is explicitly excluded (`rules: { "color-contrast": { enabled: false } }`) from the automated jsdom test suite, because headless jsdom does not calculate computed styles or real font/canvas rendering. Color contrast requires separate/manual validation in real browser viewports across both light and dark themes.
+- **Keyboard & Focus Handling**: Underlying primitives leverage Radix UI to enforce accessible keyboard navigation (`Tab`, `Arrow` keys), focus retention/trapping within modals, and `Escape` key dismissal. Focused interaction tests verify keyboard and attribute semantics.
+- **M6.5 Milestone Scope**: Full comprehensive WCAG 2.1 AA acceptance testing across all composite views and color pairings will be conducted during later M6.5 milestone acceptance work (UI-11 / UI-12), rather than claiming universal compliance at the primitive foundation phase.
+
+---
+
+## 10. How to Add a New Shared Primitive
 
 1. Verify that the candidate primitive is **strictly domain-neutral** (no WhatsApp, billing, or FlowDesk entity logic).
 2. Install the underlying Radix UI primitive in `packages/ui` if applicable (`pnpm add @radix-ui/react-<primitive> --filter @flowdesk/ui`).
 3. Author the component in `packages/ui/src/components/<name>.tsx` using CVA and `cn()`.
 4. Export the component from `packages/ui/src/index.tsx`.
-5. Add unit and accessibility tests in `packages/ui/src/index.test.tsx` verifying render, interaction, and `axe-core` clean status.
+5. Add unit and accessibility tests in `packages/ui/src/index.test.tsx` verifying render, interaction, and automated `axe-core` clean status.
 6. Verify monorepo build and linting: `pnpm --filter @flowdesk/ui test && pnpm --filter @flowdesk/ui build`.
 
 ### What NOT to Put in `packages/ui`

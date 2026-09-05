@@ -1,8 +1,18 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, beforeAll } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
+
+beforeAll(() => {
+  if (typeof globalThis.ResizeObserver === "undefined") {
+    globalThis.ResizeObserver = class ResizeObserver {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    };
+  }
+});
 import {
   Button,
   Badge,
@@ -24,7 +34,12 @@ import {
   Switch,
   Checkbox,
   EmptyState,
-  StatusBadge
+  StatusBadge,
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+  Label
 } from "./index.js";
 
 describe("@flowdesk/ui Foundation Primitives", () => {
@@ -190,7 +205,7 @@ describe("@flowdesk/ui Foundation Primitives", () => {
     expect(screen.getByRole("button", { name: "Connect Channel" })).toBeTruthy();
   });
 
-  it("has zero serious or critical axe-core automated accessibility violations", async () => {
+  it("representative automated axe fixture has zero serious or critical violations (contrast excluded)", async () => {
     const { container } = render(
       <main>
         <Card>
@@ -199,8 +214,28 @@ describe("@flowdesk/ui Foundation Primitives", () => {
           </CardHeader>
           <CardContent>
             <form className="space-y-4">
-              <label htmlFor="token-input">Webhook Token</label>
+              <Label htmlFor="token-input">Webhook Token</Label>
               <Input id="token-input" type="password" defaultValue="sec_live_123" />
+              <div className="flex items-center gap-2">
+                <Switch id="auto-rotate" aria-label="Auto rotate secrets" />
+                <Label htmlFor="auto-rotate">Auto-rotate secrets</Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Checkbox id="confirm-policy" aria-label="Confirm security policy" />
+                <Label htmlFor="confirm-policy">Confirm security policy</Label>
+              </div>
+              <Tabs defaultValue="general">
+                <TabsList aria-label="Settings tabs">
+                  <TabsTrigger value="general">General</TabsTrigger>
+                  <TabsTrigger value="advanced">Advanced</TabsTrigger>
+                </TabsList>
+                <TabsContent value="general">
+                  <p>General configuration options.</p>
+                </TabsContent>
+                <TabsContent value="advanced">
+                  <p>Advanced enterprise controls.</p>
+                </TabsContent>
+              </Tabs>
               <Button type="submit">Update Token</Button>
             </form>
           </CardContent>
@@ -208,6 +243,9 @@ describe("@flowdesk/ui Foundation Primitives", () => {
       </main>
     );
 
+    // Note: color-contrast is excluded from this automated jsdom axe fixture because
+    // jsdom does not calculate computed styles or real font/canvas rendering.
+    // Contrast requires separate/manual validation in real browser viewports.
     const results = await axe.run(container, {
       resultTypes: ["violations"],
       rules: { "color-contrast": { enabled: false } }
