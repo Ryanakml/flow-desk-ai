@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App, router } from "./App.js";
@@ -61,6 +61,17 @@ describe("Modern Frontend Router & Navigation Architecture", () => {
   beforeEach(() => {
     queryClient.clear();
     vi.stubGlobal("scrollTo", vi.fn());
+    vi.stubGlobal(
+      "ResizeObserver",
+      vi.fn().mockImplementation(() => ({
+        observe: vi.fn(),
+        unobserve: vi.fn(),
+        disconnect: vi.fn()
+      }))
+    );
+    window.HTMLElement.prototype.scrollIntoView = vi.fn();
+    window.Element.prototype.scrollIntoView = vi.fn();
+    window.history.replaceState({}, "", "/");
   });
 
   afterEach(() => {
@@ -68,6 +79,8 @@ describe("Modern Frontend Router & Navigation Architecture", () => {
     queryClient.clear();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    document.body.removeAttribute("style");
+    document.body.removeAttribute("data-scroll-locked");
   });
 
   function setupAuthMocks(role: string = "owner") {
@@ -378,5 +391,287 @@ describe("Modern Frontend Router & Navigation Architecture", () => {
 
     expect(await screen.findByText("Invite Team Member")).toBeTruthy();
     expect(screen.getByLabelText("Email Address")).toBeTruthy();
+  });
+
+  describe("Enterprise AppShell, Navigation & Workspace UX (UI-03)", () => {
+    it("renders the enterprise desktop shell with brand, navigation groups, and user navigation", async () => {
+      setupAuthMocks("owner");
+      render(<App />);
+      await router.navigate({ to: "/inbox" });
+
+      // App shell structure
+      await waitFor(() => {
+        expect(screen.getByTestId("app-shell")).toBeDefined();
+        expect(screen.getByTestId("app-sidebar")).toBeDefined();
+        expect(screen.getByTestId("app-header")).toBeDefined();
+      });
+
+      // Check organization identity
+      expect(screen.getByTestId("active-org-badge")).toBeDefined();
+      expect(screen.getByText("Acme Corp")).toBeDefined();
+
+      // Check user navigation trigger and badge
+      expect(screen.getByTestId("user-nav-trigger")).toBeDefined();
+      expect(screen.getByText("Test User")).toBeDefined();
+      expect(screen.getByText("owner@flowdesk.dev")).toBeDefined();
+
+      // Check navigation groups & links
+      expect(screen.getByTestId("nav-link-/inbox")).toBeDefined();
+      expect(screen.getByTestId("nav-link-/analytics")).toBeDefined();
+      expect(screen.getByTestId("nav-link-/knowledge")).toBeDefined();
+      expect(screen.getByTestId("nav-link-/channels")).toBeDefined();
+      expect(screen.getByTestId("nav-link-/developer/api-keys")).toBeDefined();
+      expect(screen.getByTestId("nav-link-/developer/webhooks")).toBeDefined();
+      expect(screen.getByTestId("nav-link-/team")).toBeDefined();
+      // Owner has audit:view permission
+      expect(screen.getByTestId("nav-link-/audit")).toBeDefined();
+      expect(screen.getByTestId("nav-link-/settings/workspace")).toBeDefined();
+
+      // Check active route attribute on current page
+      expect(screen.getByTestId("nav-link-/inbox").getAttribute("data-active")).toBe("true");
+    });
+
+    it("filters out audit navigation when user lacks audit:view permission", async () => {
+      setupAuthMocks("agent");
+      render(<App />);
+      await router.navigate({ to: "/inbox" });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("app-shell")).toBeDefined();
+        expect(screen.getByTestId("nav-link-/inbox")).toBeDefined();
+      });
+
+      // Sidebar should NOT have audit link
+      expect(screen.queryByTestId("nav-link-/audit")).toBeNull();
+
+      // But should have accessible routes
+      expect(screen.getByTestId("nav-link-/analytics")).toBeDefined();
+    });
+
+    it("supports toggling sidebar collapse state", async () => {
+      setupAuthMocks("owner");
+      render(<App />);
+      await router.navigate({ to: "/inbox" });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("sidebar-collapse-button")).toBeDefined();
+      });
+
+      const collapseBtn = screen.getByTestId("sidebar-collapse-button");
+      collapseBtn.click();
+
+      await waitFor(() => {
+        expect(screen.getByTestId("app-sidebar").className).toContain("w-16");
+      });
+
+      collapseBtn.click();
+      await waitFor(() => {
+        expect(screen.getByTestId("app-sidebar").className).toContain("w-64");
+      });
+    });
+
+    it("renders user information and role pill correctly in UserNav", async () => {
+      setupAuthMocks("owner");
+      render(<App />);
+      await router.navigate({ to: "/inbox" });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("user-nav-trigger")).toBeDefined();
+        expect(screen.getByTestId("user-role-badge")).toBeDefined();
+      });
+
+      expect(screen.getByTestId("user-role-badge").textContent?.toLowerCase()).toContain("owner");
+      expect(screen.getByText("Test User")).toBeDefined();
+    });
+
+    it("handles UserNav sign out behavior", async () => {
+      setupAuthMocks("owner");
+      const user = userEvent.setup();
+      render(<App />);
+      await router.navigate({ to: "/inbox" });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("user-nav-trigger")).toBeDefined();
+      });
+
+      // Open UserNav dropdown
+      await user.click(screen.getByTestId("user-nav-trigger"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("logout-btn")).toBeDefined();
+      });
+
+      // Click sign out
+      await user.click(screen.getByTestId("logout-btn"));
+
+      // Verify sign out side effect
+      // If we mock logout logic, we'd verify the mock was called.
+      // Since it redirects to login or clears session, we can check for unauthenticated view.
+      await waitFor(() => {
+        expect(screen.getByText("Sign in with SSO / OIDC")).toBeDefined();
+      });
+    });
+
+    it("handles OrgSwitcher interaction", async () => {
+      const { fetcher } = setupAuthMocks("owner");
+
+      // We need to return multiple organizations for the switcher test
+      fetcher.mockImplementation((input) => {
+        const url = requestUrl(input);
+        if (url === "/api/v1/organizations") {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                organizations: [
+                  {
+                    id: organizationId,
+                    slug: "acme-corp",
+                    name: "Acme Corp",
+                    role: "owner",
+                    membershipId
+                  },
+                  {
+                    id: "b0000000-0000-4000-8000-000000000002",
+                    slug: "org-b",
+                    name: "Organization B",
+                    role: "agent",
+                    membershipId: "b-mem"
+                  }
+                ]
+              }),
+              { status: 200 }
+            )
+          );
+        }
+        return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
+      });
+
+      const user = userEvent.setup();
+      render(<App />);
+      await router.navigate({ to: "/inbox" });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("org-switcher-trigger")).toBeDefined();
+      });
+
+      // Open the switcher
+      await user.click(screen.getByTestId("org-switcher-trigger"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Organization B")).toBeDefined();
+      });
+
+      // Click the other org
+      await user.click(screen.getByText("Organization B"));
+
+      // Assuming clicking it calls setSelectedOrgId, we expect a reload or redirect.
+      // Our simple test just ensures the interaction doesn't crash and closes the menu.
+      await waitFor(() => {
+        expect(screen.queryByText("Organization B")).toBeNull(); // Menu closed
+      });
+    });
+
+    it("opens and interacts with Command Menu via Cmd+K", async () => {
+      setupAuthMocks("owner");
+      render(<App />);
+      await router.navigate({ to: "/inbox" });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("app-shell")).toBeDefined();
+      });
+
+      fireEvent.click(screen.getByTestId("command-menu-trigger"));
+
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText("Type a command or search...")).toBeDefined();
+        // Should show Developer links
+        expect(screen.getByText("API Keys")).toBeDefined();
+      });
+
+      // Select API Keys
+      fireEvent.change(screen.getByPlaceholderText("Type a command or search..."), {
+        target: { value: "api" }
+      });
+
+      const apiKeysItem = screen.getByText("API Keys");
+      fireEvent.click(apiKeysItem);
+
+      await waitFor(() => {
+        expect(router.state.location.pathname).toBe("/developer/api-keys");
+      });
+    });
+
+    it("handles Mobile Nav (Sheet) open and close", async () => {
+      setupAuthMocks("owner");
+      render(<App />);
+      await router.navigate({ to: "/inbox" });
+
+      await waitFor(() => {
+        expect(screen.getByTestId("mobile-hamburger-button")).toBeDefined();
+      });
+
+      // Open Sheet
+      fireEvent.click(screen.getByTestId("mobile-hamburger-button"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("mobile-sheet-content")).toBeDefined();
+      });
+
+      // The mobile sheet has an Inbox link
+      const sheetContent = screen.getByTestId("mobile-sheet-content");
+      const inboxLink = sheetContent.querySelector('[data-testid="nav-link-/inbox"]');
+      expect(inboxLink).toBeDefined();
+
+      if (inboxLink) {
+        fireEvent.click(inboxLink);
+      }
+
+      // Clicking link should close the sheet
+      await waitFor(() => {
+        expect(screen.queryByTestId("mobile-sheet-content")).toBeNull();
+      });
+    });
+
+    it("persists theme preference across toggles", async () => {
+      setupAuthMocks("owner");
+      // Clear localStorage before testing
+      window.localStorage.removeItem("flowdesk-theme");
+
+      render(<App />);
+      await router.navigate({ to: "/inbox" });
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Toggle theme" })).toBeDefined();
+      });
+
+      const button = screen.getByRole("button", { name: "Toggle theme" });
+
+      // Default should be system or light
+      // Open dropdown
+      fireEvent.click(button);
+      await waitFor(() => {
+        expect(screen.getByText("Dark")).toBeDefined();
+      });
+
+      // Click Dark
+      fireEvent.click(screen.getByText("Dark"));
+
+      await waitFor(() => {
+        expect(document.documentElement.classList.contains("dark")).toBe(true);
+        expect(window.localStorage.getItem("flowdesk-theme")).toBe("dark");
+      });
+
+      // Toggle back to Light
+      fireEvent.click(button);
+      await waitFor(() => {
+        expect(screen.getByText("Light")).toBeDefined();
+      });
+      fireEvent.click(screen.getByText("Light"));
+
+      await waitFor(() => {
+        expect(document.documentElement.classList.contains("dark")).toBe(false);
+        expect(window.localStorage.getItem("flowdesk-theme")).toBe("light");
+      });
+    });
   });
 });

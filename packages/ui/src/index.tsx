@@ -45,3 +45,5 @@ export * from "./components/tabs.js";
 export * from "./components/breadcrumb.js";
 export * from "./components/skeleton.js";
 export * from "./components/empty-state.js";
+export * from "./components/avatar.js";
+export * from "./components/command.js";
