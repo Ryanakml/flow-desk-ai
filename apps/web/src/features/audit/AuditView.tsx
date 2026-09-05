@@ -65,64 +65,42 @@ export function AuditView() {
                 <th>Time</th>
                 <th>Action</th>
                 <th>Target</th>
-                <th>Actor</th>
-                <th>Details</th>
+                <th>Result</th>
               </tr>
             </thead>
             <tbody>
               {auditLogs.map((log) => (
                 <tr key={log.id}>
-                  <td style={{ whiteSpace: "nowrap", color: "var(--color-text-muted)" }}>
-                    {new Date(log.occurredAt).toLocaleString()}
-                  </td>
+                  <td>{new Date(log.occurredAt).toLocaleString()}</td>
                   <td>
-                    <span className="code-pill">{log.action}</span>
+                    <code>{log.action}</code>
                   </td>
+                  <td>{log.targetType}</td>
                   <td>
-                    {log.targetType}
-                    {log.targetId && (
-                      <span
-                        style={{
-                          fontSize: "0.75rem",
-                          color: "var(--color-text-muted)",
-                          display: "block"
-                        }}
-                      >
-                        {log.targetId.slice(0, 8)}…
-                      </span>
-                    )}
-                  </td>
-                  <td>
-                    <span className="user-pill">
-                      {log.actorUserId ? log.actorUserId.slice(0, 8) : "system"}
-                    </span>
-                  </td>
-                  <td>
-                    <pre
+                    <span
                       style={{
-                        margin: 0,
-                        fontSize: "0.75rem",
-                        maxHeight: "3.5rem",
-                        overflow: "hidden"
+                        color:
+                          log.result === "allowed" ? "var(--color-success)" : "var(--color-danger)"
                       }}
                     >
-                      {JSON.stringify(log.metadata)}
-                    </pre>
+                      {log.result}
+                    </span>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-          {auditPageInfo?.endCursor && auditPageInfo.hasNextPage && (
-            <div style={{ padding: "1rem", textAlign: "center" }}>
+          {auditPageInfo?.hasNextPage && auditPageInfo.endCursor && (
+            <div style={{ padding: "1rem", textAlign: "right" }}>
               <button
                 type="button"
                 onClick={() =>
-                  selectedOrgId && void loadAudit(selectedOrgId, auditPageInfo.endCursor!)
+                  selectedOrgId &&
+                  void loadAudit(selectedOrgId, auditPageInfo.endCursor ?? undefined)
                 }
                 className="btn btn-secondary btn-sm"
               >
-                Load More
+                Next page →
               </button>
             </div>
           )}

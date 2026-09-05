@@ -41,6 +41,6 @@ describe("App UI Shell (M1-07)", () => {
     );
 
     render(<App />);
-    expect(await screen.findByText("Sign In with Enterprise SSO")).toBeTruthy();
+    expect(await screen.findByText("Sign in with SSO / OIDC")).toBeTruthy();
   });
 });

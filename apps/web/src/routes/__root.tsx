@@ -1,27 +1,35 @@
 import { createRootRoute, Outlet, Link, useRouterState } from "@tanstack/react-router";
 import { useEffect, useId, useState } from "react";
 import { useAuth } from "../features/auth/context.js";
-import { useRealtimeSync } from "../realtime.js";
-import { handleRealtimeHint, handleRealtimeReconciliation } from "../lib/realtime-adapter.js";
-import { useQueryClient } from "@tanstack/react-query";
-import type { RealtimeHint } from "@flowdesk/contracts";
 
 function FlowDeskIcon({ size = 20 }: { size?: number }) {
   return (
     <svg
       width={size}
       height={size}
-      viewBox="0 0 24 24"
+      viewBox="0 0 32 32"
       fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
+      xmlns="http://www.w3.org/2000/svg"
     >
-      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-      <path d="M8 10h.01" />
-      <path d="M12 10h.01" />
-      <path d="M16 10h.01" />
+      <defs>
+        <linearGradient
+          id="fdGradIcon"
+          x1="4"
+          y1="4"
+          x2="28"
+          y2="28"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop offset="0%" stopColor="#10B981" />
+          <stop offset="100%" stopColor="#0EA5E9" />
+        </linearGradient>
+      </defs>
+      <path
+        fillRule="evenodd"
+        clipRule="evenodd"
+        d="M16 3C8.8203 3 3 8.8203 3 16C3 18.73 3.84 21.26 5.28 23.36L3.25 28.75L8.79 26.89C10.82 28.24 13.31 29 16 29C23.1797 29 29 23.1797 29 16C29 8.8203 23.1797 3 16 3ZM10.5 9.5C10.5 8.67157 11.1716 8 12 8H21C21.8284 8 22.5 8.67157 22.5 9.5C22.5 10.3284 21.8284 11 21 11H14.5V13.5H19.5C20.3284 13.5 21 14.1716 21 15C21 15.8284 20.3284 16.5 19.5 16.5H14.5V22.5C14.5 23.3284 13.8284 24 13 24C12.1716 24 11.5 23.3284 11.5 22.5V16.5H12C11.1716 16.5 10.5 15.8284 10.5 15V9.5Z"
+        fill="url(#fdGradIcon)"
+      />
     </svg>
   );
 }
@@ -50,6 +58,9 @@ function RootNotFoundComponent() {
 }
 
 function RootErrorComponent({ error }: { error: unknown }) {
+  if (process.env["NODE_ENV"] !== "production") {
+    console.error("Router error:", error);
+  }
   return (
     <div
       className="glass-card"
@@ -57,7 +68,7 @@ function RootErrorComponent({ error }: { error: unknown }) {
     >
       <h2 className="section-title">An unexpected error occurred</h2>
       <p className="section-subtitle" style={{ margin: "1rem 0 2rem" }}>
-        {error instanceof Error ? error.message : "A client routing or rendering error occurred."}
+        A client application error occurred. Please reload or return to the inbox.
       </p>
       <button type="button" onClick={() => window.location.reload()} className="btn btn-primary">
         Reload Application
@@ -87,7 +98,6 @@ function RootComponent() {
     checkPermission
   } = useAuth();
 
-  const queryClient = useQueryClient();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
   // Update document title on route transitions
@@ -103,21 +113,6 @@ function RootComponent() {
     else if (pathname.startsWith("/settings/workspace")) title = "FlowDesk — Workspace";
     document.title = title;
   }, [pathname]);
-
-  // Realtime hook integration
-  useRealtimeSync({
-    organizationId: selectedOrgId,
-    enabled: Boolean(selectedOrgId),
-    onHint: (hint: RealtimeHint) => handleRealtimeHint(queryClient, hint),
-    onReconcile: () => {
-      if (selectedOrgId) {
-        handleRealtimeReconciliation(queryClient, selectedOrgId);
-      }
-    },
-    onAccessRevoked: (data) => {
-      showToast(`Access revoked: ${data.code}`, true);
-    }
-  });
 
   const [newOrgName, setNewOrgName] = useState("");
   const [newOrgSlug, setNewOrgSlug] = useState("");
@@ -145,7 +140,7 @@ function RootComponent() {
             </svg>
           </div>
           <h2 className="login-title">Loading FlowDesk…</h2>
-          <p className="login-desc">Verifying secure tenant session</p>
+          <p className="login-subtitle">Verifying secure tenant session</p>
         </div>
       </div>
     );
@@ -156,16 +151,18 @@ function RootComponent() {
     return (
       <div className="login-wrap">
         <div className="glass-card login-card">
-          <div
-            className="login-icon"
-            style={{ display: "inline-flex", alignItems: "center", justifyContent: "center" }}
-          >
-            <FlowDeskIcon size={32} />
+          <div className="login-icon" style={{ background: "transparent", border: "none" }}>
+            <FlowDeskIcon size={40} />
           </div>
           <h1 className="login-title">FlowDesk</h1>
-          <p className="login-desc">Sign in to your enterprise customer operations cockpit.</p>
-          <a href="/api/v1/auth/login" className="btn btn-primary login-btn" id="login-btn">
-            Sign In with Enterprise SSO
+          <p className="login-subtitle">AI-first customer operations platform</p>
+          <a
+            href="/api/v1/auth/login"
+            className="btn btn-primary"
+            style={{ width: "100%", justifyContent: "center" }}
+            id="login-button"
+          >
+            Sign in with SSO / OIDC
           </a>
         </div>
       </div>
@@ -175,21 +172,66 @@ function RootComponent() {
   // 3. Pending Invitation State
   if (inviteToken) {
     return (
-      <div className="login-wrap">
-        <div className="glass-card login-card">
-          <div className="login-icon">✉️</div>
-          <h2 className="login-title">Invitation Received</h2>
-          <p className="login-desc">You have been invited to collaborate with an organization.</p>
-          <button
-            type="button"
-            onClick={() => void handleAcceptInvite()}
-            disabled={acceptingInvite}
-            className="btn btn-primary login-btn"
-            id="accept-invitation-btn"
-          >
-            {acceptingInvite ? "Joining…" : "Accept Invitation & Join"}
-          </button>
-        </div>
+      <div className="app-container">
+        <header className="top-nav">
+          <div className="brand-section">
+            <span className="logo-badge">
+              <span className="logo-icon" style={{ display: "inline-flex", alignItems: "center" }}>
+                <FlowDeskIcon size={20} />
+              </span>
+              FlowDesk
+            </span>
+          </div>
+          <div className="user-controls">
+            <span className="user-badge">
+              <span className="user-avatar">{sessionUser.displayName.charAt(0)}</span>
+              {sessionUser.displayName}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                void handleLogout();
+              }}
+              className="btn btn-secondary btn-sm"
+            >
+              Sign out
+            </button>
+          </div>
+        </header>
+
+        <main className="main-content">
+          {errorMsg && <div className="toast-banner toast-error">{errorMsg}</div>}
+          <div className="glass-card empty-state">
+            <div className="empty-icon-wrap">
+              <svg
+                width="32"
+                height="32"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                <polyline points="22,6 12,13 2,6" />
+              </svg>
+            </div>
+            <h2 className="empty-title">Organization Invitation</h2>
+            <p className="empty-desc">
+              You have been invited to join an organization workspace. Accept the invitation to
+              access conversations and collaborate with your team.
+            </p>
+            <div style={{ display: "flex", gap: "0.75rem", justifyContent: "center" }}>
+              <button
+                type="button"
+                onClick={() => void handleAcceptInvite()}
+                disabled={acceptingInvite}
+                className="btn btn-primary"
+              >
+                {acceptingInvite ? "Accepting…" : "Accept invitation"}
+              </button>
+            </div>
+          </div>
+        </main>
       </div>
     );
   }
@@ -197,26 +239,64 @@ function RootComponent() {
   // 4. Onboarding / Bootstrap Screen
   if (organizations.length === 0) {
     return (
-      <div className="login-wrap">
-        <main className="glass-card login-card" style={{ maxWidth: 440 }}>
-          <div
-            className="login-icon"
-            style={{ display: "inline-flex", alignItems: "center", justifyContent: "center" }}
-          >
-            <FlowDeskIcon size={32} />
+      <div className="app-container">
+        <header className="top-nav">
+          <div className="brand-section">
+            <span className="logo-badge">
+              <span className="logo-icon" style={{ display: "inline-flex", alignItems: "center" }}>
+                <FlowDeskIcon size={20} />
+              </span>
+              FlowDesk
+            </span>
           </div>
-          <h1 className="login-title">Create your organization</h1>
-          <p className="login-desc">
-            Welcome, {sessionUser.displayName}. To begin, create your first organization workspace
-            to establish your isolated tenant boundary.
-          </p>
+          <div className="user-controls">
+            <span className="user-badge">
+              <span className="user-avatar">{sessionUser.displayName.charAt(0)}</span>
+              {sessionUser.displayName}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                void handleLogout();
+              }}
+              className="btn btn-secondary btn-sm"
+            >
+              Sign out
+            </button>
+          </div>
+        </header>
 
-          <div style={{ textAlign: "left", marginTop: "1.5rem" }}>
+        <main className="main-content">
+          {errorMsg && <div className="toast-banner toast-error">{errorMsg}</div>}
+          <div className="glass-card onboarding-wrap">
+            <div className="empty-icon-wrap">
+              <svg
+                width="28"
+                height="28"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                <polyline points="9 22 9 12 15 12 15 22" />
+              </svg>
+            </div>
+            <h2 className="empty-title">Create your organization</h2>
+            <p className="empty-desc">
+              Bootstrap an isolated multi-tenant organization to start customer support operations.
+            </p>
             <form
               onSubmit={(e) => {
                 e.preventDefault();
                 if (!newOrgName.trim() || !newOrgSlug.trim()) return;
-                void handleBootstrap(newOrgName.trim(), newOrgSlug.trim().toLowerCase());
+                void handleBootstrap(newOrgName.trim(), newOrgSlug.trim().toLowerCase()).then(
+                  () => {
+                    setNewOrgName("");
+                    setNewOrgSlug("");
+                    setOrgSlugManuallyEdited(false);
+                  }
+                );
               }}
             >
               <div className="form-group">

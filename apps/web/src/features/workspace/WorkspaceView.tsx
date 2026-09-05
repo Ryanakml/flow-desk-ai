@@ -25,7 +25,12 @@ export function WorkspaceView() {
         <strong>{activeOrg?.name}</strong> is verified and ready.
       </p>
       {canInvite && (
-        <Link to="/team" className="btn btn-primary" id="workspace-invite-team-btn">
+        <Link
+          to="/team"
+          search={{ invite: true }}
+          className="btn btn-primary"
+          id="workspace-invite-team-btn"
+        >
           Invite team members
         </Link>
       )}

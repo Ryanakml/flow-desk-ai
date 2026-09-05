@@ -4,14 +4,24 @@ import { type RoleKey, hasPermission } from "@flowdesk/domain";
 import { listMembers, inviteMember, updateMemberRole, revokeMember } from "../../api.js";
 import { useAuth } from "../auth/context.js";
 
-export function TeamView() {
+export interface TeamViewProps {
+  initialShowInviteModal?: boolean;
+}
+
+export function TeamView({ initialShowInviteModal = false }: TeamViewProps = {}) {
   const { selectedOrgId, activeOrg, currentRole, showToast } = useAuth();
   const [members, setMembers] = useState<MembershipMember[]>([]);
   const [loadingMembers, setLoadingMembers] = useState(false);
-  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [showInviteModal, setShowInviteModal] = useState(initialShowInviteModal);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<RoleKey>("agent");
   const [inviting, setInviting] = useState(false);
+
+  useEffect(() => {
+    if (initialShowInviteModal) {
+      setShowInviteModal(true);
+    }
+  }, [initialShowInviteModal]);
 
   const inviteEmailId = useId();
   const inviteRoleId = useId();

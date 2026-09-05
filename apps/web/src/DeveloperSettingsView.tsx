@@ -18,6 +18,8 @@ export interface DeveloperSettingsViewProps {
   orgId: string;
   canManage: boolean;
   showToast?: (message: string, type: "success" | "error" | "info") => void;
+  initialTab?: "keys" | "webhooks";
+  onTabChange?: (tab: "keys" | "webhooks") => void;
 }
 
 type UiWebhookRecord = WebhookSubscriptionClientRecord & {
@@ -44,9 +46,17 @@ function deliveryBadgeClass(status: WebhookDeliveryClientRecord["status"]): stri
 export function DeveloperSettingsView({
   orgId,
   canManage,
-  showToast
+  showToast,
+  initialTab = "keys",
+  onTabChange
 }: DeveloperSettingsViewProps): React.JSX.Element {
-  const [activeTab, setActiveTab] = useState<"keys" | "webhooks">("keys");
+  const [activeTab, setActiveTab] = useState<"keys" | "webhooks">(initialTab);
+
+  useEffect(() => {
+    if (initialTab && initialTab !== activeTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
 
   const [keys, setKeys] = useState<DeveloperApiKeyRecord[]>([]);
   const [loadingKeys, setLoadingKeys] = useState(true);
@@ -265,14 +275,20 @@ export function DeveloperSettingsView({
           <button
             type="button"
             className={`btn ${activeTab === "keys" ? "btn-primary" : "btn-secondary"}`}
-            onClick={() => setActiveTab("keys")}
+            onClick={() => {
+              setActiveTab("keys");
+              onTabChange?.("keys");
+            }}
           >
             API Keys
           </button>
           <button
             type="button"
             className={`btn ${activeTab === "webhooks" ? "btn-primary" : "btn-secondary"}`}
-            onClick={() => setActiveTab("webhooks")}
+            onClick={() => {
+              setActiveTab("webhooks");
+              onTabChange?.("webhooks");
+            }}
           >
             Webhooks
           </button>
