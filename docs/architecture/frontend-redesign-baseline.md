@@ -79,16 +79,16 @@ FlowDesk currently exposes **8 primary functional surfaces**, plus an unauthenti
 - **APIs Invoked**:
   - `GET /api/v1/organizations/:orgId/conversations` (`listConversations`)
   - `GET /api/v1/organizations/:orgId/conversations/:conversationId` (`getConversation`)
-  - `POST /api/v1/organizations/:orgId/conversations/:conversationId/messages` (`createOutboundMessage`)
-  - `POST /api/v1/organizations/:orgId/conversations/:conversationId/actions` (`performConversationOperation` - assign, resolve, snooze)
-  - `GET /api/v1/organizations/:orgId/conversations/workspace-resources` (`getInboxWorkspaceResources` - queues, saved filters, templates)
+  - `POST /api/v1/organizations/:orgId/conversations/:conversationId/messages` (`sendOutboundMessage`)
+  - `POST /api/v1/organizations/:orgId/conversations/:conversationId/actions` (`performConversationOperation` - actions: `claim`, `release`, `handoff`, `note`, `tag.add`, `tag.remove`, `read`, `unread`, `wait`, `resolve`, `reopen`, `bot.pause`, `bot.resume`, `priority`; current Inbox UI explicitly uses `claim`, `resolve`, `reopen`, `note`, `tag.add`, `tag.remove`)
+  - `GET /api/v1/organizations/:orgId/conversations/workspace-resources` (`getInboxWorkspaceResources` - queues, tags, saved filters)
   - `POST /api/v1/organizations/:orgId/conversations/saved-filters` (`saveInboxFilter`)
   - `DELETE /api/v1/organizations/:orgId/conversations/saved-filters/:filterId` (`deleteInboxFilter`)
   - `GET /api/v1/organizations/:orgId/conversations/:conversationId/templates` (`listConversationTemplates`)
   - `POST /api/v1/organizations/:orgId/conversations/:conversationId/template-preview` (`previewTemplate`)
   - `POST /api/v1/organizations/:orgId/bot/draft/:conversationId` (`generateBotDraft`)
   - `GET /api/v1/organizations/:orgId/bot/draft/:conversationId/latest` (`getLatestBotDraft`)
-  - `POST /api/v1/organizations/:orgId/bot/draft-runs/:runId/action` (`applyBotDraftAction` - approve, edit, reject)
+  - `POST /api/v1/organizations/:orgId/bot/draft-runs/:runId/action` (`applyBotDraftAction` - actions: `approved`, `edited`, `rejected`)
   - `POST /api/v1/organizations/:orgId/attachments/upload-session` (`createAttachmentUploadSession`)
   - `PUT :uploadUrl` (`uploadAttachmentBytes`)
   - `POST /api/v1/organizations/:orgId/attachments/:id/complete` (`completeAttachmentUpload`)
@@ -246,19 +246,19 @@ This matrix documents all 56 API client helper functions across `apps/web/src/ap
 | **Auth / Shell** | `/api/v1/invitations/accept`                                                  | `POST`   | `acceptInvitation`                  | `AcceptInvitationResponseSchema`               |
 | **Inbox**        | `/api/v1/organizations/:orgId/conversations`                                  | `GET`    | `listConversations`                 | `ListConversationsResponseSchema`              |
 | **Inbox**        | `/api/v1/organizations/:orgId/conversations/:conversationId`                  | `GET`    | `getConversation`                   | `ConversationDetailResponseSchema`             |
-| **Inbox**        | `/api/v1/organizations/:orgId/conversations/:conversationId/messages`         | `POST`   | `createOutboundMessage`             | `MessageSchema`                                |
+| **Inbox**        | `/api/v1/organizations/:orgId/conversations/:conversationId/messages`         | `POST`   | `sendOutboundMessage`               | `MessageSchema`                                |
 | **Inbox**        | `/api/v1/organizations/:orgId/conversations/:conversationId/actions`          | `POST`   | `performConversationOperation`      | `ConversationSchema`                           |
 | **Inbox**        | `/api/v1/organizations/:orgId/conversations/workspace-resources`              | `GET`    | `getInboxWorkspaceResources`        | `InboxWorkspaceResourcesResponseSchema`        |
-| **Inbox**        | `/api/v1/organizations/:orgId/conversations/saved-filters`                    | `POST`   | `saveInboxFilter`                   | `SavedFilterSchema`                            |
+| **Inbox**        | `/api/v1/organizations/:orgId/conversations/saved-filters`                    | `POST`   | `saveInboxFilter`                   | `Promise<void>`                                |
 | **Inbox**        | `/api/v1/organizations/:orgId/conversations/saved-filters/:filterId`          | `DELETE` | `deleteInboxFilter`                 | Raw JSON (`{ success: true }`)                 |
-| **Inbox**        | `/api/v1/organizations/:orgId/conversations/:conversationId/templates`        | `GET`    | `listConversationTemplates`         | `ConversationTemplatesResponseSchema`          |
+| **Inbox**        | `/api/v1/organizations/:orgId/conversations/:conversationId/templates`        | `GET`    | `listConversationTemplates`         | `{ items: ConversationTemplateItem[] }`        |
 | **Inbox**        | `/api/v1/organizations/:orgId/conversations/:conversationId/template-preview` | `POST`   | `previewTemplate`                   | `TemplatePreviewResponseSchema`                |
 | **Inbox**        | `/api/v1/organizations/:orgId/bot/draft/:conversationId`                      | `POST`   | `generateBotDraft`                  | `GenerateBotDraftResponseSchema`               |
 | **Inbox**        | `/api/v1/organizations/:orgId/bot/draft/:conversationId/latest`               | `GET`    | `getLatestBotDraft`                 | `GenerateBotDraftResponseSchema`               |
-| **Inbox**        | `/api/v1/organizations/:orgId/bot/draft-runs/:runId/action`                   | `POST`   | `applyBotDraftAction`               | `GenerateBotDraftResponseSchema`               |
-| **Inbox**        | `/api/v1/organizations/:orgId/attachments/upload-session`                     | `POST`   | `createAttachmentUploadSession`     | `CreateAttachmentUploadSessionResponseSchema`  |
+| **Inbox**        | `/api/v1/organizations/:orgId/bot/draft-runs/:runId/action`                   | `POST`   | `applyBotDraftAction`               | `Message \| null`                              |
+| **Inbox**        | `/api/v1/organizations/:orgId/attachments/upload-session`                     | `POST`   | `createAttachmentUploadSession`     | `CreateUploadSessionResponseSchema`            |
 | **Inbox**        | `:uploadUrl`                                                                  | `PUT`    | `uploadAttachmentBytes`             | Binary Body (Presigned upload)                 |
-| **Inbox**        | `/api/v1/organizations/:orgId/attachments/:id/complete`                       | `POST`   | `completeAttachmentUpload`          | `CompleteAttachmentUploadResponseSchema`       |
+| **Inbox**        | `/api/v1/organizations/:orgId/attachments/:id/complete`                       | `POST`   | `completeAttachmentUpload`          | `AttachmentDetailResponseSchema`               |
 | **Inbox**        | `/api/v1/organizations/:orgId/attachments/:id`                                | `GET`    | `getAttachment`                     | `AttachmentDetailResponseSchema`               |
 | **Analytics**    | `/api/v1/organizations/:orgId/analytics/metrics?days=:days`                   | `GET`    | `getAnalyticsMetricsApi`            | `AnalyticsMetricsResponseSchema`               |
 | **Analytics**    | `/api/v1/organizations/:orgId/analytics/export`                               | `POST`   | `exportAnalyticsReportApi`          | Blob (CSV file download)                       |
@@ -274,10 +274,10 @@ This matrix documents all 56 API client helper functions across `apps/web/src/ap
 | **Knowledge**    | `/api/v1/organizations/:orgId/automation/emergency-stop`                      | `POST`   | `setAutomationEmergencyStop`        | Raw JSON (`{ enabled }`)                       |
 | **Channels**     | `/api/v1/organizations/:orgId/channels`                                       | `GET`    | `listChannelsApi`                   | `ChannelClientRecord[]`                        |
 | **Channels**     | `/api/v1/organizations/:orgId/channels`                                       | `POST`   | `connectWhatsAppWithTokenApi`       | `CompleteWhatsAppEmbeddedSignupResponseSchema` |
-| **Channels**     | `/api/v1/organizations/:orgId/channels/:channelId/credentials`                | `PATCH`  | `rotateChannelCredentialsApi`       | `ChannelClientRecord`                          |
+| **Channels**     | `/api/v1/organizations/:orgId/channels/:channelId/credentials`                | `PATCH`  | `rotateChannelCredentialsApi`       | `{ channelId, organizationId, updatedAt }`     |
 | **Channels**     | `/api/v1/organizations/:orgId/channels/whatsapp/embedded-signup/start`        | `POST`   | `startWhatsAppEmbeddedSignupApi`    | `StartWhatsAppEmbeddedSignupResponseSchema`    |
 | **Channels**     | `/api/v1/organizations/:orgId/channels/whatsapp/embedded-signup/complete`     | `POST`   | `completeWhatsAppEmbeddedSignupApi` | `CompleteWhatsAppEmbeddedSignupResponseSchema` |
-| **Channels**     | `/api/v1/organizations/:orgId/channels/:id/verify`                            | `POST`   | `verifyChannelApi`                  | `ChannelClientRecord`                          |
+| **Channels**     | `/api/v1/organizations/:orgId/channels/:id/verify`                            | `POST`   | `verifyChannelApi`                  | `{ channelId, verified, status, message }`     |
 | **Channels**     | `/api/v1/organizations/:orgId/channels/:id`                                   | `DELETE` | `deleteChannelApi`                  | Raw JSON                                       |
 | **Developer**    | `/api/v1/organizations/:orgId/developer/api-keys`                             | `GET`    | `listApiKeysApi`                    | `DeveloperApiKeyRecord[]`                      |
 | **Developer**    | `/api/v1/organizations/:orgId/developer/api-keys`                             | `POST`   | `createApiKeyApi`                   | `DeveloperApiKeyRecord & { rawKey }`           |
@@ -285,7 +285,7 @@ This matrix documents all 56 API client helper functions across `apps/web/src/ap
 | **Developer**    | `/api/v1/organizations/:orgId/developer/webhooks`                             | `GET`    | `listWebhooksApi`                   | `WebhookSubscriptionClientRecord[]`            |
 | **Developer**    | `/api/v1/organizations/:orgId/developer/webhooks`                             | `POST`   | `createWebhookApi`                  | `WebhookSubscriptionClientRecord & { secret }` |
 | **Developer**    | `/api/v1/organizations/:orgId/developer/webhooks/:id`                         | `DELETE` | `deleteWebhookApi`                  | Raw JSON                                       |
-| **Developer**    | `/api/v1/organizations/:orgId/developer/webhooks/:id/test`                    | `POST`   | `testWebhookApi`                    | Raw JSON (`{ eventId, queued }`)               |
+| **Developer**    | `/api/v1/organizations/:orgId/developer/webhooks/:id/test`                    | `POST`   | `testWebhookApi`                    | `{ enqueued: boolean, eventId: string }`       |
 | **Developer**    | `/api/v1/organizations/:orgId/developer/webhooks/:id/deliveries`              | `GET`    | `listWebhookDeliveriesApi`          | `WebhookDeliveryClientRecord[]`                |
 | **Team**         | `/api/v1/organizations/:orgId/members`                                        | `GET`    | `listMembers`                       | `ListMembersResponseSchema`                    |
 | **Team**         | `/api/v1/organizations/:orgId/invitations`                                    | `POST`   | `inviteMember`                      | `CreateInvitationResponseSchema`               |
@@ -437,28 +437,38 @@ The redesign transforms these custom tokens into standard semantic CSS variables
 
 ## 9. Visual Baseline & Responsive Viewports
 
-Visual baseline capture and testing targets three standard viewports:
+### Current Visual Baseline Viewports
 
-| Tier        | Dimensions     | Layout Behavior                                                                                                                                                                    |
-| :---------- | :------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Desktop** | **1440 × 900** | Permanent collapsible sidebar; 3-pane resizable Inbox (`react-resizable-panels`); 4-column metric cards; side-by-side management cards.                                            |
-| **Tablet**  | **1024 × 768** | Collapsed sidebar (slide-out Sheet); 2-pane Inbox (Queue + Message stream; Right context panel in sliding Sheet); 2-column metric cards.                                           |
-| **Mobile**  | **375 × 812**  | Hamburger header with drawer navigation; 1-pane Inbox (Queue view drills down into `/inbox/:conversationId`); single-column stacked forms/cards; horizontal scrolling data tables. |
+Visual baseline captures were recorded directly against the current running React 19 application at three standard viewports to establish the pre-redesign benchmark:
+
+| Tier        | Dimensions     | Current Baseline Layout Posture                                                                                                               |
+| :---------- | :------------- | :-------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Desktop** | **1440 × 900** | Top navigation bar with horizontal tabs; static 3-column flexbox Inbox; full-width stacked card layouts; fixed glassmorphic styling.          |
+| **Tablet**  | **1024 × 768** | Top navigation bar with wrapped tabs; compressed 3-column Inbox with horizontal overflowing elements; multi-column cards wrapping.            |
+| **Mobile**  | **375 × 812**  | Top navigation bar with vertical stacked tabs; overflowing 3-column flexbox without drawer navigation; horizontally clipped tables and forms. |
+
+### Target Responsive Behavior (Future Milestone UI-03 / UI-04)
+
+The M6.5 redesign will introduce modern responsive adaptations:
+
+- **Desktop (1440 × 900)**: Permanent collapsible sidebar; 3-pane resizable Inbox (`react-resizable-panels`); 4-column metric cards; side-by-side management cards.
+- **Tablet (1024 × 768)**: Collapsed sidebar (slide-out Sheet); 2-pane Inbox (Queue + Message stream; Right context panel in sliding Sheet); 2-column metric cards.
+- **Mobile (375 × 812)**: Hamburger header with drawer navigation; 1-pane Inbox (Queue view drills down into `/inbox/:conversationId`); single-column stacked forms/cards; horizontal scrolling data tables.
 
 ### Visual Baseline Packet Index
 
 All 24 baseline screenshots have been captured from the running React 19 application using synthetic staging fixtures (no customer PII or real credentials) and packaged into `docs/architecture/frontend-redesign-baseline/`:
 
-| Surface                      | Surface Key    | Desktop (1440×900)                                                                                                                                                         | Tablet (1024×768)                                                                                                                                                        | Mobile (375×812)                                                                                                                                                         |
-| :--------------------------- | :------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **1. Conversations / Inbox** | `01-inbox`     | [Desktop](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/01-inbox-desktop.png)     | [Tablet](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/01-inbox-tablet.png)     | [Mobile](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/01-inbox-mobile.png)     |
-| **2. Analytics & SLA**       | `02-analytics` | [Desktop](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/02-analytics-desktop.png) | [Tablet](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/02-analytics-tablet.png) | [Mobile](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/02-analytics-mobile.png) |
-| **3. AI Knowledge**          | `03-knowledge` | [Desktop](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/03-knowledge-desktop.png) | [Tablet](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/03-knowledge-tablet.png) | [Mobile](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/03-knowledge-mobile.png) |
-| **4. Workspace Shell**       | `04-workspace` | [Desktop](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/04-workspace-desktop.png) | [Tablet](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/04-workspace-tablet.png) | [Mobile](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/04-workspace-mobile.png) |
-| **5. WhatsApp Channels**     | `05-channels`  | [Desktop](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/05-channels-desktop.png)  | [Tablet](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/05-channels-tablet.png)  | [Mobile](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/05-channels-mobile.png)  |
-| **6. Developer Settings**    | `06-developer` | [Desktop](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/06-developer-desktop.png) | [Tablet](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/06-developer-tablet.png) | [Mobile](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/06-developer-mobile.png) |
-| **7. Team Settings**         | `07-team`      | [Desktop](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/07-team-desktop.png)      | [Tablet](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/07-team-tablet.png)      | [Mobile](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/07-team-mobile.png)      |
-| **8. Security Audit**        | `08-audit`     | [Desktop](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/08-audit-desktop.png)     | [Tablet](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/08-audit-tablet.png)     | [Mobile](file:///Users/ryanakmalpasya/Documents/BS/Freelance/PROJECTS/SKEM%20PROJECT/SAAS/flowdesk/docs/architecture/frontend-redesign-baseline/08-audit-mobile.png)     |
+| Surface                      | Surface Key    | Desktop (1440×900)                                             | Tablet (1024×768)                                            | Mobile (375×812)                                             |
+| :--------------------------- | :------------- | :------------------------------------------------------------- | :----------------------------------------------------------- | :----------------------------------------------------------- |
+| **1. Conversations / Inbox** | `01-inbox`     | [Desktop](frontend-redesign-baseline/01-inbox-desktop.png)     | [Tablet](frontend-redesign-baseline/01-inbox-tablet.png)     | [Mobile](frontend-redesign-baseline/01-inbox-mobile.png)     |
+| **2. Analytics & SLA**       | `02-analytics` | [Desktop](frontend-redesign-baseline/02-analytics-desktop.png) | [Tablet](frontend-redesign-baseline/02-analytics-tablet.png) | [Mobile](frontend-redesign-baseline/02-analytics-mobile.png) |
+| **3. AI Knowledge**          | `03-knowledge` | [Desktop](frontend-redesign-baseline/03-knowledge-desktop.png) | [Tablet](frontend-redesign-baseline/03-knowledge-tablet.png) | [Mobile](frontend-redesign-baseline/03-knowledge-mobile.png) |
+| **4. Workspace Shell**       | `04-workspace` | [Desktop](frontend-redesign-baseline/04-workspace-desktop.png) | [Tablet](frontend-redesign-baseline/04-workspace-tablet.png) | [Mobile](frontend-redesign-baseline/04-workspace-mobile.png) |
+| **5. WhatsApp Channels**     | `05-channels`  | [Desktop](frontend-redesign-baseline/05-channels-desktop.png)  | [Tablet](frontend-redesign-baseline/05-channels-tablet.png)  | [Mobile](frontend-redesign-baseline/05-channels-mobile.png)  |
+| **6. Developer Settings**    | `06-developer` | [Desktop](frontend-redesign-baseline/06-developer-desktop.png) | [Tablet](frontend-redesign-baseline/06-developer-tablet.png) | [Mobile](frontend-redesign-baseline/06-developer-mobile.png) |
+| **7. Team Settings**         | `07-team`      | [Desktop](frontend-redesign-baseline/07-team-desktop.png)      | [Tablet](frontend-redesign-baseline/07-team-tablet.png)      | [Mobile](frontend-redesign-baseline/07-team-mobile.png)      |
+| **8. Security Audit**        | `08-audit`     | [Desktop](frontend-redesign-baseline/08-audit-desktop.png)     | [Tablet](frontend-redesign-baseline/08-audit-tablet.png)     | [Mobile](frontend-redesign-baseline/08-audit-mobile.png)     |
 
 ---
 
