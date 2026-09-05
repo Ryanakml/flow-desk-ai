@@ -589,8 +589,10 @@ describe("Modern Frontend Router & Navigation Architecture", () => {
       });
 
       // Select API Keys
-      fireEvent.change(screen.getByPlaceholderText("Type a command or search..."), { target: { value: "api" } });
-      
+      fireEvent.change(screen.getByPlaceholderText("Type a command or search..."), {
+        target: { value: "api" }
+      });
+
       const apiKeysItem = screen.getByText("API Keys");
       fireEvent.click(apiKeysItem);
 
@@ -634,7 +636,7 @@ describe("Modern Frontend Router & Navigation Architecture", () => {
       setupAuthMocks("owner");
       // Clear localStorage before testing
       window.localStorage.removeItem("flowdesk-theme");
-      
+
       render(<App />);
       await router.navigate({ to: "/inbox" });
 
@@ -643,7 +645,7 @@ describe("Modern Frontend Router & Navigation Architecture", () => {
       });
 
       const button = screen.getByRole("button", { name: "Toggle theme" });
-      
+
       // Default should be system or light
       // Open dropdown
       fireEvent.click(button);
@@ -653,7 +655,7 @@ describe("Modern Frontend Router & Navigation Architecture", () => {
 
       // Click Dark
       fireEvent.click(screen.getByText("Dark"));
-      
+
       await waitFor(() => {
         expect(document.documentElement.classList.contains("dark")).toBe(true);
         expect(window.localStorage.getItem("flowdesk-theme")).toBe("dark");
