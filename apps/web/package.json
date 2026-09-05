@@ -17,6 +17,8 @@
     "@flowdesk/contracts": "workspace:*",
     "@flowdesk/domain": "workspace:*",
     "@flowdesk/ui": "workspace:*",
+    "@tanstack/react-query": "^5.102.8",
+    "@tanstack/react-router": "^1.170.32",
     "lucide-react": "^1.41.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
@@ -25,6 +27,9 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
+    "@tanstack/react-query-devtools": "^5.102.8",
+    "@tanstack/router-cli": "^1.167.33",
+    "@tanstack/router-plugin": "^1.168.35",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.6",
     "@types/react": "^19.1.12",

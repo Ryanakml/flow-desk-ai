@@ -1,15 +1,13 @@
+// @vitest-environment jsdom
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { renderToString } from "react-dom/server";
+import { render, screen } from "@testing-library/react";
 import { App } from "./App.js";
 
 describe("App UI Shell (M1-07)", () => {
   const originalFetch = globalThis.fetch;
 
   beforeEach(() => {
-    vi.stubGlobal("window", {
-      location: { search: "", pathname: "/" },
-      history: { replaceState: vi.fn() }
-    });
+    vi.stubGlobal("scrollTo", vi.fn());
   });
 
   afterEach(() => {
@@ -17,16 +15,16 @@ describe("App UI Shell (M1-07)", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders loading state on initial mount", () => {
+  it("renders loading state on initial mount", async () => {
     // Mock fetch that hangs to inspect initial loading state
     globalThis.fetch = vi.fn<typeof fetch>().mockImplementation(() => new Promise(() => {}));
 
-    const html = renderToString(<App />);
-    expect(html).toContain("Loading FlowDesk…");
-    expect(html).toContain("Verifying secure tenant session");
+    render(<App />);
+    expect(await screen.findByText("Loading FlowDesk…")).toBeTruthy();
+    expect(screen.getByText("Verifying secure tenant session")).toBeTruthy();
   });
 
-  it("renders login card when unauthenticated", () => {
+  it("renders login card when unauthenticated", async () => {
     // When session endpoint returns 401
     globalThis.fetch = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(
@@ -42,8 +40,7 @@ describe("App UI Shell (M1-07)", () => {
       )
     );
 
-    // Initial render in server/node environment
-    const html = renderToString(<App />);
-    expect(html).toBeDefined();
+    render(<App />);
+    expect(await screen.findByText("Sign In with Enterprise SSO")).toBeTruthy();
   });
 });
